@@ -4,7 +4,7 @@
 
 <p align="center">
   <b>Yerli yapay zekâ altyapısında çalışan kodlama ajanı için masaüstü operasyon konsolu.</b><br />
-  <sub>EVREN API · gerçek terminal · Windows</sub>
+  <sub>EVREN API · gerçek terminal · Windows · <a href="#english">English ↓</a></sub>
 </p>
 
 <p align="center">
@@ -154,6 +154,8 @@ Hata bildirimi ve öneriler için issue açabilirsiniz. Çekme isteklerinde değ
 © 2026 Yusuf Günay · Günay Studio
 
 ---
+
+<a id="english"></a>
 
 <details>
 <summary><b>English</b></summary>
