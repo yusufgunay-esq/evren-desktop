@@ -198,6 +198,15 @@ function ozetYaz() {
   cipYaz();
 }
 
+
+function tokenFormatla(n) {
+  if (n == null || isNaN(n)) return '—';
+  const num = Number(n);
+  if (num >= 1000000) return (num / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (num >= 1000) return Math.round(num / 1000) + 'K';
+  return String(num);
+}
+
 function baglantiYaz() {
   const a = S.api;
   const led = $('led'), sLed = $('sLed');
@@ -210,7 +219,67 @@ function baglantiYaz() {
   $('apiDurum').textContent = metin;
   $('apiMs').textContent = a && a.ok ? `${a.ms} ms` : '—';
   $('kasa').textContent = S.anahtarVar ? 'DPAPI · hazır' : 'kasa boş';
-  $('sApiMetin').textContent = a && a.ok ? `API ${a.ms} ms` : (S.anahtarVar ? (a ? 'API yok' : 'API …') : 'Anahtar yok');
+
+  // Kota ve Token hesaplama
+  const apiKotaEl = $('apiKota');
+  const sKotaMetin = $('sKotaMetin');
+  const kotaKalanSayi = $('kotaKalanSayi');
+  const kotaKullanilanMetin = $('kotaKullanilanMetin');
+  const kotaSifirlanmaMetin = $('kotaSifirlanmaMetin');
+  const kotaBarDolgu = $('kotaBarDolgu');
+  const kotaYuzdeMetin = $('kotaYuzdeMetin');
+
+  if (a && a.kota) {
+    const k = a.kota;
+    const gunlukLimit = Number(k.daily_limit_tokens) || 15000000;
+    const gunlukKullanilan = Number(k.daily_used_tokens) || 0;
+    const gunlukKalan = k.daily_remaining_tokens != null ? Number(k.daily_remaining_tokens) : Math.max(0, gunlukLimit - gunlukKullanilan);
+    const yuzde = Math.min(100, Math.max(0, (gunlukKullanilan / gunlukLimit) * 100));
+
+    // Sıfırlanma süresi hesapla (k.daily_reset_at)
+    let sifirlanmaFarkMetni = '';
+    if (k.daily_reset_at) {
+      const resetDate = new Date(k.daily_reset_at);
+      const diffMs = resetDate.getTime() - Date.now();
+      if (diffMs > 0) {
+        const sa = Math.floor(diffMs / (1000 * 60 * 60));
+        const dk = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+        sifirlanmaFarkMetni = ` · ${sa} sa ${dk} dk sonra`;
+      }
+    }
+
+    if (kotaKalanSayi) kotaKalanSayi.textContent = gunlukKalan.toLocaleString('tr-TR');
+    if (kotaKullanilanMetin) {
+      kotaKullanilanMetin.textContent = `${gunlukKullanilan.toLocaleString('tr-TR')} / ${gunlukLimit.toLocaleString('tr-TR')} kullanıldı (%${yuzde.toFixed(1)})`;
+    }
+    if (kotaSifirlanmaMetin) {
+      kotaSifirlanmaMetin.textContent = `Sıfırlanma: 03:00 TSİ${sifirlanmaFarkMetni}`;
+    }
+    if (kotaYuzdeMetin) {
+      kotaYuzdeMetin.textContent = `%${yuzde.toFixed(1)}`;
+    }
+    if (kotaBarDolgu) {
+      kotaBarDolgu.style.width = `${yuzde.toFixed(1)}%`;
+      kotaBarDolgu.className = 'kota-bar-dolgu' + (yuzde >= 90 ? ' kritik' : (yuzde >= 70 ? ' uyari' : ''));
+    }
+
+    if (apiKotaEl) {
+      apiKotaEl.textContent = `${tokenFormatla(gunlukKalan)} / ${tokenFormatla(gunlukLimit)}`;
+      apiKotaEl.title = `Kalan: ${gunlukKalan.toLocaleString('tr-TR')} token (%${(100 - yuzde).toFixed(1)})`;
+    }
+    if (sKotaMetin) {
+      sKotaMetin.textContent = `${tokenFormatla(gunlukKalan)} token`;
+    }
+  } else {
+    if (kotaKalanSayi) kotaKalanSayi.textContent = '—';
+    if (kotaKullanilanMetin) kotaKullanilanMetin.textContent = S.anahtarVar ? (a && a.ok ? '—' : 'alınamadı') : 'anahtar yok';
+    if (kotaYuzdeMetin) kotaYuzdeMetin.textContent = '—';
+    if (kotaBarDolgu) kotaBarDolgu.style.width = '0%';
+    if (apiKotaEl) apiKotaEl.textContent = S.anahtarVar ? (a && a.ok ? '—' : 'alınamadı') : '—';
+    if (sKotaMetin) sKotaMetin.textContent = '—';
+  }
+
+    $('sApiMetin').textContent = a && a.ok ? `API ${a.ms} ms` : (S.anahtarVar ? (a ? 'API yok' : 'API …') : 'Anahtar yok');
   $('sApi').classList.toggle('kotu', !!a && !a.ok);
   hucre('bGecikme', a && a.ok ? `${a.ms} ms` : '—');
   const v = S.pingler.filter((x) => x != null);

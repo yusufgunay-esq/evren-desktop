@@ -70,7 +70,7 @@ async function yerelDurum() {
   };
 }
 
-// Canlı API: gecikme ölçer, model listesini (bağlam/çıktı) yeniler.
+// Canlı API: gecikme ölçer, kota durumunu çeker, model listesini (bağlam/çıktı) yeniler.
 async function apiDurum() {
   const p = await panelModulu();
   let deger = await anahtar();
@@ -78,11 +78,27 @@ async function apiDurum() {
   if (!deger) return { anahtarVar: false, ok: false };
   const t0 = Date.now();
   try {
-    const r = await fetch(`${EVREN_BASE_URL}/v1/models`, { headers: { 'X-API-Key': deger }, signal: zamanAsimi(5000) });
+    const [rModels, rQuota] = await Promise.all([
+      fetch(`${EVREN_BASE_URL}/v1/models`, { headers: { 'X-API-Key': deger }, signal: zamanAsimi(5000) }),
+      fetch(`${EVREN_BASE_URL}/v1/quota`, { headers: { 'X-API-Key': deger }, signal: zamanAsimi(5000) }).catch(() => null)
+    ]);
     const ms = Date.now() - t0;
-    const veri = await r.json().catch(() => null);
+    const veri = await rModels.json().catch(() => null);
     if (veri) { const canli = p.modelleriCoz(veri); if (canli.length) modelOnbellek = canli; }
-    return { anahtarVar: true, ok: r.ok, ms, hata: r.ok ? '' : `HTTP ${r.status}`, modeller: modelOnbellek || undefined };
+
+    let kota = null;
+    if (rQuota && rQuota.ok) {
+      kota = await rQuota.json().catch(() => null);
+    }
+
+    return {
+      anahtarVar: true,
+      ok: rModels.ok,
+      ms,
+      hata: rModels.ok ? '' : `HTTP ${rModels.status}`,
+      modeller: modelOnbellek || undefined,
+      kota
+    };
   } catch (e) {
     return { anahtarVar: true, ok: false, ms: 0, hata: e.name === 'TimeoutError' || e.name === 'AbortError' ? 'zaman aşımı' : String(e.message || e).slice(0, 40) };
   }

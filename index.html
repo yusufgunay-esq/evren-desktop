@@ -66,6 +66,7 @@
           <dl class="kv">
             <dt>Durum</dt><dd><span class="led" id="led"></span><span id="apiDurum">Bağlanıyor…</span></dd>
             <dt>Gecikme</dt><dd class="mono"><span id="apiMs">—</span></dd>
+            <dt>Kalan kota</dt><dd class="mono"><span id="apiKota" title="Günlük kalan / 5 dk pencere">—</span></dd>
             <dt>Uç nokta</dt><dd class="mono soluk" title="https://evren-llmapi.ssyz.org.tr">evren-llmapi.ssyz.org.tr</dd>
             <dt>Anahtar</dt><dd class="mono" id="kasa">—</dd>
           </dl>
@@ -166,6 +167,27 @@
             </div>
 
             <aside class="intel" aria-label="Durum görünümleri">
+              <section class="panel kota-panel">
+                <header class="panel-h">
+                  <span class="sec-t">Günlük Token Kotası</span>
+                  <span class="panel-x mono" id="kotaYuzdeMetin">—</span>
+                </header>
+                <div class="kota-govde">
+                  <div class="kota-ust">
+                    <div class="kota-kalan-kutu">
+                      <span class="kota-kalan-sayi" id="kotaKalanSayi">—</span>
+                      <span class="kota-kalan-etiket">kaldı</span>
+                    </div>
+                    <div class="kota-detay-kutu">
+                      <div class="kota-kullanilan" id="kotaKullanilanMetin">—</div>
+                      <div class="kota-sifirlanma" id="kotaSifirlanmaMetin">Sıfırlanma: 03:00 TSİ</div>
+                    </div>
+                  </div>
+                  <div class="kota-bar-ray" title="Kota kullanım çubuğu">
+                    <div class="kota-bar-dolgu" id="kotaBarDolgu" style="width: 0%;"></div>
+                  </div>
+                </div>
+              </section>
               <section class="panel">
                 <header class="panel-h"><span class="sec-t">Proje</span><span class="panel-x mono" id="prjOzet">—</span></header>
                 <div class="prj">
@@ -194,6 +216,7 @@
     <!-- Durum çubuğu -->
     <footer class="status">
       <span class="seg" id="sApi"><span class="led" id="sLed"></span><span id="sApiMetin">API —</span></span>
+      <span class="seg" id="sKota"><span class="k">Kalan</span><span id="sKotaMetin">—</span></span>
       <span class="seg"><svg class="ic"><use href="#i-cpu" /></svg><span id="sModel">—</span></span>
       <span class="seg"><span class="k">Bağlam</span><span id="sBaglam">—</span></span>
       <span class="seg"><svg class="ic"><use href="#i-branch" /></svg><span id="sDal">—</span></span>
