@@ -1,0 +1,228 @@
+<!doctype html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. Copyright (c) 2026 Yusuf Günay. -->
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:" />
+  <title>EVREN</title>
+  <link rel="stylesheet" href="node_modules/@fontsource-variable/inter/wght.css" />
+  <link rel="stylesheet" href="node_modules/@fontsource/ibm-plex-mono/400.css" />
+  <link rel="stylesheet" href="node_modules/@fontsource/ibm-plex-mono/500.css" />
+  <link rel="stylesheet" href="node_modules/@xterm/xterm/css/xterm.css" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5 14 14" /></symbol>
+      <symbol id="i-branch" viewBox="0 0 16 16"><circle cx="4.5" cy="3.5" r="1.5" /><circle cx="4.5" cy="12.5" r="1.5" /><circle cx="11.5" cy="5.5" r="1.5" /><path d="M4.5 5v6M11.5 7c0 3-7 2-7 4" /></symbol>
+      <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10" /></symbol>
+      <symbol id="i-minus" viewBox="0 0 16 16"><path d="M3 8h10" /></symbol>
+      <symbol id="i-refresh" viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5V5h-2.5" /></symbol>
+      <symbol id="i-clear" viewBox="0 0 16 16"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5" /></symbol>
+      <symbol id="i-side" viewBox="0 0 16 16"><rect x="2.5" y="3" width="11" height="10" rx="1" /><path d="M6.5 3v10" /></symbol>
+      <symbol id="i-play" viewBox="0 0 16 16"><path d="M5 3.5v9l7-4.5z" /></symbol>
+      <symbol id="i-stop" viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" rx="1" /></symbol>
+      <symbol id="i-folder" viewBox="0 0 16 16"><path d="M2.5 4.5v8h11v-6.5H8L6.5 4.5z" /></symbol>
+      <symbol id="i-cpu" viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" rx="1" /><path d="M6.5 1.5v2.5M9.5 1.5v2.5M6.5 12v2.5M9.5 12v2.5M1.5 6.5H4M1.5 9.5H4M12 6.5h2.5M12 9.5h2.5" /></symbol>
+      <symbol id="i-term" viewBox="0 0 16 16"><path d="m3.5 5 3 3-3 3M8.5 11.5h4" /></symbol>
+      <symbol id="i-odak" viewBox="0 0 16 16"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" /></symbol>
+      <symbol id="i-alert" viewBox="0 0 16 16"><path d="M8 2 14.5 13.5h-13z" /><path d="M8 6.5v3.5M8 11.8v.2" /></symbol>
+    </defs>
+  </svg>
+
+  <div class="app" id="app">
+    <!-- Başlık çubuğu -->
+    <header class="titlebar">
+      <div class="tb-left">
+        <span class="mark" title="EVREN">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M19.88 11.57A9 9 0 1 1 12.43 4.12A7.65 7.65 0 1 0 19.88 11.57Z" fill="#e3e7eb" />
+            <path d="M15.4 8.6L16.52 6.4L14.77 4.66L17.21 5.04L18.33 2.84L18.72 5.28L21.16 5.67L18.96 6.79L19.34 9.23L17.6 7.48Z" fill="#e30a17" />
+          </svg>
+        </span>
+        <span class="brand">EVREN</span>
+        <span class="tb-sep"></span>
+        <nav class="crumbs" aria-label="Konum">
+          <span id="crProje">—</span><i>/</i><span id="crDal" class="mono">—</span>
+        </nav>
+      </div>
+      <button class="cmdk" id="cmdkBtn" type="button">
+        <svg class="ic"><use href="#i-search" /></svg>
+        <span>Model, proje ya da komut ara…</span>
+        <kbd>Ctrl ⇧ P</kbd>
+      </button>
+      <div class="tb-right"></div>
+    </header>
+
+    <div class="body">
+      <!-- Sol kenar paneli -->
+      <aside class="side" id="side">
+        <section class="sec">
+          <header class="sec-h">
+            <span class="sec-t">Bağlantı</span>
+            <button class="sec-a" id="yenileBtn" type="button" title="Bağlantıyı yenile"><svg class="ic"><use href="#i-refresh" /></svg></button>
+          </header>
+          <dl class="kv">
+            <dt>Durum</dt><dd><span class="led" id="led"></span><span id="apiDurum">Bağlanıyor…</span></dd>
+            <dt>Gecikme</dt><dd class="mono"><span id="apiMs">—</span></dd>
+            <dt>Uç nokta</dt><dd class="mono soluk" title="https://evren-llmapi.ssyz.org.tr">evren-llmapi.ssyz.org.tr</dd>
+            <dt>Anahtar</dt><dd class="mono" id="kasa">—</dd>
+          </dl>
+        </section>
+
+        <section class="sec grow">
+          <header class="sec-h">
+            <span class="sec-t">Modeller</span><span class="sec-c mono" id="modelSay">—</span>
+          </header>
+          <div class="list" id="modelList" role="listbox" tabindex="0" aria-label="Modeller"></div>
+        </section>
+
+        <section class="sec grow">
+          <header class="sec-h">
+            <span class="sec-t">Projeler</span><span class="sec-c mono" id="projeSay">—</span>
+            <button class="sec-a txt" id="ekleBtn" type="button"><svg class="ic"><use href="#i-plus" /></svg>Ekle</button>
+          </header>
+          <div class="list" id="projeList" role="listbox" tabindex="0" aria-label="Projeler"></div>
+        </section>
+
+        <footer class="side-foot">
+          <button class="btn primary wide" id="baslaBtn" type="button">
+            <svg class="ic"><use href="#i-play" /></svg><span>Oturum başlat</span><kbd>Enter</kbd>
+          </button>
+          <button class="btn danger wide" id="durdurBtn" type="button" hidden>
+            <svg class="ic"><use href="#i-stop" /></svg><span>Oturumu sonlandır</span>
+          </button>
+        </footer>
+      </aside>
+
+      <!-- Ana alan -->
+      <main class="main">
+        <div class="tabbar">
+          <button class="icbtn" id="sideBtn" type="button" title="Kenar paneli (Ctrl+Shift+B)"><svg class="ic"><use href="#i-side" /></svg></button>
+          <div class="tabs" id="sekmeler" role="tablist" aria-label="Oturumlar"></div>
+          <button class="icbtn" id="yeniSekme" type="button" title="Yeni oturum (Ctrl+Shift+T)"><svg class="ic"><use href="#i-plus" /></svg></button>
+          <div class="tab-tools">
+            <button class="icbtn" id="kucukBtn" type="button" title="Yazıyı küçült"><svg class="ic"><use href="#i-minus" /></svg></button>
+            <span class="mono fs" id="fsMetin">13</span>
+            <button class="icbtn" id="buyukBtn" type="button" title="Yazıyı büyüt"><svg class="ic"><use href="#i-plus" /></svg></button>
+            <span class="tool-sep"></span>
+            <button class="icbtn" id="temizleBtn" type="button" title="Terminali temizle"><svg class="ic"><use href="#i-clear" /></svg></button>
+            <span class="tool-sep"></span>
+            <button class="icbtn" id="odakBtn" type="button" title="Odak modu (Ctrl+Shift+F)"><svg class="ic"><use href="#i-odak" /></svg></button>
+          </div>
+        </div>
+
+        <div class="stage" id="stage">
+          <div id="terminaller" class="terminaller"></div>
+
+          <div class="brief" id="brif">
+           <div class="ops">
+            <div class="card">
+              <header class="card-top">
+                <div>
+                  <h1 class="card-h"><span class="istem">›</span> yeni-oturum<i class="imlec"></i></h1>
+                  <p class="card-p"># claude code · evren api · yerel conpty terminali</p>
+                </div>
+                <span class="pill" id="hazirPill"><span class="led" id="hazirLed"></span><span id="hazirMetin">Bağlanıyor</span></span>
+              </header>
+
+              <div class="warn" id="uyari" hidden>
+                <svg class="ic"><use href="#i-alert" /></svg>
+                <span id="uyariMetin"></span>
+              </div>
+
+              <form class="anahtar-form" id="anahtarForm" hidden autocomplete="off">
+                <input type="password" id="anahtarGiris" placeholder="EVREN API anahtarını yapıştırın" spellcheck="false" aria-label="EVREN API anahtarı" />
+                <button class="btn primary" id="anahtarKaydet" type="submit"><span>Doğrula ve kaydet</span></button>
+              </form>
+
+              <div class="stats">
+                <div class="stat"><div class="stat-k">Bağlam</div><div class="stat-v" id="bBaglam">—</div><div class="stat-s" id="bBaglamS">—</div></div>
+                <div class="stat"><div class="stat-k">Çıktı sınırı</div><div class="stat-v" id="bCikti">—</div><div class="stat-s" id="bCiktiS">—</div></div>
+                <div class="stat"><div class="stat-k">Gecikme</div><div class="stat-v" id="bGecikme">—</div><div class="stat-s" id="bGecikmeS">—</div></div>
+                <div class="stat"><div class="stat-k">Dal</div><div class="stat-v" id="bDal">—</div><div class="stat-s" id="bDalS">—</div></div>
+              </div>
+
+              <dl class="spec">
+                <dt>Model</dt><dd><span id="bModel">—</span><span class="mono soluk" id="bModelId"></span></dd>
+                <dt>Proje</dt><dd><span id="bProje">—</span><span class="mono soluk" id="bYol"></span></dd>
+                <dt>Komut</dt><dd><code class="cmd">claude --dangerously-skip-permissions</code></dd>
+              </dl>
+
+              <div class="card-act">
+                <button class="btn primary" id="baslaBtn2" type="button"><svg class="ic"><use href="#i-play" /></svg><span>Oturum başlat</span><kbd>Enter</kbd></button>
+                <button class="btn ghost" id="paletBtn2" type="button"><svg class="ic"><use href="#i-search" /></svg><span>Komutlar</span><kbd>Ctrl ⇧ P</kbd></button>
+              </div>
+
+              <ul class="hints">
+                <li><kbd>Ctrl ⇧ T</kbd> yeni oturum</li>
+                <li><kbd>Ctrl Tab</kbd> sekme değiştir</li>
+                <li><kbd>Ctrl ⇧ F</kbd> odak modu</li>
+                <li><kbd>Ctrl ⇧ B</kbd> kenar paneli</li>
+                <li><kbd>Ctrl ⇧ C</kbd> / <kbd>V</kbd> kopyala, yapıştır</li>
+                <li><kbd>Ctrl</kbd> + teker yazı boyutu</li>
+              </ul>
+            </div>
+
+            <aside class="intel" aria-label="Durum görünümleri">
+              <section class="panel">
+                <header class="panel-h"><span class="sec-t">Proje</span><span class="panel-x mono" id="prjOzet">—</span></header>
+                <div class="prj">
+                  <div class="isi" id="isi" aria-label="Son 26 haftanın commit yoğunluğu"></div>
+                  <div class="dil" id="dilBar"></div>
+                  <div class="dil-ad" id="dilAd"></div>
+                  <div class="son-c mono" id="sonCommit">—</div>
+                </div>
+              </section>
+              <section class="panel">
+                <header class="panel-h"><span class="sec-t">Gecikme</span><span class="panel-x mono" id="gecOzet">son 24 ölçüm</span></header>
+                <canvas class="gec" id="gecGrafik"></canvas>
+              </section>
+              <section class="panel grow">
+                <header class="panel-h"><span class="sec-t">Olay günlüğü</span><span class="panel-x mono" id="olaySay">0</span></header>
+                <div class="komut-satiri"><span class="istem">evren</span><span class="ok">›</span><span>izle --canlı</span><i class="imlec"></i></div>
+                <ol class="olaylar" id="olaylar"></ol>
+              </section>
+            </aside>
+           </div>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <!-- Durum çubuğu -->
+    <footer class="status">
+      <span class="seg" id="sApi"><span class="led" id="sLed"></span><span id="sApiMetin">API —</span></span>
+      <span class="seg"><svg class="ic"><use href="#i-cpu" /></svg><span id="sModel">—</span></span>
+      <span class="seg"><span class="k">Bağlam</span><span id="sBaglam">—</span></span>
+      <span class="seg"><svg class="ic"><use href="#i-branch" /></svg><span id="sDal">—</span></span>
+      <span class="seg flex"></span>
+      <span class="seg" id="sOturum">0/0 oturum</span>
+      <span class="seg"><span class="k">ConPTY</span></span>
+      <span class="seg">UTF-8</span>
+      <span class="seg"><svg class="ic"><use href="#i-term" /></svg><span id="sSure">—</span></span>
+      <span class="seg kunye">© 2026 Yusuf GÜNAY · Günay Studio</span>
+    </footer>
+  </div>
+
+  <button class="odak-ipucu" id="odakIpucu" type="button" hidden>odak modu · <kbd>Ctrl ⇧ F</kbd> çık</button>
+
+  <!-- Komut paleti -->
+  <div class="palette" id="palet" hidden>
+    <div class="pal-box" role="dialog" aria-label="Komut paleti">
+      <div class="pal-in">
+        <svg class="ic"><use href="#i-search" /></svg>
+        <input id="paletGiris" type="text" placeholder="Model, proje ya da komut ara…" spellcheck="false" autocomplete="off" />
+        <kbd>Esc</kbd>
+      </div>
+      <div class="pal-list" id="paletListe" role="listbox"></div>
+      <div class="pal-foot"><span><kbd>↑ ↓</kbd> gez</span><span><kbd>Enter</kbd> uygula</span><span><kbd>Esc</kbd> kapat</span></div>
+    </div>
+  </div>
+
+  <script src="node_modules/@xterm/xterm/lib/xterm.js"></script>
+  <script src="node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+EVREN Desktop
+Copyright (c) 2026 Yusuf Günay.
+
+Bu yazılım Yusuf Günay tarafından geliştirilmiştir; bu telif bildirimi korunmalıdır.
+This software was created by Yusuf Günay; this copyright notice must be retained.
+
+Mozilla Public License 2.0 kapsamındaki dosyalarda yaptığınız değişiklikler aynı lisansla açık kalır;
+kendi eklediğiniz ayrı dosyaları istediğiniz lisansla dağıtabilirsiniz.
+
+Bu proje bağımsızdır; T.C. Cumhurbaşkanlığı Savunma Sanayii Başkanlığı (SSB) veya EVREN platformu ile
+resmî bir bağı yoktur. EVREN adı ve markası sahiplerine aittir.
+
+Üçüncü taraf bileşenler kendi lisanslarıyla dağıtılır: Electron (MIT), xterm.js (MIT),
+node-pty (MIT), IBM Plex (SIL Open Font License 1.1).
