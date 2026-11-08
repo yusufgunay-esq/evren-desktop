@@ -6,6 +6,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell, screen } = require('electron
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
+const { StringDecoder } = require('node:string_decoder');
 const pty = require('@homebridge/node-pty-prebuilt-multiarch');
 const motor = require('./motor');
 
@@ -114,28 +115,44 @@ function metinCikar(icerik) {
   return '';
 }
 
-// İlk gerçek kullanıcı mesajı = oturum başlığı. Yalnız dosyanın ilk 256 KB'ı okunur.
-const baslikOnbellek = new Map(); // id -> başlık (bulunanlar bir daha okunmaz)
-function oturumBasligi(dosya, id) {
-  if (baslikOnbellek.has(id)) return baslikOnbellek.get(id);
+// İlk gerçek kullanıcı mesajı = oturum başlığı; ilk yanıtın modeli = kaynak (claude-* ise Claude, değilse EVREN).
+// Başlık ve model bulununca sonuç önbelleğe alınır, dosya bir daha okunmaz.
+const baslikOnbellek = new Map(); // id -> { baslik, kaynak }
+function oturumBilgisi(dosya, id) {
+  const c = baslikOnbellek.get(id);
+  if (c) return c;
   const b = baslikOku(dosya);
-  if (b) baslikOnbellek.set(id, b);
+  if (b.baslik && b.kaynak) baslikOnbellek.set(id, b);
   return b;
 }
 function baslikOku(dosya) {
-  let fd;
+  let fd, baslik = '', kaynak = '';
   try {
     fd = fs.openSync(dosya, 'r');
-    const tampon = Buffer.alloc(256 * 1024);
-    const n = fs.readSync(fd, tampon, 0, tampon.length, 0);
-    for (const satir of tampon.toString('utf8', 0, n).split('\n')) {
-      let j; try { j = JSON.parse(satir); } catch { continue; }
-      if (!j || j.type !== 'user' || j.isMeta || !j.message) continue;
-      const m = metinCikar(j.message.content).replace(/<[^>]+>[\s\S]*?<\/[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-      if (m && !m.startsWith('Caveat:') && !m.startsWith('[Request interrupted')) return m.slice(0, 90);
+    const tampon = Buffer.alloc(512 * 1024);
+    const kod = new StringDecoder('utf8');
+    let konum = 0, kalan = '';
+    // Açılış kayıtları büyük olabilir (ilk yanıt yüzlerce KB sonra gelir): parça parça oku, en çok 6 MB.
+    while (konum < 6 * 1024 * 1024 && !(baslik && kaynak)) {
+      const n = fs.readSync(fd, tampon, 0, tampon.length, konum);
+      if (n <= 0) break;
+      konum += n;
+      const satirlar = (kalan + kod.write(tampon.subarray(0, n))).split('\n');
+      kalan = satirlar.pop(); // yarım satır bir sonraki parçayla tamamlanır
+      for (const satir of satirlar) {
+        let j; try { j = JSON.parse(satir); } catch { continue; }
+        if (!j || !j.message) continue;
+        if (!baslik && j.type === 'user' && !j.isMeta) {
+          const m = metinCikar(j.message.content).replace(/<[^>]+>[\s\S]*?<\/[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+          if (m && !m.startsWith('Caveat:') && !m.startsWith('[Request interrupted')) baslik = m.slice(0, 90);
+        } else if (!kaynak && j.type === 'assistant' && typeof j.message.model === 'string' && j.message.model !== '<synthetic>') {
+          kaynak = /^(claude|opus|sonnet|haiku)/i.test(j.message.model) ? 'claude' : 'evren';
+        }
+        if (baslik && kaynak) break;
+      }
     }
   } catch {} finally { if (fd != null) try { fs.closeSync(fd); } catch {} }
-  return '';
+  return { baslik, kaynak };
 }
 
 function oturumGecmisi(dizin) {
@@ -149,7 +166,7 @@ function oturumGecmisi(dizin) {
     .map((a) => { const d = path.join(klasor, a); try { const s = fs.statSync(d); return { id: a.slice(0, -6), dosya: d, ms: s.mtimeMs, boyut: s.size }; } catch { return null; } })
     .filter((x) => x && x.boyut > 0)
     .sort((a, b) => b.ms - a.ms)
-    .map((x) => ({ id: x.id, baslik: oturumBasligi(x.dosya, x.id), ms: x.ms, canli: simdi - x.ms < CANLI_ESIK_MS }))
+    .map((x) => ({ id: x.id, ...oturumBilgisi(x.dosya, x.id), ms: x.ms, canli: simdi - x.ms < CANLI_ESIK_MS }))
     .filter((x) => x.baslik) // hiç kullanıcı mesajı olmayan (yalnız açılış kaydı) oturumlar listelenmez
     .slice(0, 30);
 }

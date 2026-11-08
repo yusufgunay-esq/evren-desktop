@@ -516,3 +516,7 @@ kbd {
 .kota-bar-dolgu { height: 100%; border-radius: 2px; background: var(--ok); transition: width 0.4s var(--ease), background 0.3s var(--ease); }
 .kota-bar-dolgu.uyari { background: #eab308; }
 .kota-bar-dolgu.kritik { background: #ef4444; }
+
+/* Geçmiş: oturumun hangi uygulamadan geldiği */
+.kaynak { padding: 1px 5px; border-radius: 4px; font-size: 10px; letter-spacing: 0.04em; background: rgba(255, 255, 255, 0.06); color: var(--text-3); }
+.kaynak.evren { color: var(--accent-2); background: var(--accent-bg-2); }

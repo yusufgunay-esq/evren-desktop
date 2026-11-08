@@ -101,7 +101,7 @@ function gecmisCiz() {
     return `
     <div class="row kompakt" role="option" data-id="${esc(g.id)}" title="${esc(g.baslik)}\n${canli ? 'Çalışıyor · ' : ''}${esc(goreli(g.ms / 1000))}\nTıkla: devam et (claude --resume)">
       <div class="row-l"><span class="led${canli ? ' canli' : ''}"></span><span class="row-t">${esc(g.baslik)}</span></div>
-      <div class="row-s mono">${canli ? 'çalışıyor' : 'bitti'} · ${esc(goreli(g.ms / 1000))}</div>
+      <div class="row-s mono">${g.kaynak ? `<span class="kaynak ${g.kaynak}">${g.kaynak}</span> · ` : ''}${canli ? 'çalışıyor' : 'bitti'} · ${esc(goreli(g.ms / 1000))}</div>
     </div>`;
   }).join('');
 }
