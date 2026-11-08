@@ -34,6 +34,8 @@
       <symbol id="i-remote" viewBox="0 0 16 16"><rect x="3.5" y="1.5" width="9" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="11.5" r="1" fill="currentColor"/><path d="M6 4h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></symbol>
       <symbol id="i-chat" viewBox="0 0 16 16"><path d="M2.5 3.5h11a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H6.5l-3 2.5V4.5a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" /></symbol>
       <symbol id="i-close" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></symbol>
+      <symbol id="i-clock" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 4.8V8l2.2 1.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></symbol>
+      <symbol id="i-check-circle" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="m5.2 8 2 2 3.8-4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     </defs>
   </svg>
 
@@ -70,57 +72,56 @@
     <div class="body">
       <!-- Sol kenar paneli -->
       <aside class="side" id="side">
-        <section class="sec" data-sec="baglanti">
-          <header class="sec-h" title="Katla / Genişlet">
-            <svg class="ic sec-ok"><use href="#i-chevron" /></svg>
-            <span class="sec-t">Bağlantı</span>
-            <button class="sec-a" id="yenileBtn" type="button" title="Bağlantıyı yenile"><svg class="ic"><use href="#i-refresh" /></svg></button>
-          </header>
-          <dl class="kv">
-            <dt>Durum</dt><dd><span class="led" id="led"></span><span id="apiDurum">Bağlanıyor…</span></dd>
-            <dt>Gecikme</dt><dd class="mono"><span id="apiMs">—</span></dd>
-            <dt>Kalan kota</dt><dd class="mono"><span id="apiKota" title="Günlük kalan / 5 dk pencere">—</span></dd>
-            <dt>Uç nokta</dt><dd class="mono soluk" title="https://evren-llmapi.ssyz.org.tr">evren-llmapi.ssyz.org.tr</dd>
-            <dt>Anahtar</dt><dd class="mono" id="kasa">—</dd>
-          </dl>
-        </section>
-
-        <section class="sec grow" data-sec="modeller">
-          <header class="sec-h" title="Katla / Genişlet">
-            <svg class="ic sec-ok"><use href="#i-chevron" /></svg>
-            <span class="sec-t">Modeller</span><span class="sec-c mono" id="modelSay">—</span>
-          </header>
-          <div class="list" id="modelList" role="listbox" tabindex="0" aria-label="Modeller"></div>
-        </section>
-
-        <section class="sec grow" data-sec="projeler">
-          <header class="sec-h" title="Katla / Genişlet">
-            <svg class="ic sec-ok"><use href="#i-chevron" /></svg>
-            <span class="sec-t">Projeler</span><span class="sec-c mono" id="projeSay">—</span>
-            <button class="sec-a txt" id="ekleBtn" type="button"><svg class="ic"><use href="#i-plus" /></svg>Ekle</button>
-          </header>
-          <div class="list" id="projeList" role="listbox" tabindex="0" aria-label="Projeler"></div>
-        </section>
-
-        <section class="sec grow" data-sec="gecmis">
-          <header class="sec-h" title="Katla / Genişlet">
-            <svg class="ic sec-ok"><use href="#i-chevron" /></svg>
-            <span class="sec-t">Oturumlar</span><span class="sec-c mono" id="gecmisSay">—</span>
-          </header>
-          <div class="gecmis-ara">
-            <svg class="ic"><use href="#i-search" /></svg>
-            <input id="gecmisAra" type="text" placeholder="Oturum ya da ajan ara…" spellcheck="false" autocomplete="off" aria-label="Oturumlarda ara" />
-          </div>
-          <div class="list" id="gecmisList" role="listbox" tabindex="0" aria-label="Seçili projenin oturumları"></div>
-        </section>
-
-        <footer class="side-foot">
-          <button class="btn primary wide" id="baslaBtn" type="button">
-            <svg class="ic"><use href="#i-play" /></svg><span>Oturum başlat</span><kbd>Enter</kbd>
+        <!-- Kenar Başlık & Yeni Oturum Butonu -->
+        <div class="side-head">
+          <button class="side-yeni-btn" id="baslaBtn" type="button" title="Yeni Oturum Başlat (Enter)">
+            <svg class="ic"><use href="#i-plus" /></svg>
+            <span>Yeni Oturum</span>
+            <kbd>Enter</kbd>
           </button>
+          
+          <div class="side-ara">
+            <svg class="ic"><use href="#i-search" /></svg>
+            <input id="gecmisAra" type="text" placeholder="Oturumlarda ara…" spellcheck="false" autocomplete="off" aria-label="Oturumlarda ara" />
+          </div>
+        </div>
+
+        <!-- Seans Listesi: Tam boy, ferah In Progress / Idle akışı -->
+        <div class="seans-liste" id="gecmisList" role="listbox" tabindex="0" aria-label="Oturum geçmişi">
+          <!-- İlk boyama: kayıtlar okunurken boş liste yerine iskelet -->
+          <div class="seans-iskelet" aria-hidden="true">
+            <div class="seans-iskelet-baslik"></div>
+            <div class="seans-iskelet-kart"></div>
+            <div class="seans-iskelet-kart"></div>
+            <div class="seans-iskelet-kart"></div>
+            <div class="seans-iskelet-baslik"></div>
+            <div class="seans-iskelet-kart"></div>
+            <div class="seans-iskelet-kart"></div>
+          </div>
+        </div>
+
+        <!-- Uyumluluk elemanları (arka plan mantığı için) -->
+        <div id="projeList" hidden></div>
+        <div id="modelList" hidden></div>
+        <span id="projeSay" hidden></span>
+        <span id="modelSay" hidden></span>
+        <span id="gecmisSay" hidden></span>
+        <button id="ekleBtn" hidden type="button"></button>
+
+        <!-- Alt Durum Çubuğu: Sessiz, tek satır, minimal -->
+        <footer class="side-foot">
           <button class="btn danger wide" id="durdurBtn" type="button" hidden>
             <svg class="ic"><use href="#i-stop" /></svg><span>Oturumu sonlandır</span>
           </button>
+          <div class="side-durum" id="sideDurum" title="Uç nokta: evren-llmapi.ssyz.org.tr">
+            <span class="led" id="led"></span>
+            <span class="side-durum-metin">
+              <span id="apiDurum">Bağlanıyor…</span> · <span class="mono" id="apiMs">—</span>
+            </span>
+            <span class="side-durum-kota mono" id="apiKota">—</span>
+            <button class="sec-a" id="yenileBtn" type="button" title="Bağlantıyı yenile"><svg class="ic"><use href="#i-refresh" /></svg></button>
+          </div>
+          <span id="kasa" hidden></span>
         </footer>
       </aside>
 
@@ -336,6 +337,55 @@
 
   <script src="node_modules/@xterm/xterm/lib/xterm.js"></script>
   <script src="node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+  <script src="node_modules/@xterm/addon-webgl/lib/addon-webgl.js"></script>
   <script src="app.js"></script>
+
+  <!-- Yeni Oturum Başlat: Proje ve Model Seçim Modalı -->
+  <div class="modal-ortu" id="yeniOturumModal" hidden>
+    <div class="modal-kutu oturum-kutu" role="dialog" aria-modal="true" aria-labelledby="yeniOturumBaslik">
+      <header class="modal-baslik">
+        <div class="modal-baslik-sol">
+          <svg class="ic"><use href="#i-play" /></svg>
+          <h3 id="yeniOturumBaslik">Yeni Oturum Başlat</h3>
+        </div>
+        <button class="modal-kapat" id="yeniOturumKapatBtn" type="button" aria-label="Kapat">×</button>
+      </header>
+
+      <div class="oturum-modal-govde">
+        <!-- 1. Proje Seçimi -->
+        <div class="oturum-modal-bolum">
+          <div class="oturum-bolum-ust">
+            <span class="oturum-bolum-baslik">Çalışma Alanı (Proje)</span>
+            <button class="btn-baglanti" id="modalKlasorEkleBtn" type="button">
+              <svg class="ic"><use href="#i-plus" /></svg><span>Başka Klasör Seç…</span>
+            </button>
+          </div>
+          <div class="oturum-proje-izgara" id="modalProjeIzgara"></div>
+        </div>
+
+        <!-- 2. Model Seçimi -->
+        <div class="oturum-modal-bolum">
+          <div class="oturum-bolum-ust">
+            <span class="oturum-bolum-baslik">Yapay Zekâ Modeli</span>
+            <span class="oturum-bolum-ipucu">EVREN platformunda işlenir</span>
+          </div>
+          <div class="oturum-model-izgara" id="modalModelIzgara"></div>
+        </div>
+      </div>
+
+      <footer class="oturum-modal-ayak">
+        <div class="oturum-modal-ozet">
+          <span class="oturum-secili-bilgi" id="modalSeciliBilgi">—</span>
+        </div>
+        <div class="oturum-modal-eylemler">
+          <button class="btn ghost" id="yeniOturumVazgecBtn" type="button">Vazgeç</button>
+          <button class="btn primary" id="yeniOturumBaslatBtn" type="button">
+            <svg class="ic"><use href="#i-play" /></svg><span>Oturumu Başlat</span><kbd>Enter</kbd>
+          </button>
+        </div>
+      </footer>
+    </div>
+  </div>
+
 </body>
 </html>

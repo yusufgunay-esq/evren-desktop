@@ -13,6 +13,8 @@ const sakla = {
 const AZ_HAREKET = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const TerminalSinif = window.Terminal || (window.xterm && window.xterm.Terminal);
 const FitSinif = window.FitAddon ? (window.FitAddon.FitAddon || window.FitAddon) : null;
+const WebglSinif = window.WebglAddon ? (window.WebglAddon.WebglAddon || window.WebglAddon) : null;
+let webglAktifSayi = 0; // doğrulama: kaç terminal WebGL ile çiziliyor
 
 const S = {
   modeller: [], projeler: [], model: '', proje: '',
@@ -20,6 +22,7 @@ const S = {
   calisiyor: false, basliyor: false, oturumlar: [], aktif: null,
   fs: Math.min(18, Math.max(11, Number(sakla.oku('fs', 13)) || 13)),
   sohbetAcik: sakla.oku('sohbetAcik', false), sohbetFiltre: 'hepsi',
+  grupKapali: sakla.oku('grupKapali', {}), // { calisiyor: true, bosta: true } — gruplar ayrı ayrı katlanır
 };
 
 
@@ -31,6 +34,14 @@ const seciliModel = () => S.modeller.find((m) => m.id === S.model) || S.modeller
 const seciliProje = () => S.projeler.find((p) => p.yol === S.proje);
 const bekle = (ms) => new Promise((r) => setTimeout(r, ms));
 const ikon = (ad) => `<svg class="ic"><use href="#i-${ad}"/></svg>`;
+const kisaZaman = (ms) => {
+  const f = Math.max(0, (Date.now() - ms) / 1000);
+  if (f < 60) return 'şimdi';
+  if (f < 3600) return `${Math.floor(f / 60)} dk`;
+  if (f < 86400) return `${Math.floor(f / 3600)} sa`;
+  if (f < 86400 * 30) return `${Math.floor(f / 86400)} g`;
+  return `${Math.floor(f / (86400 * 30))} ay`;
+};
 const sureMetni = (ms) => {
   const s = Math.floor(ms / 1000);
   return [Math.floor(s / 3600), Math.floor(s / 60) % 60, s % 60].map((x) => String(x).padStart(2, '0')).join(':');
@@ -95,6 +106,7 @@ let gecmisIstek = 0;
 let gecmisAra = ''; // oturum listesi süzgeci (başlıkta ve ajan tanımında arar)
 S.gecmis = [];
 const acikAjanlar = new Set();
+let gecmisSonHtml = null; // son yazılan liste HTML'i; aynıysa DOM'a dokunulmaz
 const gecmisAcikMi = (g) => S.oturumlar.some((o) => o.canli && o.devam === g.id); // sekme açık; çalıştığı anlamına gelmez
 const kucult = (s) => String(s || '').toLocaleLowerCase('tr');
 
@@ -112,86 +124,119 @@ function kisaModel(ad) {
 
 function gecmisCiz() {
   const el = $('gecmisList');
-  if (!S.proje) { $('gecmisSay').textContent = '—'; el.innerHTML = '<div class="bos-satir">Önce bir proje seçin.</div>'; return; }
-  if (!S.gecmis.length) { el.innerHTML = '<div class="bos-satir">Kayıtlı oturum yok.</div>'; return; }
+  if (!el) return;
+  if (!S.projeler || !S.projeler.length) {
+    if ($('gecmisSay')) $('gecmisSay').textContent = '—';
+    el.innerHTML = '<div class="bos-satir">Henüz kayıtlı proje yok.</div>';
+    return;
+  }
 
   const q = kucult(gecmisAra.trim());
   const eslesir = (g) => kucult(g.baslik).includes(q) ||
+    kucult(g.projeAd || '').includes(q) ||
     (g.altAjanlar || []).some((a) => kucult(a.tanim).includes(q) || kucult(a.tur).includes(q)) ||
     (g.evrenIsleri || []).some((e) => kucult(e.baslik).includes(q) || kucult(e.model).includes(q));
+
   const liste = q ? S.gecmis.filter(eslesir) : S.gecmis;
-  $('gecmisSay').textContent = q ? `${liste.length}/${S.gecmis.length}` : S.gecmis.length;
-  if (!liste.length) { el.innerHTML = '<div class="bos-satir">Aramanla eşleşen oturum yok.</div>'; return; }
+  if ($('gecmisSay')) $('gecmisSay').textContent = q ? `${liste.length}/${S.gecmis.length}` : (S.gecmis.length || '0');
+
+  if (!liste.length) {
+    el.innerHTML = `<div class="bos-satir">${q ? 'Aramayla eşleşen oturum yok.' : 'Kayıtlı oturum bulunamadı.'}</div>`;
+    return;
+  }
 
   const aktifDevam = aktifOturum() ? aktifOturum().devam : null;
-  el.innerHTML = liste.map((g) => {
-    const canli = g.canli; // tur sürüyorsa ya da arka planda çalışan alt ajan/EVREN işi varsa
-    const durum = g.evren ? `EVREN işi · ${g.durum}`
-      : g.turCanli ? 'çalışıyor'
-      : g.ajanCalisiyor ? 'ajan çalışıyor'
-      : g.evrenCalisiyor ? 'EVREN işi çalışıyor'
-      : gecmisAcikMi(g) ? 'açık' : 'bitti';
+  const inProgress = [];
+  const idle = [];
+
+  for (const g of liste) {
+    const calisiyor = g.canli || g.turCanli || (g.calisanAjan > 0) || (g.calisanEvren > 0) || gecmisAcikMi(g);
+    if (calisiyor) inProgress.push(g);
+    else idle.push(g);
+  }
+
+  const kartHtml = (g, calisiyor) => {
     const secili = aktifDevam === g.id;
-    // Üst düzey "EVREN işi" satırı kendi işini taşır; alt ajan ağacı yoktur.
-    const tumAjanlar = Array.isArray(g.altAjanlar) ? g.altAjanlar : [];
-    const tumIsler = Array.isArray(g.evrenIsleri) ? g.evrenIsleri : [];
-    const dalVar = tumAjanlar.length + tumIsler.length > 0;
-    // Arama başlıkta eşleşmediyse yalnız eşleşen ajanlar/işler gösterilir (neden eşleştiği görünsün).
-    const baslikEs = kucult(g.baslik).includes(q);
-    const ajanlar = q && !baslikEs ? tumAjanlar.filter((a) => kucult(a.tanim).includes(q) || kucult(a.tur).includes(q)) : tumAjanlar;
-    const isler = q && !baslikEs ? tumIsler.filter((e) => kucult(e.baslik).includes(q) || kucult(e.model).includes(q)) : tumIsler;
-    const ajanAcik = acikAjanlar.has(g.id) || tumAjanlar.some((a) => a.canli) || tumIsler.some((e) => e.canli) || (!!q && ajanlar.length + isler.length > 0);
-    const calisanToplam = (g.calisanAjan || 0) + tumIsler.filter((e) => e.canli).length;
-    const rozet = calisanToplam ? `${calisanToplam}/${tumAjanlar.length + tumIsler.length}` : `${tumAjanlar.length + tumIsler.length}`;
-    const evrenNit = g.evren ? ` data-evren-id="${esc(g.id)}" data-evren-dizin="${esc(g.evrenIsi ? g.evrenIsi.dizin : '')}" data-evren-model="${esc(g.model || '')}"` : '';
+    const rozet = (g.calisanAjan || 0) + (g.calisanEvren || 0);
     return `
-    <div class="row kompakt gecmis-row${secili ? ' sec-li' : ''}${g.evren ? ' evren-row' : ''}" role="option" data-id="${esc(g.id)}"${evrenNit} title="${esc(g.baslik)}\n${durum} · ${esc(goreli(g.ms / 1000))}">
-      <div class="row-l">
-        <span class="led${canli ? ' canli' : ''}${g.evren && g.durum === 'hata' ? ' kotu' : ''}"></span>
-        <span class="row-t">${esc(g.baslik)}</span>
-        ${g.evren ? '<span class="tag-evren">EVREN işi</span>' : ''}
-        ${dalVar ? `<button class="tag-ajan${calisanToplam ? ' canli' : ''}" data-ajan-toggle="${esc(g.id)}" type="button" title="${tumAjanlar.length + tumIsler.length} alt görev${calisanToplam ? `, ${calisanToplam} çalışıyor` : ''}">${rozet}</button>` : ''}
-      </div>
-      <div class="row-s mono">${durum} · ${esc(goreli(g.ms / 1000))}</div>
-      ${dalVar && ajanAcik ? `
-      <div class="ajan-agac">
-        ${ajanlar.map((a) => `
-          <div class="ajan" title="${esc(a.tanim)}${a.faz ? ' · ' + esc(a.faz) : ''}">
-            <div class="ajan-satir">
-              <span class="ajan-nokta${a.canli ? ' canli' : ''}"></span>
-              <span class="ajan-tanim">${esc(a.tanim)}</span>
-            </div>
-            <div class="ajan-meta">
-              ${a.tur ? `<span class="ajan-tur">${esc(a.tur)}</span>` : ''}
-              ${a.isAkisi ? `<span class="ajan-wf">${esc(a.isAkisiAdi || 'wf')}${a.faz ? ' · ' + esc(a.faz) : ''}</span>` : ''}
-              ${kisaModel(a.model) ? `<span class="ajan-model mono">${esc(kisaModel(a.model))}</span>` : ''}
-              <span class="ajan-zaman mono">${esc(goreli(a.ms / 1000))}</span>
-            </div>
-          </div>
-        `).join('')}
-        ${isler.map((e) => `
-          <div class="ajan evren-is${evrenSinif(e.durum)}" data-evren-id="${esc(e.id)}" data-evren-dizin="${esc(e.dizin || '')}" data-evren-model="${esc(e.model || '')}" role="button" tabindex="0" title="${esc(e.baslik)} · ${esc(e.durum)}${e.dizin ? ' · ' + esc(e.dizin) : ''}\nDevam etmek için tıkla">
-            <div class="ajan-satir">
-              <span class="ajan-nokta${evrenSinif(e.durum)}"></span>
-              <span class="ajan-tanim">${esc(e.baslik)}</span>
-            </div>
-            <div class="ajan-meta">
-              <span class="ajan-tur evren">EVREN</span>
-              ${kisaModel(e.model) ? `<span class="ajan-model mono">${esc(kisaModel(e.model))}</span>` : ''}
-              <span class="ajan-zaman mono">${esc(goreli(e.ms / 1000))}</span>
-            </div>
-          </div>
-        `).join('')}
-      </div>` : ''}
-    </div>`;
-  }).join('');
+      <div class="seans-kart${secili ? ' sec-li' : ''}" role="option" aria-selected="${secili}" data-id="${esc(g.id)}" data-yol="${esc(g.projeYol)}" title="${esc(g.baslik)}\n${esc(g.projeAd)} · ${esc(goreli(g.ms / 1000))}">
+        <div class="seans-satir-ust">
+          <span class="seans-baslik">${esc(g.baslik)}</span>
+          ${calisiyor ? `
+            <span class="seans-durum-canli">
+              <span class="led canli"></span>
+              ${rozet > 0 ? `<span class="seans-rozet mono">${rozet}</span>` : ''}
+            </span>
+          ` : `
+            <span class="seans-zaman">${kisaZaman(g.ms)}</span>
+          `}
+        </div>
+        <div class="seans-satir-alt">
+          <svg class="ic seans-klasor"><use href="#i-folder" /></svg>
+          <span class="seans-proje">${esc(g.projeAd)}</span>
+          ${g.evren ? '<span class="tag-evren">EVREN</span>' : ''}
+        </div>
+      </div>`;
+  };
+
+  // Grup başlığı gerçek bir düğme: Enter/Space ile katlanır, ok solda, sayı sağda hep görünür.
+  // Arama varken eşleşen gruplar geçici olarak açık gösterilir; kayıtlı katlanma durumu değişmez.
+  const grupHtml = (anahtar, etiket, kayitlar, calisiyor) => {
+    if (!kayitlar.length) return '';
+    const kapali = !!S.grupKapali[anahtar] && !q;
+    return `
+      <div class="seans-grup${kapali ? ' kapali' : ''}" data-grup="${anahtar}">
+        <button type="button" class="seans-grup-baslik" aria-expanded="${!kapali}" aria-controls="grup-${anahtar}" data-grup-dugme="${anahtar}">
+          <svg class="ic grup-ok" aria-hidden="true"><use href="#i-chevron" /></svg>
+          <span>${etiket}</span>
+          <span class="grup-sayi mono">${kayitlar.length}</span>
+        </button>
+        <div class="seans-grup-govde" id="grup-${anahtar}">
+          <div class="seans-grup-ic">${kayitlar.map((g) => kartHtml(g, calisiyor)).join('')}</div>
+        </div>
+      </div>`;
+  };
+
+  const html = grupHtml('calisiyor', 'Çalışıyor', inProgress, true) + grupHtml('bosta', 'Boşta', idle, false);
+
+  // Aynı HTML'i yeniden yazmayız: kaydırma yeri ve fare altındaki satır bozulmasın.
+  if (html === gecmisSonHtml) return;
+  gecmisSonHtml = html;
+  const kaydirma = el.scrollTop;
+  el.innerHTML = html;
+  el.scrollTop = kaydirma;
 }
+
+// Grup başlığına tıklama: yalnız sınıf ve kayıt değişir, liste yeniden çizilmez (animasyon akıcı kalır).
+function grupKatla(dugme) {
+  const anahtar = dugme.dataset.grupDugme;
+  if (!anahtar) return;
+  const acik = dugme.getAttribute('aria-expanded') !== 'true';
+  dugme.setAttribute('aria-expanded', String(acik));
+  const grup = dugme.closest('.seans-grup');
+  if (grup) grup.classList.toggle('kapali', !acik);
+  S.grupKapali = { ...S.grupKapali, [anahtar]: !acik };
+  sakla.yaz('grupKapali', S.grupKapali);
+}
+
 async function gecmisYukle() {
-  const yol = S.proje, no = ++gecmisIstek;
-  if (!yol) { S.gecmis = []; gecmisCiz(); return; }
-  const l = await window.evren.gecmis(yol).catch(() => []);
-  if (no !== gecmisIstek) return; // bu arada başka proje seçildi
-  S.gecmis = Array.isArray(l) ? l : [];
+  const no = ++gecmisIstek;
+  if (!S.projeler || !S.projeler.length) { S.gecmis = []; gecmisCiz(); return; }
+
+  const sonuclar = await Promise.all(
+    S.projeler.map(async (p) => {
+      const list = await window.evren.gecmis(p.yol).catch(() => []);
+      const ad = p.ad || (p.yol ? p.yol.split(/[\\/]/).filter(Boolean).pop() : 'Proje');
+      return (Array.isArray(list) ? list : []).map((x) => ({
+        ...x,
+        projeAd: ad,
+        projeYol: p.yol,
+      }));
+    })
+  );
+  if (no !== gecmisIstek) return;
+  const hepsi = sonuclar.flat().sort((a, b) => b.ms - a.ms);
+  S.gecmis = hepsi;
   gecmisCiz();
 }
 function gecmisAc(id) {
@@ -372,7 +417,7 @@ function baglantiYaz() {
 
     if (kotaKalanSayi) kotaKalanSayi.textContent = gunlukKalan.toLocaleString('tr-TR');
     if (kotaKullanilanMetin) {
-      kotaKullanilanMetin.textContent = `${gunlukKullanilan.toLocaleString('tr-TR')} / ${gunlukLimit.toLocaleString('tr-TR')} kullanıldı (%${yuzde.toFixed(1)})`;
+      kotaKullanilanMetin.textContent = `${gunlukKullanilan.toLocaleString('tr-TR')} / ${gunlukLimit.toLocaleString('tr-TR')} kullanıldı`;
     }
     if (kotaSifirlanmaMetin) {
       kotaSifirlanmaMetin.textContent = `Sıfırlanma: 03:00 TSİ${sifirlanmaFarkMetni}`;
@@ -509,20 +554,78 @@ async function terminalOlustur(o) {
   t.open(el);
   const f = FitSinif ? new FitSinif() : null;
   if (f) t.loadAddon(f);
+  // WebGL karolama: desteklenmezse sessizce canvas çizimine düşer (uygulama çalışmaya devam eder).
+  let webgl = null;
+  if (WebglSinif) {
+    try {
+      webgl = new WebglSinif();
+      webgl.onContextLoss(() => { try { webgl.dispose(); } catch {} webgl = null; });
+      t.loadAddon(webgl);
+      webglAktifSayi++;
+      el.dataset.webgl = '1';
+    } catch {
+      webgl = null;
+      el.dataset.webgl = '0';
+    }
+  }
   t.onData((veri) => { if (o.pid) window.evren.yaz(o.pid, veri); });
   t.attachCustomKeyEventHandler((e) => {
     if (e.type !== 'keydown') return true;
-    if (e.ctrlKey && e.shiftKey && e.code === 'KeyC' && t.hasSelection()) { navigator.clipboard.writeText(t.getSelection()); return false; }
-    if (e.ctrlKey && e.shiftKey && e.code === 'KeyV') { navigator.clipboard.readText().then((x) => o.pid && window.evren.yaz(o.pid, x)); return false; }
+    if (e.ctrlKey && e.code === 'KeyC') {
+      if (t.hasSelection()) {
+        navigator.clipboard.writeText(t.getSelection());
+        return false;
+      }
+      return !e.shiftKey;
+    }
+    if (e.ctrlKey && e.code === 'KeyV') {
+      e.preventDefault();
+      navigator.clipboard.readText().then((x) => {
+        if (x) t.paste(x);
+      }).catch(() => {});
+      return false;
+    }
     if (e.ctrlKey && e.shiftKey && GENEL_TUS.has(e.code)) return false;
     if (e.ctrlKey && e.code === 'Tab') return false;
     return true;
   });
-  Object.assign(o, { el, term: t, fit: f });
+  el.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (t.hasSelection()) {
+      navigator.clipboard.writeText(t.getSelection());
+      t.clearSelection();
+    } else {
+      navigator.clipboard.readText().then((x) => {
+        if (x) t.paste(x);
+      }).catch(() => {});
+    }
+  });
+  Object.assign(o, { el, term: t, fit: f, webgl });
 }
 
 const aktifOturum = () => S.oturumlar.find((o) => o.id === S.aktif) || null;
 const aktifTerm = () => { const o = aktifOturum(); return o ? o.term : null; };
+
+// Kenar paneli/odak geçişi sürerken tuval ölçümü ertelenir: ölçüm geçişin SONUNDA bir kez yapılır
+// (geçiş hiç olmazsa 320 ms'lik yedek zamanlayıcı devreye girer). Geçiş boyunca ResizeObserver yok sayılır.
+let gecisSuruyor = false, gecisZaman = 0;
+function gecisSonrasi(f) {
+  gecisSuruyor = true;
+  clearTimeout(gecisZaman);
+  const side = document.querySelector('.side');
+  let bitti = false;
+  const bitir = () => {
+    if (bitti) return;
+    bitti = true;
+    if (side) side.removeEventListener('transitionend', dinle);
+    clearTimeout(gecisZaman);
+    gecisSuruyor = false;
+    f();
+  };
+  const dinle = (e) => { if (e.target === side && e.propertyName === 'width') bitir(); };
+  if (side) side.addEventListener('transitionend', dinle);
+  gecisZaman = setTimeout(bitir, 320);
+}
 
 let sigdirZaman = 0;
 function sigdir() {
@@ -543,9 +646,82 @@ function fsDegis(d) {
   sigdir();
 }
 
+// Model adı / etiketinden EVREN model kimliğini çözer
+function modelKimligiCoz(metin) {
+  if (!metin) return null;
+  const s = String(metin).toLowerCase().trim();
+  for (const m of S.modeller || []) {
+    if (m.id && s === m.id.toLowerCase()) return m.id;
+    if (m.ad && (s === m.ad.toLowerCase() || s.includes(m.ad.toLowerCase()))) return m.id;
+  }
+  if (s.includes('qwen') && (s.includes('3.8') || s.includes('flash') || s.includes('next'))) return 'qwen3.8-flash-next';
+  if (s.includes('qwen') && s.includes('vl')) return 'qwen3-vl-30b';
+  if (s.includes('deepseek')) return 'deepseek-v4.1-flash';
+  if (s.includes('glm')) return 'glm-5.3';
+  if (s.includes('gemma')) return 'gemma-4-31b';
+  if (s.includes('opus')) return 'claude-opus-5-5';
+  if (s.includes('sonnet')) return 'claude-sonnet-5-5';
+  if (s.includes('haiku')) return 'claude-haiku-5-5';
+  return null;
+}
+
+// Oturumun terminal tamponunu geriye doğru tarayarak gerçekte çalışan modeli tespit eder
+function oturumModeliTara(o) {
+  if (!o || !o.term || !o.term.buffer || !o.term.buffer.active) return;
+  const b = o.term.buffer.active;
+  const sonIdx = b.length - 1;
+  const ilkIdx = Math.max(0, sonIdx - 80);
+  for (let i = sonIdx; i >= ilkIdx; i--) {
+    const l = b.getLine(i);
+    if (!l) continue;
+    const str = l.translateToString(true);
+    if (!str) continue;
+
+    // 1. "Set model to `?Model Adı`?"
+    const mSet = str.match(/Set model to [`'\"]?([^`'\"\r\n()]+)/i);
+    if (mSet) {
+      const cozulen = modelKimligiCoz(mSet[1]);
+      if (cozulen) {
+        if (cozulen !== o.model) {
+          o.model = cozulen;
+          if (o.pid && window.evren && window.evren.modelGuncelle) window.evren.modelGuncelle(o.pid, cozulen);
+          sekmeleriCiz();
+          durumYaz();
+        }
+        return;
+      }
+    }
+
+    // 2. "Model Adı (hizli...) • API/Subscription Usage Billing"
+    const mHeader = str.match(/(?:^|\r|\n)\s*([^\r\n•·]+?)\s*[•·]\s*(?:API|Subscription)\s*Usage/i);
+    if (mHeader) {
+      const cozulen = modelKimligiCoz(mHeader[1]);
+      if (cozulen) {
+        if (cozulen !== o.model) {
+          o.model = cozulen;
+          if (o.pid && window.evren && window.evren.modelGuncelle) window.evren.modelGuncelle(o.pid, cozulen);
+          sekmeleriCiz();
+          durumYaz();
+        }
+        return;
+      }
+    }
+  }
+}
+
+function oturumModeliTaraGecikmeli(o) {
+  if (!o) return;
+  clearTimeout(o._modelTaraTimer);
+  o._modelTaraTimer = setTimeout(() => oturumModeliTara(o), 120);
+}
+
 // ---------- sekmeler ----------
 function sekmeleriCiz() {
-  const kisaModel = (id) => (id || '').replace(/-(flash|next)$/, '').slice(0, 18);
+  const kisaModel = (id) => {
+    if (!id) return '';
+    if (id.startsWith('claude-')) return id.replace(/^claude-/, '').replace(/-5-5$/, '-5.5');
+    return id.replace(/-flash-next$/, '').replace(/-(flash|next)$/, '').slice(0, 18);
+  };
   $('sekmeler').innerHTML =
     `<button class="tab ana${S.aktif == null ? ' aktif' : ''}" data-id="ana" role="tab" title="Yeni oturum ekranı (Ctrl+Shift+T)">${ikon('term')}<span>ana</span></button>` +
     S.oturumlar.map((o, i) => `
@@ -583,6 +759,7 @@ function sekmeSec(id) {
   if (o) o.yeni = false;
   for (const x of S.oturumlar) if (x.el) x.el.hidden = x.id !== S.aktif;
   if (!o) brifGoster(); else brifGizle();
+  if (o) oturumModeliTara(o);
   sekmeleriCiz();
   gecmisCiz();
   if (o && o.term) { sigdir(); setTimeout(() => o.term.focus(), 0); }
@@ -661,7 +838,7 @@ async function basla(devamId, secenekler) {
   bekleyenVeri.delete(o.pid);
   o.basladi = Date.now();
   olay('OTURUM', `#${S.oturumlar.indexOf(o) + 1} başladı · ${m.id} · ${o.proje}`, 'iyi');
-  o.sayac = setInterval(() => { if (o.id === S.aktif) sureYaz(); }, 1000);
+  o.sayac = setInterval(() => { if (o.id === S.aktif) { sureYaz(); oturumModeliTara(o); } }, 1000);
   sekmeleriCiz();
   sigdir();
   o.term.focus();
@@ -697,7 +874,7 @@ function sideToggle() {
   const kapali = !$('app').classList.contains('side-kapali');
   $('app').classList.toggle('side-kapali', kapali);
   sakla.yaz('sideKapali', kapali);
-  setTimeout(() => { sigdir(); Grafik.olc(); }, 240);
+  gecisSonrasi(() => { sigdir(); Grafik.olc(); });
 }
 
 // Odak modu: yalnız terminal (ve başlık çubuğu) kalır; kenar paneli, sekme şeridi, durum çubuğu gizlenir.
@@ -707,7 +884,7 @@ function odakToggle(zorla) {
   const ip = $('odakIpucu');
   ip.hidden = !acik;
   if (acik) { ip.classList.remove('sondu'); void ip.offsetWidth; ip.classList.add('sondu'); }
-  setTimeout(() => { sigdir(); Grafik.olc(); }, 240);
+  gecisSonrasi(() => { sigdir(); Grafik.olc(); });
 }
 
 // ---------- konuşma / sohbet geçmişi paneli ----------
@@ -913,6 +1090,27 @@ $('paletListe').addEventListener('mousemove', (e) => {
 $('paletListe').addEventListener('click', (e) => { const r = e.target.closest('.pal-i'); if (r) paletUygula(Number(r.dataset.i)); });
 $('palet').addEventListener('mousedown', (e) => { if (e.target === $('palet')) paletKapat(); });
 
+// ---------- paylaşılan kare zamanlayıcı ----------
+// Tek requestAnimationFrame döngüsü; tüm paneller (ana grafik, gecikme, ileride eklenecekler)
+// aynı kareden beslenir. Böylece panel sayısı artsa da yalnız bir zamanlayıcı çalışır.
+const Kare = (() => {
+  const aboneler = new Set();
+  let raf = 0;
+  function dongu(now) {
+    raf = 0;
+    for (const f of [...aboneler]) { try { f(now); } catch (e) { console.error(e); } }
+    if (aboneler.size) raf = requestAnimationFrame(dongu);
+  }
+  function uyandir() { if (!raf && !document.hidden && aboneler.size) raf = requestAnimationFrame(dongu); }
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { cancelAnimationFrame(raf); raf = 0; } else uyandir(); });
+  return {
+    abone(f) { aboneler.add(f); uyandir(); return () => { aboneler.delete(f); }; },
+    durdur() { cancelAnimationFrame(raf); raf = 0; },
+    get calisiyor() { return !!raf; },
+    aboneSayisi: () => aboneler.size,
+  };
+})();
+
 // ---------- durum sütunu: gecikme grafiği ----------
 const kanvas = (id) => {
   const cv = $(id), c = cv.getContext('2d');
@@ -962,12 +1160,14 @@ const Gecikme = (() => {
       c.fillText(`${mx}`, P.l + W + 8, P.t + 2); c.fillText(`${mn}`, P.l + W + 8, P.t + H - 2);
       $('gecOzet').textContent = `ort ${Math.round(gecerli.reduce((s, x) => s + x, 0) / gecerli.length)} ms · ${gecerli.length}/24`;
     }
-    // tarama çizgisi
-    const sx = P.l + ((t / 5) % 1) * W;
-    const sg = c.createLinearGradient(sx - 30, 0, sx, 0);
-    sg.addColorStop(0, 'rgba(255,255,255,0)'); sg.addColorStop(1, 'rgba(255,255,255,0.07)');
-    c.fillStyle = sg; c.fillRect(sx - 30, P.t, 30, H);
-    c.fillStyle = 'rgba(255,255,255,0.22)'; c.fillRect(sx, P.t, 1, H);
+    // tarama çizgisi yalnız veri varken (boş grafikte gereksiz hareket olmasın)
+    if (gecerli.length >= 2) {
+      const sx = P.l + ((t / 5) % 1) * W;
+      const sg = c.createLinearGradient(sx - 30, 0, sx, 0);
+      sg.addColorStop(0, 'rgba(255,255,255,0)'); sg.addColorStop(1, 'rgba(255,255,255,0.07)');
+      c.fillStyle = sg; c.fillRect(sx - 30, P.t, 30, H);
+      c.fillStyle = 'rgba(255,255,255,0.22)'; c.fillRect(sx, P.t, 1, H);
+    }
   }
   return { olc: k.olc, ciz };
 })();
@@ -978,7 +1178,7 @@ const Grafik = (() => {
   const cv = document.createElement('canvas');
   kutu.prepend(cv);
   const c = cv.getContext('2d', { alpha: false });
-  let w = 0, h = 0, dpr = 1, raf = 0, son = 0, kart = null, fare = null, isabet = [];
+  let w = 0, h = 0, dpr = 1, bag = null, son = 0, kart = null, fare = null, isabet = [];
   const t0 = performance.now();
   const yildiz = Array.from({ length: 38 }, () => ({
     x: Math.random(), y: Math.random(), vx: (Math.random() - 0.5) * 0.008, vy: (Math.random() - 0.5) * 0.008, r: Math.random() * 1.1 + 0.5,
@@ -993,7 +1193,7 @@ const Grafik = (() => {
     const k = kutu.querySelector('.ops').getBoundingClientRect();
     Gecikme.olc();
     kart = { x: k.left - b.left, y: k.top - b.top, w: k.width, h: k.height };
-    if (!raf) ciz(performance.now(), true);
+    if (!bag) ciz(performance.now(), true);
   }
 
   const bez = (p0, c0, p1, t) => {
@@ -1035,7 +1235,6 @@ const Grafik = (() => {
   }
 
   function ciz(now, zorla) {
-    raf = zorla ? raf : requestAnimationFrame(ciz);
     if (!zorla && now - son < 33) return; // ~30 kare/sn yeter, işlemciyi yormaz
     const dt = Math.min(0.1, (now - son) / 1000 || 0);
     son = now;
@@ -1147,25 +1346,104 @@ const Grafik = (() => {
     d.sag ? projeSec(d.o.id) : modelSec(d.o.id);
   });
 
-  new ResizeObserver(olc).observe(kutu);
+  new ResizeObserver(() => { if (!gecisSuruyor) olc(); }).observe(kutu);
   document.addEventListener('visibilitychange', () => (document.hidden ? dur() : basla()));
 
   function basla() {
-    if (raf || document.hidden || kutu.hidden || S.aktif != null) return;
+    if (bag || document.hidden || kutu.hidden || S.aktif != null) return;
     olc();
     if (AZ_HAREKET) { ciz(performance.now(), true); return; }
     son = 0;
-    raf = requestAnimationFrame(ciz);
+    bag = Kare.abone((now) => ciz(now));
   }
-  function dur() { cancelAnimationFrame(raf); raf = 0; }
+  function dur() {
+    if (!bag) return;
+    bag();
+    bag = null;
+  }
   return { basla, dur, olc };
 })();
+
+
+// ---------- Yeni Oturum Başlat Modalı: Proje ve Model Seçimi ----------
+let modalSecilenProje = '';
+let modalSecilenModel = '';
+
+function yeniOturumModalGuncelle() {
+  const pIzgara = $('modalProjeIzgara');
+  const mIzgara = $('modalModelIzgara');
+  if (!pIzgara || !mIzgara) return;
+
+  if (!modalSecilenProje && S.projeler.length) modalSecilenProje = S.proje || S.projeler[0].yol;
+  if (!modalSecilenModel && S.modeller.length) modalSecilenModel = S.model || S.modeller[0].id;
+
+  // Proje kartları
+  pIzgara.innerHTML = S.projeler.map((p) => `
+    <button class="oturum-secim-kart${p.yol === modalSecilenProje ? ' aktif' : ''}" type="button" data-proje="${esc(p.yol)}">
+      <div class="oturum-secim-kart-ust">
+        <span class="oturum-secim-kart-ad">${esc(p.ad)}</span>
+        ${p.dal ? `<span class="tag mono">${esc(p.dal)}</span>` : ''}
+      </div>
+      <span class="oturum-secim-kart-alt mono">${esc(kisaYol(p.yol, 28))}</span>
+    </button>
+  `).join('');
+
+  // Model kartları
+  mIzgara.innerHTML = S.modeller.map((m) => `
+    <button class="oturum-secim-kart${m.id === modalSecilenModel ? ' aktif' : ''}" type="button" data-model="${esc(m.id)}">
+      <div class="oturum-secim-kart-ust">
+        <span class="oturum-secim-kart-ad">${esc(m.ad || m.id)}</span>
+        <span class="tag mono">${kisaBaglam(m.baglamSayisi)}</span>
+      </div>
+      ${m.not ? `<span class="oturum-secim-kart-alt">${esc(m.not)}</span>` : ''}
+    </button>
+  `).join('');
+
+  const pObj = S.projeler.find((p) => p.yol === modalSecilenProje);
+  const mObj = S.modeller.find((m) => m.id === modalSecilenModel);
+  const pAd = pObj ? pObj.ad : 'Proje seçilmedi';
+  const mAd = mObj ? (mObj.ad || mObj.id) : 'Model seçilmedi';
+
+  if ($('modalSeciliBilgi')) {
+    $('modalSeciliBilgi').innerHTML = `Seçili: <b>${esc(pAd)}</b> · ${esc(mAd)}`;
+  }
+}
+
+// Açık modal varken tuval döngüsü durur; modal kapanınca kaldığı yerden sürer.
+function modalDurumGuncelle() {
+  const acik = [...document.querySelectorAll('.modal-ortu')].some((m) => !m.hidden);
+  if (acik) Grafik.dur(); else Grafik.basla();
+}
+
+function yeniOturumModalAc() {
+  modalSecilenProje = S.proje || (S.projeler[0] ? S.projeler[0].yol : '');
+  modalSecilenModel = S.model || (S.modeller[0] ? S.modeller[0].id : '');
+  yeniOturumModalGuncelle();
+  const m = $('yeniOturumModal');
+  if (m) m.hidden = false;
+  modalDurumGuncelle();
+}
+
+function yeniOturumModalKapat() {
+  const m = $('yeniOturumModal');
+  if (m) m.hidden = true;
+  modalDurumGuncelle();
+}
+
+function yeniOturumBaslat() {
+  const yol = modalSecilenProje || S.proje;
+  const modelId = modalSecilenModel || S.model;
+  yeniOturumModalKapat();
+  if (yol && yol !== S.proje) projeSec(yol);
+  if (modelId && modelId !== S.model) modelSec(modelId);
+  basla(null, { dizin: yol, modelId });
+}
 
 // ---------- olaylar ----------
 listeKlavye('modelList', () => ({ liste: S.modeller.map((m) => m.id), deger: S.model }), modelSec);
 listeKlavye('projeList', () => ({ liste: S.projeler.map((p) => p.yol), deger: S.proje }), projeSec);
-$('baslaBtn').addEventListener('click', basla);
-$('baslaBtn2').addEventListener('click', basla);
+$('baslaBtn').addEventListener('click', () => yeniOturumModalAc());
+$('baslaBtn2').addEventListener('click', () => yeniOturumModalAc());
 $('durdurBtn').addEventListener('click', durdur);
 $('ekleBtn').addEventListener('click', klasorEkle);
 $('yenileBtn').addEventListener('click', apiYenile);
@@ -1201,37 +1479,16 @@ if ($('gecmisAra')) {
   });
 }
 $('gecmisList').addEventListener('click', (e) => {
-  const tog = e.target.closest('[data-ajan-toggle]');
-  if (tog) {
-    e.stopPropagation();
-    const id = tog.dataset.ajanToggle;
-    if (acikAjanlar.has(id)) acikAjanlar.delete(id);
-    else acikAjanlar.add(id);
-    gecmisCiz();
-    return;
+  const baslik = e.target.closest('.seans-grup-baslik');
+  if (baslik) { grupKatla(baslik); return; }
+  const kart = e.target.closest('.seans-kart');
+  if (!kart) return;
+  const id = kart.dataset.id;
+  const yol = kart.dataset.yol;
+  if (yol && yol !== S.proje) {
+    projeSec(yol);
   }
-  // EVREN işi satırı (ağaç içinde ya da üst düzey): kendi dizin/modeliyle sürdür, üst oturumun tıklamasına karışma.
-  const ei = e.target.closest('[data-evren-id]');
-  if (ei) {
-    e.stopPropagation();
-    evrenIsiniSurdur(ei);
-    return;
-  }
-  const r = e.target.closest('.row');
-  if (r) gecmisAc(r.dataset.id);
-});
-document.querySelectorAll('.side .sec').forEach((sec) => {
-  const ad = sec.dataset.sec;
-  if (!ad) return;
-  if (sakla.oku('katli_' + ad, false)) sec.classList.add('katli');
-  const h = sec.querySelector('.sec-h');
-  if (h) {
-    h.addEventListener('click', (e) => {
-      if (e.target.closest('.sec-a') || e.target.closest('button')) return;
-      const k = sec.classList.toggle('katli');
-      sakla.yaz('katli_' + ad, k);
-    });
-  }
+  gecmisAc(id);
 });
 $('sekmeler').addEventListener('click', (e) => {
   const x = e.target.closest('[data-kapat]');
@@ -1261,6 +1518,7 @@ window.evren.veriDinle((pid, veri) => {
   if (!o) { const l = bekleyenVeri.get(pid) || []; l.push(veri); bekleyenVeri.set(pid, l); return; }
   o.term.write(veri);
   if (o.id !== S.aktif && !o.yeni) { o.yeni = true; sekmeleriCiz(); } // arka planda çıktı: sekmede işaret
+  oturumModeliTaraGecikmeli(o);
 });
 window.evren.cikisDinle((pid, bilgi) => oturumBitti(pid, bilgi));
 new ResizeObserver(() => sigdir()).observe($('terminaller'));
@@ -1294,12 +1552,14 @@ async function kumandaModalAc() {
   const modal = $('kumandaModal');
   if (!modal) return;
   modal.hidden = false;
+  modalDurumGuncelle();
   try { await kumandaBilgiCiz(await window.evren.remoteBilgi()); } catch (e) {}
 }
 
 function kumandaModalKapat() {
   const modal = $('kumandaModal');
   if (modal) modal.hidden = true;
+  modalDurumGuncelle();
 }
 
 function kumandaDurumGuncelle(bilgi) {
@@ -1385,7 +1645,45 @@ if (S.sohbetAcik) {
 $('fsMetin').textContent = S.fs;
 yukle().then(() => {
   if (new URLSearchParams(location.search).get('palet')) paletAc();
-  if (new URLSearchParams(location.search).get('kumanda')) setTimeout(kumandaModalAc, 250); // test: modalı açık yakala
+  if (new URLSearchParams(location.search).get('kumanda')) setTimeout(kumandaModalAc, 250);
+  if (new URLSearchParams(location.search).get('modal')) setTimeout(yeniOturumModalAc, 350); // test: modalı açık yakala
   const n = Number(new URLSearchParams(location.search).get('oturum') || 0);
   if (n) (async () => { for (let i = 0; i < n; i++) { if (i) projeSec((S.projeler[i] || S.projeler[0]).yol); await basla(); await bekle(700); } const t = aktifTerm(); if (t && new URLSearchParams(location.search).get('yaz')) window.evren.yaz(aktifOturum().pid, 'echo EVREN coklu oturum testi' + String.fromCharCode(13)); if (new URLSearchParams(location.search).get('odak')) odakToggle(true); })();
 });
+
+
+// Yeni Oturum Modalı Olayları
+if ($('yeniOturumKapatBtn')) $('yeniOturumKapatBtn').addEventListener('click', yeniOturumModalKapat);
+if ($('yeniOturumVazgecBtn')) $('yeniOturumVazgecBtn').addEventListener('click', yeniOturumModalKapat);
+if ($('yeniOturumBaslatBtn')) $('yeniOturumBaslatBtn').addEventListener('click', yeniOturumBaslat);
+if ($('modalKlasorEkleBtn')) $('modalKlasorEkleBtn').addEventListener('click', async () => {
+  const sec = await klasorEkle();
+  if (sec) {
+    modalSecilenProje = sec.yol;
+    yeniOturumModalGuncelle();
+  }
+});
+
+if ($('modalProjeIzgara')) {
+  $('modalProjeIzgara').addEventListener('click', (e) => {
+    const k = e.target.closest('.oturum-secim-kart');
+    if (!k) return;
+    modalSecilenProje = k.dataset.proje;
+    yeniOturumModalGuncelle();
+  });
+}
+
+if ($('modalModelIzgara')) {
+  $('modalModelIzgara').addEventListener('click', (e) => {
+    const k = e.target.closest('.oturum-secim-kart');
+    if (!k) return;
+    modalSecilenModel = k.dataset.model;
+    yeniOturumModalGuncelle();
+  });
+}
+
+if ($('yeniOturumModal')) {
+  $('yeniOturumModal').addEventListener('click', (e) => {
+    if (e.target === $('yeniOturumModal')) yeniOturumModalKapat();
+  });
+}

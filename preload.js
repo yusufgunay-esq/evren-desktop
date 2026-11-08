@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('evren', {
   klasorSec: () => ipcRenderer.invoke('klasor-sec'),
   baslat: (secim) => ipcRenderer.invoke('baslat', secim),
   gecmis: (dizin) => ipcRenderer.invoke('gecmis', dizin),
+  gecmisBlok: () => ipcRenderer.invoke('gecmis-blok'), // ölçüm: ana süreçte geçmiş taraması için harcanan süre
   sohbetGecmisi: (id) => ipcRenderer.invoke('sohbet-gecmisi', id),
   yaz: (id, veri) => ipcRenderer.invoke('yaz', id, veri),
   boyut: (id, olcu) => ipcRenderer.invoke('boyut', id, olcu),
@@ -26,4 +27,5 @@ contextBridge.exposeInMainWorld('evren', {
   remoteYenile: () => ipcRenderer.invoke('remote:yenile'), // yeni token üret, istemcileri kopar
   remoteIpSec: (ip) => ipcRenderer.invoke('remote:ip-sec', ip), // QR'da kullanılacak yerel IP
   remoteDinle: (f) => ipcRenderer.on('remote:durum', (_e, bilgi) => f(bilgi)),
+  modelGuncelle: (id, modelId) => ipcRenderer.invoke('model-guncelle', { id, modelId }),
 });

@@ -8,6 +8,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell, screen } = require('electron
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
+const { Worker } = require('node:worker_threads');
 const pty = require('@homebridge/node-pty-prebuilt-multiarch');
 const motor = require('./motor');
 const gecmis = require('./gecmis');
@@ -189,11 +190,10 @@ async function oturumBaslat({ modelId, dizin, cols, rows, devam }) {
     }, 1500);
     if (ara.unref) ara.unref();
   }
-  bu.onData((veri) => {
-    if (pencere && !pencere.isDestroyed()) pencere.webContents.send('pty:veri', id, veri);
-    if (remoteSunucu) remoteSunucu.ptyCiktiEkle(id, veri);
-  });
+  bu.onData((veri) => ptyTamponla(id, veri));
   bu.onExit(({ exitCode }) => {
+    ptyBosalt(id); // son çıktı, çıkış bildiriminden ÖNCE geçsin (sıra korunur)
+    ptyTampon.delete(id);
     if (pencere && !pencere.isDestroyed()) pencere.webContents.send('pty:cikis', id, { kod: exitCode });
     kabuklar.delete(id);
     if (remoteSunucu) remoteSunucu.oturumKapandi(id, exitCode);
@@ -205,6 +205,27 @@ async function oturumBaslat({ modelId, dizin, cols, rows, devam }) {
   }
   ayarYaz({ sonModel: model.id, sonKlasorler: [dizin, ...(ayarOku().sonKlasorler || []).filter((x) => x !== dizin)].slice(0, 8) });
   return { id, model: model.id, modelAd: model.ad || model.id, dizin, proje: bilgi.proje, devam: bilgi.devam };
+}
+
+// PTY çıktısı ~8 ms'lik pencerede birleştirilir: yoğun yazımda IPC tur sayısı düşer, sıra korunur.
+const ptyTampon = new Map(); // kimlik -> { parcalar: [], z: zamanlayıcı }
+function ptyTamponla(id, veri) {
+  let t = ptyTampon.get(id);
+  if (!t) { t = { parcalar: [], z: 0 }; ptyTampon.set(id, t); }
+  t.parcalar.push(veri);
+  if (t.z) return;
+  t.z = setTimeout(() => ptyBosalt(id), 8);
+}
+function ptyBosalt(id) {
+  const t = ptyTampon.get(id);
+  if (!t) return;
+  if (t.z) { clearTimeout(t.z); t.z = 0; }
+  if (!t.parcalar.length) return;
+  const birlesik = t.parcalar.join('');
+  t.parcalar.length = 0;
+  if (!birlesik) return;
+  if (pencere && !pencere.isDestroyed()) pencere.webContents.send('pty:veri', id, birlesik);
+  if (remoteSunucu) remoteSunucu.ptyCiktiEkle(id, birlesik);
 }
 
 // Kumanda listesi için proje listesi: son kullanılan klasörler (var olanlar), git dalıyla.
@@ -225,6 +246,8 @@ function kabukKapat(id) {
   const k = kabuklar.get(id);
   if (!k) return;
   try { k.kill(); } catch {}
+  ptyBosalt(id);
+  ptyTampon.delete(id);
   kabuklar.delete(id);
   if (remoteSunucu) remoteSunucu.oturumKapandi(id, 0);
 }
@@ -262,6 +285,7 @@ function pencereOlustur() {
   const araIx = argv.indexOf('--ekran-ara');
   if (araIx >= 0 && argv[araIx + 1]) sorgu.ara = argv[araIx + 1];
   if (argv.includes('--ekran-kumanda')) sorgu.kumanda = '1'; // test: Kumanda modalını açık yakala
+  if (argv.includes('--ekran-modal')) sorgu.modal = '1'; // test: Yeni oturum modalını açık yakala
   pencere.loadFile(path.join(__dirname, 'index.html'), Object.keys(sorgu).length ? { query: sorgu } : undefined);
   pencere.once('ready-to-show', () => pencere.show());
   pencere.on('closed', () => { tumunuKapat(); pencere = null; });
@@ -406,7 +430,51 @@ ipcMain.handle('klasor-sec', async () => {
 });
 
 ipcMain.handle('baslat', async (_e, secim) => { try { return await oturumBaslat(secim); } catch (e) { return { hata: e.message }; } });
-ipcMain.handle('gecmis', async (_e, dizin) => { try { return gecmis.oturumGecmisi(dizin); } catch { return []; } });
+// Geçmiş taraması iş parçacığında: ana süreç dosya okurken kilitlenmez. Tarama sürerken gelen istekler kuyruğa girer.
+let gecmisIsci = null, gecmisSayac = 0;
+const gecmisBekleyen = new Map(); // istek kimliği -> çözücü
+// Ölçüm: ana süreçte tarama için harcanan senkron süre (hedef ≤ 5 ms; tarama iş parçacığında).
+const gecmisBlok = { maks: 0, toplam: 0, sayi: 0 };
+function gecmisIsciAl() {
+  if (gecmisIsci) return gecmisIsci;
+  gecmisIsci = new Worker(path.join(__dirname, 'gecmis-isci.js'));
+  gecmisIsci.on('message', (m) => {
+    const coz = gecmisBekleyen.get(m.id);
+    if (!coz) return;
+    gecmisBekleyen.delete(m.id);
+    coz(m.hata ? [] : (Array.isArray(m.sonuc) ? m.sonuc : []));
+  });
+  gecmisIsci.on('error', (e) => {
+    console.error('[gecmis-isci] ', e && e.message);
+    gecmisIsci = null;
+    for (const [id, coz] of gecmisBekleyen) { gecmisBekleyen.delete(id); coz(null); }
+  });
+  gecmisIsci.on('exit', () => { gecmisIsci = null; });
+  if (gecmisIsci.unref) gecmisIsci.unref();
+  return gecmisIsci;
+}
+function gecmisOku(dizin) {
+  return new Promise((coz) => {
+    if (!dizin || typeof dizin !== 'string') { coz([]); return; }
+    const t0 = performance.now();
+    let isci;
+    try { isci = gecmisIsciAl(); } catch { coz(null); return; }
+    const id = ++gecmisSayac;
+    // İş parçacığı çökerse son çare senkron okuma (nadir; gecikme kabul edilir).
+    gecmisBekleyen.set(id, (sonuc) => {
+      if (sonuc) { coz(sonuc); return; }
+      try { coz(gecmis.oturumGecmisi(dizin)); } catch { coz([]); }
+    });
+    try { isci.postMessage({ id, dizin }); }
+    catch { gecmisBekleyen.delete(id); coz(null); }
+    const gecen = performance.now() - t0;
+    gecmisBlok.maks = Math.max(gecmisBlok.maks, gecen);
+    gecmisBlok.toplam += gecen;
+    gecmisBlok.sayi++;
+  });
+}
+ipcMain.handle('gecmis', async (_e, dizin) => (await gecmisOku(dizin)) || []);
+ipcMain.handle('gecmis-blok', () => ({ maks: gecmisBlok.maks, ort: gecmisBlok.sayi ? gecmisBlok.toplam / gecmisBlok.sayi : 0, sayi: gecmisBlok.sayi }));
 ipcMain.handle('sohbet-gecmisi', async (_e, id) => {
   const bilgi = oturumBilgi.get(id);
   if (!bilgi) return { girisler: [] };
@@ -430,6 +498,15 @@ ipcMain.handle('boyut', (_e, id, { cols, rows }) => {
   try { k.resize(cols, rows); } catch {}
 });
 ipcMain.handle('kapat-oturum', (_e, id) => { kabukKapat(id); });
+ipcMain.handle('model-guncelle', (_e, { id, modelId }) => {
+  const bilgi = oturumBilgi.get(id);
+  if (bilgi && modelId) {
+    bilgi.modelId = modelId;
+    const m = (modelOnbellek || motor.MODELLER).find((x) => x.id === modelId);
+    bilgi.modelAd = (m && m.ad) || modelId;
+    if (remoteSunucu) remoteSunucu.oturumListesiGuncelle();
+  }
+});
 ipcMain.handle('disari', (_e, url) => { if (/^https:\/\//.test(url)) shell.openExternal(url); });
 ipcMain.handle('remote:bilgi', async () => (remoteSunucu ? remoteSunucu.bilgi() : { acik: false }));
 ipcMain.handle('remote:qr', async () => (remoteSunucu ? await remoteSunucu.qrKodPngDataUrl() : ''));
