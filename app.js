@@ -1,3 +1,5 @@
+// أَعُوذُ بِاللَّهِ مِنَ الشَّيْطَانِ الرَّجِيمِ
+// بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
 /* This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
  * If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/.
  * Copyright (c) 2026 Yusuf Günay. */
@@ -95,6 +97,9 @@ const acikAjanlar = new Set();
 const gecmisAcikMi = (g) => S.oturumlar.some((o) => o.canli && o.devam === g.id); // sekme açık; çalıştığı anlamına gelmez
 const kucult = (s) => String(s || '').toLocaleLowerCase('tr');
 
+// EVREN işi durumuna göre satır/nokta sınıfı: çalışan yeşil, kesilen turuncu, hatalı kırmızı.
+const evrenSinif = (durum) => durum === 'calisiyor' ? ' canli' : durum === 'kesildi' ? ' kesik' : durum === 'hata' ? ' hata' : '';
+
 // Model kimliğinden kısa ad: claude-opus-5-5 → opus, deepseek-v4.1-flash → deepseek …
 function kisaModel(ad) {
   const s = String(ad || '');
@@ -110,31 +115,44 @@ function gecmisCiz() {
   if (!S.gecmis.length) { el.innerHTML = '<div class="bos-satir">Kayıtlı oturum yok.</div>'; return; }
 
   const q = kucult(gecmisAra.trim());
-  const eslesir = (g) => kucult(g.baslik).includes(q) || (g.altAjanlar || []).some((a) => kucult(a.tanim).includes(q) || kucult(a.tur).includes(q));
+  const eslesir = (g) => kucult(g.baslik).includes(q) ||
+    (g.altAjanlar || []).some((a) => kucult(a.tanim).includes(q) || kucult(a.tur).includes(q)) ||
+    (g.evrenIsleri || []).some((e) => kucult(e.baslik).includes(q) || kucult(e.model).includes(q));
   const liste = q ? S.gecmis.filter(eslesir) : S.gecmis;
   $('gecmisSay').textContent = q ? `${liste.length}/${S.gecmis.length}` : S.gecmis.length;
   if (!liste.length) { el.innerHTML = '<div class="bos-satir">Aramanla eşleşen oturum yok.</div>'; return; }
 
   const aktifDevam = aktifOturum() ? aktifOturum().devam : null;
   el.innerHTML = liste.map((g) => {
-    const canli = g.canli; // tur sürüyorsa ya da arka planda çalışan alt ajan varsa
-    const durum = g.turCanli ? 'çalışıyor' : g.ajanCalisiyor ? 'ajan çalışıyor' : gecmisAcikMi(g) ? 'açık' : 'bitti';
+    const canli = g.canli; // tur sürüyorsa ya da arka planda çalışan alt ajan/EVREN işi varsa
+    const durum = g.evren ? `EVREN işi · ${g.durum}`
+      : g.turCanli ? 'çalışıyor'
+      : g.ajanCalisiyor ? 'ajan çalışıyor'
+      : g.evrenCalisiyor ? 'EVREN işi çalışıyor'
+      : gecmisAcikMi(g) ? 'açık' : 'bitti';
     const secili = aktifDevam === g.id;
+    // Üst düzey "EVREN işi" satırı kendi işini taşır; alt ajan ağacı yoktur.
     const tumAjanlar = Array.isArray(g.altAjanlar) ? g.altAjanlar : [];
-    const ajanVar = tumAjanlar.length > 0;
-    // Arama başlıkta eşleşmediyse yalnız eşleşen ajanlar gösterilir (neden eşleştiği görünsün).
-    const ajanlar = q && !kucult(g.baslik).includes(q) ? tumAjanlar.filter((a) => kucult(a.tanim).includes(q) || kucult(a.tur).includes(q)) : tumAjanlar;
-    const ajanAcik = acikAjanlar.has(g.id) || tumAjanlar.some((a) => a.canli) || (q && ajanlar.length > 0);
-    const rozet = g.calisanAjan ? `${g.calisanAjan}/${tumAjanlar.length}` : `${tumAjanlar.length}`;
+    const tumIsler = Array.isArray(g.evrenIsleri) ? g.evrenIsleri : [];
+    const dalVar = tumAjanlar.length + tumIsler.length > 0;
+    // Arama başlıkta eşleşmediyse yalnız eşleşen ajanlar/işler gösterilir (neden eşleştiği görünsün).
+    const baslikEs = kucult(g.baslik).includes(q);
+    const ajanlar = q && !baslikEs ? tumAjanlar.filter((a) => kucult(a.tanim).includes(q) || kucult(a.tur).includes(q)) : tumAjanlar;
+    const isler = q && !baslikEs ? tumIsler.filter((e) => kucult(e.baslik).includes(q) || kucult(e.model).includes(q)) : tumIsler;
+    const ajanAcik = acikAjanlar.has(g.id) || tumAjanlar.some((a) => a.canli) || tumIsler.some((e) => e.canli) || (!!q && ajanlar.length + isler.length > 0);
+    const calisanToplam = (g.calisanAjan || 0) + tumIsler.filter((e) => e.canli).length;
+    const rozet = calisanToplam ? `${calisanToplam}/${tumAjanlar.length + tumIsler.length}` : `${tumAjanlar.length + tumIsler.length}`;
+    const evrenNit = g.evren ? ` data-evren-id="${esc(g.id)}" data-evren-dizin="${esc(g.evrenIsi ? g.evrenIsi.dizin : '')}" data-evren-model="${esc(g.model || '')}"` : '';
     return `
-    <div class="row kompakt gecmis-row${secili ? ' sec-li' : ''}" role="option" data-id="${esc(g.id)}" title="${esc(g.baslik)}\n${durum} · ${esc(goreli(g.ms / 1000))}">
+    <div class="row kompakt gecmis-row${secili ? ' sec-li' : ''}${g.evren ? ' evren-row' : ''}" role="option" data-id="${esc(g.id)}"${evrenNit} title="${esc(g.baslik)}\n${durum} · ${esc(goreli(g.ms / 1000))}">
       <div class="row-l">
-        <span class="led${canli ? ' canli' : ''}"></span>
+        <span class="led${canli ? ' canli' : ''}${g.evren && g.durum === 'hata' ? ' kotu' : ''}"></span>
         <span class="row-t">${esc(g.baslik)}</span>
-        ${ajanVar ? `<button class="tag-ajan${g.calisanAjan ? ' canli' : ''}" data-ajan-toggle="${esc(g.id)}" type="button" title="${tumAjanlar.length} alt görev${g.calisanAjan ? `, ${g.calisanAjan} çalışıyor` : ''}">${rozet}</button>` : ''}
+        ${g.evren ? '<span class="tag-evren">EVREN işi</span>' : ''}
+        ${dalVar ? `<button class="tag-ajan${calisanToplam ? ' canli' : ''}" data-ajan-toggle="${esc(g.id)}" type="button" title="${tumAjanlar.length + tumIsler.length} alt görev${calisanToplam ? `, ${calisanToplam} çalışıyor` : ''}">${rozet}</button>` : ''}
       </div>
       <div class="row-s mono">${durum} · ${esc(goreli(g.ms / 1000))}</div>
-      ${ajanVar && ajanAcik ? `
+      ${dalVar && ajanAcik ? `
       <div class="ajan-agac">
         ${ajanlar.map((a) => `
           <div class="ajan" title="${esc(a.tanim)}${a.faz ? ' · ' + esc(a.faz) : ''}">
@@ -147,6 +165,19 @@ function gecmisCiz() {
               ${a.isAkisi ? `<span class="ajan-wf">${esc(a.isAkisiAdi || 'wf')}${a.faz ? ' · ' + esc(a.faz) : ''}</span>` : ''}
               ${kisaModel(a.model) ? `<span class="ajan-model mono">${esc(kisaModel(a.model))}</span>` : ''}
               <span class="ajan-zaman mono">${esc(goreli(a.ms / 1000))}</span>
+            </div>
+          </div>
+        `).join('')}
+        ${isler.map((e) => `
+          <div class="ajan evren-is${evrenSinif(e.durum)}" data-evren-id="${esc(e.id)}" data-evren-dizin="${esc(e.dizin || '')}" data-evren-model="${esc(e.model || '')}" role="button" tabindex="0" title="${esc(e.baslik)} · ${esc(e.durum)}${e.dizin ? ' · ' + esc(e.dizin) : ''}\nDevam etmek için tıkla">
+            <div class="ajan-satir">
+              <span class="ajan-nokta${evrenSinif(e.durum)}"></span>
+              <span class="ajan-tanim">${esc(e.baslik)}</span>
+            </div>
+            <div class="ajan-meta">
+              <span class="ajan-tur evren">EVREN</span>
+              ${kisaModel(e.model) ? `<span class="ajan-model mono">${esc(kisaModel(e.model))}</span>` : ''}
+              <span class="ajan-zaman mono">${esc(goreli(e.ms / 1000))}</span>
             </div>
           </div>
         `).join('')}
@@ -166,6 +197,14 @@ function gecmisAc(id) {
   const var_ = S.oturumlar.find((o) => o.canli && o.devam === id);
   if (var_) { sekmeSec(var_.id); return; }
   basla(id);
+}
+// EVREN işini kendi dizininde ve modeliyle sürdürür (claude --resume <id>); açık sekme varsa ona geçer.
+function evrenIsiniSurdur(el) {
+  const id = el && el.dataset.evrenId;
+  if (!id) return;
+  const var_ = S.oturumlar.find((o) => o.canli && o.devam === id);
+  if (var_) { sekmeSec(var_.id); return; }
+  basla(id, { dizin: (el.dataset.evrenDizin || '').trim() || S.proje, modelId: (el.dataset.evrenModel || '').trim() });
 }
 
 // ---------- proje özeti: commit ısı haritası, dil dağılımı, son commit ----------
@@ -588,21 +627,25 @@ function brifGoster() {
 let sonYerel = 0;
 const bekleyenVeri = new Map(); // pid -> [veri] (sekme kaydından önce gelen çıktı)
 
-async function basla(devamId) {
+async function basla(devamId, secenekler) {
   const devam = typeof devamId === 'string' ? devamId : null; // düğme olayı dize değildir
+  // EVREN işini sürdürürken işin kendi dizini/modeli kullanılır; normal başlatmada seçili olanlar.
+  const sec = secenekler && typeof secenekler === 'object' && typeof secenekler.dizin === 'string' ? secenekler : {};
+  const yol = sec.dizin || S.proje;
+  const m = (sec.modelId ? { id: sec.modelId } : null) || seciliModel() || {};
+  const p = sec.dizin ? S.projeler.find((x) => x.yol === sec.dizin) : seciliProje();
   if (S.basliyor || !S.yuklendi || !S.anahtarVar) return;
   if (S.oturumlar.filter((o) => o.canli).length >= 8) { olay('OTURUM', 'en çok 8 canlı oturum', 'uyari'); return; }
-  if (!S.proje && !(await klasorEkle())) return;
+  if (!yol && !(await klasorEkle())) return;
   S.basliyor = true;
-  const m = seciliModel() || {}, p = seciliProje();
-  const o = { id: ++sonYerel, pid: 0, model: m.id, proje: p ? p.ad : S.proje, dal: p ? p.dal : '', yol: S.proje, canli: true, kod: null, basladi: 0, yeni: false, devam };
+  const o = { id: ++sonYerel, pid: 0, model: m.id, proje: p ? p.ad : yol, dal: p ? p.dal : '', yol, canli: true, kod: null, basladi: 0, yeni: false, devam };
   S.oturumlar.push(o);
   await terminalOlustur(o);
   sekmeSec(o.id);
   await bekle(30);
   if (o.fit) { try { o.fit.fit(); } catch {} }
   o.term.writeln(`\x1b[38;2;74;83;93m  evren \x1b[38;2;108;119;131m› ${m.id} › ${o.proje}\x1b[0m`);
-  const sonuc = await window.evren.baslat({ modelId: m.id, dizin: S.proje, cols: o.term.cols, rows: o.term.rows, devam });
+  const sonuc = await window.evren.baslat({ modelId: m.id, dizin: yol, cols: o.term.cols, rows: o.term.rows, devam });
   S.basliyor = false;
   if (!sonuc || sonuc.hata) {
     o.canli = false; o.kod = 'hata';
@@ -1065,6 +1108,13 @@ $('gecmisList').addEventListener('click', (e) => {
     if (acikAjanlar.has(id)) acikAjanlar.delete(id);
     else acikAjanlar.add(id);
     gecmisCiz();
+    return;
+  }
+  // EVREN işi satırı (ağaç içinde ya da üst düzey): kendi dizin/modeliyle sürdür, üst oturumun tıklamasına karışma.
+  const ei = e.target.closest('[data-evren-id]');
+  if (ei) {
+    e.stopPropagation();
+    evrenIsiniSurdur(ei);
     return;
   }
   const r = e.target.closest('.row');

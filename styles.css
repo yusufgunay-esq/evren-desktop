@@ -1,3 +1,5 @@
+/* أَعُوذُ بِاللَّهِ مِنَ الشَّيْطَانِ الرَّجِيمِ */
+/* بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ */
 /* This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
  * If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/.
  * Copyright (c) 2026 Yusuf Günay. */
@@ -698,6 +700,23 @@ kbd {
 .tag-ajan.canli {
   color: var(--ok); border-color: rgba(62, 194, 138, 0.45); background: rgba(62, 194, 138, 0.1);
 }
+
+/* ---------- EVREN işleri: üst oturumun altında, ayrı etiket ve durum rengi ---------- */
+.tag-evren {
+  margin-left: 4px; flex: none;
+  font: 500 9.5px/1 var(--mono); text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--accent-2); background: var(--accent-bg-2);
+  border: 1px solid var(--line-2); border-radius: 3px; padding: 2px 5px;
+}
+.gecmis-row.evren-row .row-t { color: var(--text-2); }
+.ajan.evren-is { cursor: pointer; border-radius: var(--r-s); transition: background 0.15s var(--ease); }
+.ajan.evren-is:hover,
+.ajan.evren-is:focus-visible { background: rgba(255, 255, 255, 0.05); outline: none; }
+.ajan-tur.evren { color: var(--text-2); background: rgba(255, 255, 255, 0.09); }
+.ajan-nokta.kesik { background: var(--warn); box-shadow: 0 0 4px rgba(238, 160, 68, 0.5); }
+.ajan-nokta.hata { background: var(--err); box-shadow: 0 0 4px rgba(238, 107, 112, 0.5); }
+.ajan.evren-is.kesik .ajan-tanim { color: var(--warn); }
+.ajan.evren-is.hata .ajan-tanim { color: var(--err); }
 
 /* ---------- Kumanda: IP seçici ve not ---------- */
 .k-secim {

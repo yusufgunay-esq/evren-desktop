@@ -1,3 +1,5 @@
+// أَعُوذُ بِاللَّهِ مِنَ الشَّيْطَانِ الرَّجِيمِ
+// بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
 /* This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
  * If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/.
  * Copyright (c) 2026 Yusuf Günay. */
@@ -166,17 +168,88 @@ function altAjanlariOku(seansDizin) {
   return ajanlar.sort((a, b) => a.ms - b.ms);
 }
 
-function oturumGecmisi(dizin) {
+// ---------- EVREN işleri (~/.evren/oturumlar/<uuid>.json) ----------
+// evren-ajan.mjs her çalıştırmada bir kayıt yazar: { id, ust, dizin, model, baslik, baslangic, bitis, cikis, devamEden }.
+// Kayıt yolu ortam değişkeni ya da parametreyle değiştirilebilir (test ve taşınabilirlik).
+function evrenKayitDizini(secenekler) {
+  const verilen = secenekler && typeof secenekler.kayitDizini === 'string' && secenekler.kayitDizini;
+  return verilen || process.env.EVREN_KAYIT_DIZINI || path.join(os.homedir(), '.evren', 'oturumlar');
+}
+
+function evrenKayitlariOku(kayitDizini) {
+  let adlar;
+  try { adlar = fs.readdirSync(kayitDizini); } catch { return []; } // klasör yoksa sessizce boş
+  const liste = [];
+  for (const a of adlar) {
+    if (!a.endsWith('.json')) continue;
+    const dosya = path.join(kayitDizini, a);
+    try {
+      const j = JSON.parse(fs.readFileSync(dosya, 'utf8'));
+      if (!j || typeof j !== 'object') continue;
+      const id = String(j.id || a.slice(0, -5));
+      if (!OTURUM_KIMLIK.test(id)) continue;
+      liste.push({ ...j, id, kayitDosyasi: dosya });
+    } catch {} // bozuk/yarım yazılmış kayıt listeyi düşürmez
+  }
+  return liste;
+}
+
+// Kayıt bu projeye ait mi: Claude oturum dosyası bu projenin klasöründe varsa ya da kaydın dizini bu projeyle eşleşiyorsa.
+function evrenKaydiBuProjede(kayit, klasor, klasorAdi) {
+  try { fs.statSync(path.join(klasor, kayit.id + '.jsonl')); return true; } catch {}
+  return typeof kayit.dizin === 'string' &&
+    kayit.dizin.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase() === klasorAdi.toLowerCase();
+}
+
+// Durum: bitis varsa bitti/hata; bitis yoksa jsonl'in son yazması taze ve tur sürüyorsa çalışıyor, aksi halde kesildi.
+function evrenDurumu(kayit, jsonl, kayitMs, simdi) {
+  if (kayit.bitis != null) return Number(kayit.cikis) !== 0 && kayit.cikis != null ? 'hata' : 'bitti';
+  const ms = jsonl ? jsonl.mtimeMs : kayitMs;
+  const taze = simdi - ms < CANLI_ESIK_MS;
+  if (!taze) return 'kesildi';
+  if (!jsonl) return 'calisiyor'; // henüz kayıt dosyası yok, iş yeni başlamış
+  const jsonlYolu = jsonl.yol;
+  return turDevamEdiyor(jsonlYolu, jsonl.size) === false ? 'kesildi' : 'calisiyor';
+}
+
+function evrenIsiOku(kayit, klasor, simdi) {
+  let jsonl = null, kayitMs = 0;
+  try { const s = fs.statSync(path.join(klasor, kayit.id + '.jsonl')); jsonl = { yol: path.join(klasor, kayit.id + '.jsonl'), mtimeMs: s.mtimeMs, size: s.size }; } catch {}
+  try { kayitMs = fs.statSync(kayit.kayitDosyasi).mtimeMs; } catch {}
+  const durum = evrenDurumu(kayit, jsonl, kayitMs, simdi);
+  const baslikKayit = typeof kayit.baslik === 'string' ? kayit.baslik.trim() : '';
+  const baslik = baslikKayit || (jsonl ? baslikOku(jsonl.yol).baslik : '') || 'EVREN işi';
+  return {
+    id: kayit.id,
+    baslik,
+    model: typeof kayit.model === 'string' ? kayit.model : '',
+    dizin: typeof kayit.dizin === 'string' ? kayit.dizin : '',
+    durum,
+    ms: (kayit.bitis != null && Number(kayit.bitis)) || (jsonl && jsonl.mtimeMs) || Number(kayit.baslangic) || 0,
+    canli: durum === 'calisiyor',
+    ...(kayit.ust ? { ust: String(kayit.ust) } : {}),
+  };
+}
+
+function oturumGecmisi(dizin, secenekler) {
   if (!dizin || typeof dizin !== 'string') return [];
-  const klasor = path.join(os.homedir(), '.claude', 'projects', dizin.replace(/[^a-zA-Z0-9]/g, '-'));
+  const klasorAdi = dizin.replace(/[^a-zA-Z0-9]/g, '-');
+  const klasor = path.join(os.homedir(), '.claude', 'projects', klasorAdi);
   let adlar;
   try { adlar = fs.readdirSync(klasor); } catch { return []; }
   const simdi = Date.now();
-  return adlar
+
+  // EVREN kayıtları: id'si bu projenin Claude kayıtlarında olan oturumlar üst düzeyden çıkarılıp iş sahibine bağlanır.
+  const evrenKayitlari = evrenKayitlariOku(evrenKayitDizini(secenekler))
+    .filter((k) => evrenKaydiBuProjede(k, klasor, klasorAdi));
+  const isKimlikleri = new Set(evrenKayitlari.map((k) => k.id));
+
+  const oturumlar = adlar
     .filter((a) => a.endsWith('.jsonl') && OTURUM_KIMLIK.test(a.slice(0, -6)))
     .map((a) => { const d = path.join(klasor, a); try { const s = fs.statSync(d); return { id: a.slice(0, -6), dosya: d, ms: s.mtimeMs, boyut: s.size }; } catch { return null; } })
     .filter((x) => x && x.boyut > 0)
     .sort((a, b) => b.ms - a.ms)
+    .filter((x) => !isKimlikleri.has(x.id)) // EVREN işinin kendi Claude kaydı ayrı satır olmaz
     .map((x) => {
       const seansDizin = path.join(klasor, x.id);
       const taze = simdi - x.ms < CANLI_ESIK_MS;
@@ -190,12 +263,49 @@ function oturumGecmisi(dizin) {
         turCanli,
         ajanCalisiyor: calisanAjan > 0,
         calisanAjan,
-        canli: turCanli || calisanAjan > 0, // tur bitse de arka planda çalışan alt ajan oturumu "çalışıyor" gösterir
+        canli: turCanli || calisanAjan > 0, // tur bitse de arka planda çalışan alt ajan/EVREN işi oturumu "çalışıyor" gösterir
         altAjanlar,
+        evrenIsleri: [],
       };
     })
-    .filter((x) => x.baslik) // hiç kullanıcı mesajı olmayan (yalnız açılış kaydı) oturumlar listelenmez
-    .slice(0, 30);
+    .filter((x) => x.baslik); // hiç kullanıcı mesajı olmayan (yalnız açılış kaydı) oturumlar listelenmez
+
+  const ustHarita = new Map(oturumlar.map((o) => [o.id, o]));
+  const kayitsizlar = []; // üstü bulunamayan EVREN işleri üst düzeyde "EVREN işi" olarak kalır
+  for (const k of evrenKayitlari) {
+    const is = evrenIsiOku(k, klasor, simdi);
+    const ust = is.ust ? ustHarita.get(is.ust) : null;
+    if (ust) ust.evrenIsleri.push(is);
+    else {
+      // Üst oturum yok: iş kendi satırında görünür (başlığı işin başlığı, etiketi arayüzde "EVREN işi").
+      kayitsizlar.push({
+        id: is.id,
+        baslik: is.baslik,
+        evren: true,
+        kaynak: 'evren',
+        model: is.model,
+        durum: is.durum,
+        ms: is.ms,
+        turCanli: false,
+        ajanCalisiyor: false,
+        calisanAjan: 0,
+        evrenCalisiyor: is.canli,
+        canli: is.canli,
+        altAjanlar: [],
+        evrenIsleri: [],
+        evrenIsi: is,
+      });
+    }
+  }
+
+  const tumu = [...oturumlar, ...kayitsizlar].sort((a, b) => b.ms - a.ms);
+  for (const o of tumu) {
+    const calisanEvren = (o.evrenIsleri || []).filter((e) => e.canli).length;
+    o.calisanEvren = calisanEvren;
+    o.evrenCalisiyor = calisanEvren > 0;
+    if (calisanEvren > 0) o.canli = true; // çalışan EVREN işi de üst oturumu "çalışıyor" gösterir
+  }
+  return tumu.filter((x) => x.baslik).slice(0, 30);
 }
 
-module.exports = { oturumGecmisi, altAjanlariOku, turDevamEdiyor, baslikOku, OTURUM_KIMLIK, CANLI_ESIK_MS };
+module.exports = { oturumGecmisi, altAjanlariOku, turDevamEdiyor, baslikOku, evrenKayitlariOku, OTURUM_KIMLIK, CANLI_ESIK_MS };

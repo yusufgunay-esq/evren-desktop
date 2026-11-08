@@ -1,3 +1,5 @@
+// أَعُوذُ بِاللَّهِ مِنَ الشَّيْطَانِ الرَّجِيمِ
+// بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
 /* This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
  * If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/.
  * Copyright (c) 2026 Yusuf Günay. */
@@ -108,6 +110,7 @@ async function apiDurum() {
   }
 }
 
+// بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ — yeni bir Claude Code oturumu (PTY) açar; başlıkta verilen dizinde çalışır, `devam` verilirse eski oturumu sürdürür.
 async function oturumBaslat({ modelId, dizin, cols, rows, devam }) {
   if (devam != null && !gecmis.OTURUM_KIMLIK.test(String(devam))) throw new Error('Geçersiz oturum kimliği.');
   if (kabuklar.size >= 8) throw new Error('En çok 8 oturum açık olabilir; birini kapatın.');
