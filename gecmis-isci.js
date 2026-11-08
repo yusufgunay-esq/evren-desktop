@@ -12,7 +12,9 @@ const gecmis = require('./gecmis');
 parentPort.on('message', (mesaj) => {
   const kimlik = mesaj && mesaj.id;
   try {
-    const sonuc = gecmis.oturumGecmisi(mesaj.dizin, mesaj.secenekler);
+    const sonuc = mesaj && (mesaj.tum || !mesaj.dizin)
+      ? gecmis.tumOturumlariTara(mesaj.secenekler)
+      : gecmis.oturumGecmisi(mesaj.dizin, mesaj.secenekler);
     parentPort.postMessage({ id: kimlik, sonuc });
   } catch (e) {
     parentPort.postMessage({ id: kimlik, hata: String((e && e.message) || e) });

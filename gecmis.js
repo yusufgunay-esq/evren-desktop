@@ -326,4 +326,131 @@ function oturumSayilari(dizin, kimlik, secenekler) {
   };
 }
 
-module.exports = { oturumGecmisi, oturumSayilari, altAjanlariOku, turDevamEdiyor, baslikOku, evrenKayitlariOku, OTURUM_KIMLIK, CANLI_ESIK_MS };
+
+const ON_DORT_GUN_MS = 14 * 24 * 60 * 60 * 1000;
+const TEMP_PATTERNS = [/\\temp\\/i, /\/temp\//i, /scratch-workspaces/i, /evren-slash-test/i, /[\\/]test[\\/]/i];
+
+function tempMi(p) {
+  if (!p || typeof p !== 'string') return false;
+  return TEMP_PATTERNS.some((rx) => rx.test(p));
+}
+
+function cwdOku(dosya) {
+  let fd, cwd = '';
+  try {
+    fd = fs.openSync(dosya, 'r');
+    const tampon = Buffer.alloc(32 * 1024);
+    const n = fs.readSync(fd, tampon, 0, tampon.length, 0);
+    if (n > 0) {
+      const satirlar = tampon.subarray(0, n).toString('utf8').split('\n');
+      for (const satir of satirlar) {
+        if (!satir.trim()) continue;
+        let j; try { j = JSON.parse(satir); } catch { continue; }
+        if (!j) continue;
+        if (typeof j.cwd === 'string' && j.cwd.trim()) { cwd = j.cwd.trim(); break; }
+        if (j.message && typeof j.message.cwd === 'string' && j.message.cwd.trim()) { cwd = j.message.cwd.trim(); break; }
+      }
+    }
+  } catch {} finally { if (fd != null) try { fs.closeSync(fd); } catch {} }
+  return cwd;
+}
+
+function tumOturumlariTara(secenekler) {
+  const kokDizin = path.join(os.homedir(), '.claude', 'projects');
+  let klasorler;
+  try { klasorler = fs.readdirSync(kokDizin, { withFileTypes: true }); } catch { return []; }
+  const simdi = Date.now();
+  const oturumlar = [];
+
+  const evrenKayitlari = evrenKayitlariOku(evrenKayitDizini(secenekler));
+  const isKimlikleri = new Set(evrenKayitlari.map((k) => k.id));
+
+  for (const k of klasorler) {
+    if (!k.isDirectory()) continue;
+    const kYol = path.join(kokDizin, k.name);
+    let adlar;
+    try { adlar = fs.readdirSync(kYol); } catch { continue; }
+
+    for (const a of adlar) {
+      if (!a.endsWith('.jsonl')) continue;
+      const id = a.slice(0, -6);
+      if (!OTURUM_KIMLIK.test(id)) continue;
+      if (isKimlikleri.has(id)) continue;
+
+      const dosya = path.join(kYol, a);
+      let s;
+      try { s = fs.statSync(dosya); } catch { continue; }
+      if (!s || s.size <= 0) continue;
+      if (simdi - s.mtimeMs > ON_DORT_GUN_MS) continue;
+
+      const cwd = cwdOku(dosya);
+      if (tempMi(cwd)) continue;
+
+      const projeYol = cwd || k.name;
+      const projeAd = (cwd ? path.basename(cwd) : k.name) || 'Proje';
+      const seansDizin = path.join(kYol, id);
+      const taze = simdi - s.mtimeMs < CANLI_ESIK_MS;
+      const turCanli = taze && turDevamEdiyor(dosya, s.size) !== false;
+      const altAjanlar = altAjanlariOku(seansDizin);
+      const calisanAjan = altAjanlar.filter((x) => x.canli).length;
+      const bilgi = oturumBilgisi(dosya, id, seansDizin);
+
+      if (!bilgi.baslik) continue;
+
+      oturumlar.push({
+        id,
+        ...bilgi,
+        ms: s.mtimeMs,
+        projeAd,
+        projeYol,
+        turCanli,
+        ajanCalisiyor: calisanAjan > 0,
+        calisanAjan,
+        canli: turCanli || calisanAjan > 0,
+        altAjanlar,
+        evrenIsleri: [],
+      });
+    }
+  }
+
+  const ustHarita = new Map(oturumlar.map((o) => [o.id, o]));
+  const kayitsizlar = [];
+  for (const k of evrenKayitlari) {
+    const is = evrenIsiOku(k, '', simdi);
+    const ust = is.ust ? ustHarita.get(is.ust) : null;
+    if (ust) ust.evrenIsleri.push(is);
+    else if (!tempMi(is.dizin)) {
+      const projeAd = (is.dizin ? path.basename(is.dizin) : 'EVREN') || 'EVREN';
+      kayitsizlar.push({
+        id: is.id,
+        baslik: is.baslik,
+        evren: true,
+        kaynak: 'evren',
+        model: is.model,
+        durum: is.durum,
+        ms: is.ms,
+        projeAd,
+        projeYol: is.dizin || '',
+        turCanli: false,
+        ajanCalisiyor: false,
+        calisanAjan: 0,
+        evrenCalisiyor: is.canli,
+        canli: is.canli,
+        altAjanlar: [],
+        evrenIsleri: [],
+        evrenIsi: is,
+      });
+    }
+  }
+
+  const tumu = [...oturumlar, ...kayitsizlar].sort((a, b) => b.ms - a.ms);
+  for (const o of tumu) {
+    const calisanEvren = (o.evrenIsleri || []).filter((e) => e.canli).length;
+    o.calisanEvren = calisanEvren;
+    o.evrenCalisiyor = calisanEvren > 0;
+    if (calisanEvren > 0) o.canli = true;
+  }
+  return tumu.filter((x) => x.baslik).slice(0, 100);
+}
+
+module.exports = { oturumGecmisi, tumOturumlariTara, cwdOku, tempMi, oturumSayilari, altAjanlariOku, turDevamEdiyor, baslikOku, evrenKayitlariOku, OTURUM_KIMLIK, CANLI_ESIK_MS };

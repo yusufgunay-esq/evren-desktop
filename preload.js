@@ -28,4 +28,6 @@ contextBridge.exposeInMainWorld('evren', {
   remoteIpSec: (ip) => ipcRenderer.invoke('remote:ip-sec', ip), // QR'da kullanılacak yerel IP
   remoteDinle: (f) => ipcRenderer.on('remote:durum', (_e, bilgi) => f(bilgi)),
   modelGuncelle: (id, modelId) => ipcRenderer.invoke('model-guncelle', { id, modelId }),
+  oturumCatalla: (bilgi) => ipcRenderer.invoke('oturum-catalla', bilgi),
+  sohbetOturumKaydi: (param) => ipcRenderer.invoke('sohbet-oturum-kaydi', param),
 });
