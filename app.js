@@ -90,18 +90,19 @@ function projeSec(yol) {
 // ---------- oturum geçmişi: Claude Code'un ~/.claude/projects kayıtlarından ----------
 let gecmisIstek = 0;
 S.gecmis = [];
-const gecmisCanliMi = (g) => S.oturumlar.some((o) => o.canli && o.devam === g.id);
+const gecmisAcikMi = (g) => S.oturumlar.some((o) => o.canli && o.devam === g.id); // sekme açık; çalıştığı anlamına gelmez
 function gecmisCiz() {
   const el = $('gecmisList');
   $('gecmisSay').textContent = S.proje ? S.gecmis.length : '—';
   if (!S.proje) { el.innerHTML = '<div class="bos-satir">Önce bir proje seçin.</div>'; return; }
   if (!S.gecmis.length) { el.innerHTML = '<div class="bos-satir">Bu projede kayıtlı oturum yok.</div>'; return; }
   el.innerHTML = S.gecmis.map((g) => {
-    const canli = g.canli || gecmisCanliMi(g);
+    const canli = g.canli; // yalnız kayıt yeni yazılmış ve tur sürüyorsa
+    const durum = canli ? 'çalışıyor' : gecmisAcikMi(g) ? 'açık · bekliyor' : 'bitti';
     return `
-    <div class="row kompakt" role="option" data-id="${esc(g.id)}" title="${esc(g.baslik)}\n${canli ? 'Çalışıyor · ' : ''}${esc(goreli(g.ms / 1000))}\nTıkla: devam et (claude --resume)">
+    <div class="row kompakt" role="option" data-id="${esc(g.id)}" title="${esc(g.baslik)}\n${durum} · ${esc(goreli(g.ms / 1000))}\nTıkla: devam et (claude --resume)">
       <div class="row-l"><span class="led${canli ? ' canli' : ''}"></span><span class="row-t">${esc(g.baslik)}</span></div>
-      <div class="row-s mono">${g.kaynak ? `<span class="kaynak ${g.kaynak}">${g.kaynak}</span> · ` : ''}${canli ? 'çalışıyor' : 'bitti'} · ${esc(goreli(g.ms / 1000))}</div>
+      <div class="row-s mono">${g.kaynak ? `<span class="kaynak ${g.kaynak}">${g.kaynak}</span> · ` : ''}${durum} · ${esc(goreli(g.ms / 1000))}</div>
     </div>`;
   }).join('');
 }

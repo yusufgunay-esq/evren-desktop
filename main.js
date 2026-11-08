@@ -155,6 +155,27 @@ function baslikOku(dosya) {
   return { baslik, kaynak };
 }
 
+// "Çalışıyor" yalnız kayıt yeni yazılmışsa VE son giriş yanıt beklenen bir giriş ise (kullanıcı mesajı, araç sonucu ya da
+// tamamlanmamış asistan yanıtı). Asistan turu bitirdiyse (end_turn) oturum boştadır: sekme açık olsa da çalışmıyordur.
+function turDevamEdiyor(dosya, boyut) {
+  let fd;
+  try {
+    fd = fs.openSync(dosya, 'r');
+    const uzunluk = Math.min(boyut, 128 * 1024);
+    const t = Buffer.alloc(uzunluk);
+    fs.readSync(fd, t, 0, uzunluk, boyut - uzunluk);
+    const satirlar = t.toString('utf8').split('\n');
+    if (boyut > uzunluk) satirlar.shift(); // baştaki yarım satır
+    for (let i = satirlar.length - 1; i >= 0; i--) {
+      let j; try { j = JSON.parse(satirlar[i]); } catch { continue; }
+      if (!j || (j.type !== 'user' && j.type !== 'assistant') || !j.message) continue;
+      if (j.type === 'user') return true;
+      return !['end_turn', 'stop_sequence', 'max_tokens', 'refusal'].includes(j.message.stop_reason);
+    }
+  } catch {} finally { if (fd != null) try { fs.closeSync(fd); } catch {} }
+  return null; // anlaşılamadı
+}
+
 function oturumGecmisi(dizin) {
   if (!dizin || typeof dizin !== 'string') return [];
   const klasor = path.join(os.homedir(), '.claude', 'projects', dizin.replace(/[^a-zA-Z0-9]/g, '-'));
@@ -166,7 +187,11 @@ function oturumGecmisi(dizin) {
     .map((a) => { const d = path.join(klasor, a); try { const s = fs.statSync(d); return { id: a.slice(0, -6), dosya: d, ms: s.mtimeMs, boyut: s.size }; } catch { return null; } })
     .filter((x) => x && x.boyut > 0)
     .sort((a, b) => b.ms - a.ms)
-    .map((x) => ({ id: x.id, ...oturumBilgisi(x.dosya, x.id), ms: x.ms, canli: simdi - x.ms < CANLI_ESIK_MS }))
+    .map((x) => {
+      const taze = simdi - x.ms < CANLI_ESIK_MS;
+      const tur = taze ? turDevamEdiyor(x.dosya, x.boyut) : false;
+      return { id: x.id, ...oturumBilgisi(x.dosya, x.id), ms: x.ms, canli: taze && tur !== false };
+    })
     .filter((x) => x.baslik) // hiç kullanıcı mesajı olmayan (yalnız açılış kaydı) oturumlar listelenmez
     .slice(0, 30);
 }
