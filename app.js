@@ -5,6 +5,31 @@
  * Copyright (c) 2026 Yusuf Günay. */
 /* EVREN Desktop — arayüz. Terminal xterm.js; kabuk ana süreçte (node-pty/ConPTY). */
 'use strict';
+
+// Chromium ctx.font ParseShorthand leading-space düzeltmesi (xterm addon-webgl #6297)
+// Chromium'da ctx.font başında boşluk olunca shorthand ayrıştırılamaz ve 10px fallback'e düşer.
+(function() {
+  try {
+    const proto = window.CanvasRenderingContext2D && window.CanvasRenderingContext2D.prototype;
+    if (proto) {
+      const desc = Object.getOwnPropertyDescriptor(proto, 'font');
+      if (desc && desc.set) {
+        Object.defineProperty(proto, 'font', {
+          get: desc.get,
+          set(v) {
+            const temiz = typeof v === 'string' ? v.trimStart() : v;
+            desc.set.call(this, temiz);
+          },
+          configurable: true,
+          enumerable: true,
+        });
+      }
+    }
+  } catch (e) {
+    console.warn('[webgl-font-yama]', e);
+  }
+})();
+
 const $ = (id) => document.getElementById(id);
 const sakla = {
   oku(k, v) { try { const x = localStorage.getItem('evren.' + k); return x == null ? v : JSON.parse(x); } catch { return v; } },
@@ -20,7 +45,7 @@ const S = {
   modeller: [], projeler: [], model: '', proje: '',
   anahtarVar: true, api: null, pingler: [], yuklendi: false,
   calisiyor: false, basliyor: false, oturumlar: [], aktif: null,
-  fs: Math.min(18, Math.max(11, Number(sakla.oku('fs', 13)) || 13)),
+  fs: Math.min(18, Math.max(11, Number(new URLSearchParams(location.search).get('fs') || sakla.oku('fs', 13)) || 13)),
   sohbetAcik: sakla.oku('sohbetAcik', false), sohbetFiltre: 'hepsi',
   grupKapali: sakla.oku('grupKapali', {}), // { calisiyor: true, bosta: true } — gruplar ayrı ayrı katlanır
 };
@@ -540,7 +565,7 @@ const TEMA = {
 const GENEL_TUS = new Set(['KeyP', 'KeyB', 'KeyT', 'KeyW', 'KeyF', 'KeyH']); // Ctrl+Shift+<tuş>: uygulamaya ait
 
 async function terminalOlustur(o) {
-  try { await document.fonts.load(`${S.fs}px "IBM Plex Mono"`); } catch {}
+  try { await document.fonts.ready; await document.fonts.load(`${S.fs}px "IBM Plex Mono"`); } catch {}
   const el = document.createElement('div');
   el.className = 'terminal';
   el.hidden = true;
@@ -642,7 +667,15 @@ function fsDegis(d) {
   S.fs = Math.min(18, Math.max(11, S.fs + d));
   sakla.yaz('fs', S.fs);
   $('fsMetin').textContent = S.fs;
-  for (const o of S.oturumlar) if (o.term) o.term.options.fontSize = S.fs;
+  for (const o of S.oturumlar) {
+    if (o.term) {
+      o.term.options.fontSize = S.fs;
+      if (o.webgl && typeof o.webgl.clearTextureAtlas === 'function') {
+        try { o.webgl.clearTextureAtlas(); } catch {}
+      }
+      try { o.term.refresh(0, o.term.rows - 1); } catch {}
+    }
+  }
   sigdir();
 }
 
@@ -1508,6 +1541,17 @@ window.addEventListener('keydown', (e) => {
   if (e.ctrlKey && e.shiftKey && e.code === 'KeyW') { e.preventDefault(); if (S.aktif != null) sekmeKapat(S.aktif); return; }
   if (e.ctrlKey && e.code === 'Tab') { e.preventDefault(); sekmeGez(e.shiftKey ? -1 : 1); return; }
   if (!$('palet').hidden) return;
+  const mo = $('yeniOturumModal');
+  if (mo && !mo.hidden) {
+    if (e.key === 'Escape') { e.preventDefault(); yeniOturumModalKapat(); return; }
+    if (e.key === 'Enter') { e.preventDefault(); yeniOturumBaslat(); return; }
+    return;
+  }
+  const km = $('kumandaModal');
+  if (km && !km.hidden) {
+    if (e.key === 'Escape') { e.preventDefault(); kumandaModalKapat(); return; }
+    return;
+  }
   if (S.aktif != null) return; // oturum sekmesinde tuşlar terminale aittir
   const odak = document.activeElement;
   if (e.key === 'Enter' && !(odak && /^(BUTTON|INPUT|TEXTAREA)$/.test(odak.tagName))) { e.preventDefault(); basla(); }
