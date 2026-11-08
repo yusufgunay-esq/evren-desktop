@@ -5,7 +5,6 @@
  * Copyright (c) 2026 Yusuf Günay. */
 /* EVREN Desktop — arayüz. Terminal xterm.js; kabuk ana süreçte (node-pty/ConPTY). */
 'use strict';
-
 // Chromium ctx.font ParseShorthand leading-space düzeltmesi (xterm addon-webgl #6297)
 // Chromium'da ctx.font başında boşluk olunca shorthand ayrıştırılamaz ve 10px fallback'e düşer.
 (function() {
@@ -29,7 +28,6 @@
     console.warn('[webgl-font-yama]', e);
   }
 })();
-
 const $ = (id) => document.getElementById(id);
 const sakla = {
   oku(k, v) { try { const x = localStorage.getItem('evren.' + k); return x == null ? v : JSON.parse(x); } catch { return v; } },
@@ -40,16 +38,14 @@ const TerminalSinif = window.Terminal || (window.xterm && window.xterm.Terminal)
 const FitSinif = window.FitAddon ? (window.FitAddon.FitAddon || window.FitAddon) : null;
 const WebglSinif = window.WebglAddon ? (window.WebglAddon.WebglAddon || window.WebglAddon) : null;
 let webglAktifSayi = 0; // doğrulama: kaç terminal WebGL ile çiziliyor
-
 const S = {
   modeller: [], projeler: [], model: '', proje: '',
   anahtarVar: true, api: null, pingler: [], yuklendi: false,
   calisiyor: false, basliyor: false, oturumlar: [], aktif: null,
   fs: Math.min(18, Math.max(11, Number(new URLSearchParams(location.search).get('fs') || sakla.oku('fs', 13)) || 13)),
-  sohbetAcik: sakla.oku('sohbetAcik', false), sohbetFiltre: 'hepsi',
+  sohbetAcik: sakla.oku('sohbetPanelAcik', false), sohbetFiltre: 'hepsi',
   grupKapali: sakla.oku('grupKapali', {}), // { calisiyor: true, bosta: true } — gruplar ayrı ayrı katlanır
 };
-
 
 // ---------- yardımcılar ----------
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -71,10 +67,8 @@ const sureMetni = (ms) => {
   const s = Math.floor(ms / 1000);
   return [Math.floor(s / 3600), Math.floor(s / 60) % 60, s % 60].map((x) => String(x).padStart(2, '0')).join(':');
 };
-
 // ---------- listeler ----------
 const iskelet = (n) => Array.from({ length: n }, () => '<div class="iskelet"><b></b><b></b></div>').join('');
-
 function modelleriCiz() {
   const el = $('modelList');
   if (!S.yuklendi) { el.innerHTML = iskelet(3); return; }
@@ -86,7 +80,6 @@ function modelleriCiz() {
     </div>`).join('');
   $('modelSay').textContent = S.modeller.length || '—';
 }
-
 function projeleriCiz() {
   const el = $('projeList');
   if (!S.yuklendi) { el.innerHTML = iskelet(2); return; }
@@ -101,7 +94,6 @@ function projeleriCiz() {
       <div class="row-s mono">${esc(kisaYol(p.yol))}</div>
     </div>`).join('');
 }
-
 // Seçim değişince listeyi yeniden çizmeyiz (giriş animasyonu tekrarlanmasın); yalnız sınıfları değiştiririz.
 function secimIsaretle(listeId, deger) {
   for (const r of $(listeId).querySelectorAll('.row')) {
@@ -111,7 +103,6 @@ function secimIsaretle(listeId, deger) {
     if (on) r.scrollIntoView({ block: 'nearest' });
   }
 }
-
 function modelSec(id) {
   if (id === S.model) return;
   S.model = id; secimIsaretle('modelList', id); ozetYaz();
@@ -125,19 +116,35 @@ function projeSec(yol) {
   projeOzetYukle();
   gecmisYukle();
 }
-
 // ---------- oturum geçmişi: Claude Code'un ~/.claude/projects kayıtlarından ----------
 let gecmisIstek = 0;
 let gecmisAra = ''; // oturum listesi süzgeci (başlıkta ve ajan tanımında arar)
 S.gecmis = [];
 const acikAjanlar = new Set();
+const ignelenenler = new Set(sakla.oku('ignelenenler', []));
+function oturumIgnele(id) {
+  if (!id) return;
+  if (ignelenenler.has(id)) ignelenenler.delete(id);
+  else ignelenenler.add(id);
+  sakla.yaz('ignelenenler', [...ignelenenler]);
+  gecmisCiz();
+  sohbetIgneDurumGuncelle();
+}
+let ilkGecmisYukleme = true;
+let seciliOturumGecmisi = null;
+let akimTimer = null;
+function akimCizgiTetikle() {
+  const el = $('akimCizgi');
+  if (!el) return;
+  el.classList.add('aktif');
+  clearTimeout(akimTimer);
+  akimTimer = setTimeout(() => { el.classList.remove('aktif'); }, 1000);
+}
 let gecmisSonHtml = null; // son yazılan liste HTML'i; aynıysa DOM'a dokunulmaz
 const gecmisAcikMi = (g) => S.oturumlar.some((o) => o.canli && o.devam === g.id); // sekme açık; çalıştığı anlamına gelmez
 const kucult = (s) => String(s || '').toLocaleLowerCase('tr');
-
 // EVREN işi durumuna göre satır/nokta sınıfı: çalışan yeşil, kesilen turuncu, hatalı kırmızı.
 const evrenSinif = (durum) => durum === 'calisiyor' ? ' canli' : durum === 'kesildi' ? ' kesik' : durum === 'hata' ? ' hata' : '';
-
 // Model kimliğinden kısa ad: claude-opus-5-5 → opus, deepseek-v4.1-flash → deepseek …
 function kisaModel(ad) {
   const s = String(ad || '');
@@ -146,7 +153,10 @@ function kisaModel(ad) {
   for (const k of ['opus', 'sonnet', 'haiku', 'fable', 'deepseek', 'glm', 'qwen', 'gemma', 'flash', 'argon']) if (p.includes(k)) return k;
   return s.length > 14 ? s.slice(0, 14) : s;
 }
-
+// Oturumun nereden geldiği: kutu etiket yerine satırdaki küçük işaret (ay = EVREN, kıvılcım = Claude).
+function kaynakIsaret(evrenMi) {
+  return `<svg class="ic seans-kaynak ${evrenMi ? 'evren' : 'claude'}" role="img" aria-label="${evrenMi ? 'EVREN oturumu' : 'Claude oturumu'}"><use href="#${evrenMi ? 'i-evren' : 'i-claude'}" /></svg>`;
+}
 function gecmisCiz() {
   const el = $('gecmisList');
   if (!el) return;
@@ -155,55 +165,101 @@ function gecmisCiz() {
     el.innerHTML = '<div class="bos-satir">Henüz kayıtlı proje yok.</div>';
     return;
   }
-
   const q = kucult(gecmisAra.trim());
   const eslesir = (g) => kucult(g.baslik).includes(q) ||
     kucult(g.projeAd || '').includes(q) ||
     (g.altAjanlar || []).some((a) => kucult(a.tanim).includes(q) || kucult(a.tur).includes(q)) ||
     (g.evrenIsleri || []).some((e) => kucult(e.baslik).includes(q) || kucult(e.model).includes(q));
-
   const liste = q ? S.gecmis.filter(eslesir) : S.gecmis;
   if ($('gecmisSay')) $('gecmisSay').textContent = q ? `${liste.length}/${S.gecmis.length}` : (S.gecmis.length || '0');
-
   if (!liste.length) {
     el.innerHTML = `<div class="bos-satir">${q ? 'Aramayla eşleşen oturum yok.' : 'Kayıtlı oturum bulunamadı.'}</div>`;
     return;
   }
-
   const aktifDevam = aktifOturum() ? aktifOturum().devam : null;
+  const ignelenenList = [];
   const inProgress = [];
   const idle = [];
-
   for (const g of liste) {
     const calisiyor = g.canli || g.turCanli || (g.calisanAjan > 0) || (g.calisanEvren > 0) || gecmisAcikMi(g);
-    if (calisiyor) inProgress.push(g);
-    else idle.push(g);
+    if (ignelenenler.has(g.id)) {
+      ignelenenList.push(g);
+    } else if (calisiyor) {
+      inProgress.push(g);
+    } else {
+      idle.push(g);
+    }
   }
-
-  const kartHtml = (g, calisiyor) => {
+  const kartHtml = (g, calisiyor, idx = 0) => {
     const secili = aktifDevam === g.id;
-    const rozet = (g.calisanAjan || 0) + (g.calisanEvren || 0);
+    const tumAjanlar = Array.isArray(g.altAjanlar) ? g.altAjanlar : [];
+    const tumIsler = Array.isArray(g.evrenIsleri) ? g.evrenIsleri : [];
+    const dalVar = tumAjanlar.length + tumIsler.length > 0;
+    const calisanToplam = (g.calisanAjan || 0) + (g.calisanEvren || 0);
+    const rozetMetin = calisanToplam ? `${calisanToplam}/${tumAjanlar.length + tumIsler.length}` : `${tumAjanlar.length + tumIsler.length}`;
+    const baslikEs = kucult(g.baslik).includes(q);
+    const ajanlar = q && !baslikEs ? tumAjanlar.filter((a) => kucult(a.tanim).includes(q) || kucult(a.tur).includes(q)) : tumAjanlar;
+    const isler = q && !baslikEs ? tumIsler.filter((e) => kucult(e.baslik).includes(q) || kucult(e.model).includes(q)) : tumIsler;
+    const ajanAcik = acikAjanlar.has(g.id) || tumAjanlar.some((a) => a.canli) || tumIsler.some((e) => e.canli) || (!!q && ajanlar.length + isler.length > 0);
+    const belirmeSinif = ilkGecmisYukleme ? ' belirme' : '';
+    const gecikmeStil = ilkGecmisYukleme ? ` style="animation-delay: ${Math.min(idx * 25, 200)}ms;"` : '';
+    const igneli = ignelenenler.has(g.id);
+    const evrenMi = g.kaynak === 'evren' || g.evren;
+    const kaynakHtml = kaynakIsaret(evrenMi);
     return `
-      <div class="seans-kart${secili ? ' sec-li' : ''}" role="option" aria-selected="${secili}" data-id="${esc(g.id)}" data-yol="${esc(g.projeYol)}" title="${esc(g.baslik)}\n${esc(g.projeAd)} · ${esc(goreli(g.ms / 1000))}">
+      <div class="seans-kart${secili ? ' sec-li' : ''}${belirmeSinif}"${gecikmeStil} role="option" aria-selected="${secili}" data-id="${esc(g.id)}" data-yol="${esc(g.projeYol)}" title="${esc(g.baslik)}
+${esc(g.projeAd)} · ${evrenMi ? 'EVREN' : 'Claude'} · ${esc(goreli(g.ms / 1000))}">
         <div class="seans-satir-ust">
           <span class="seans-baslik">${esc(g.baslik)}</span>
+          <button class="seans-igne-btn${igneli ? ' aktif' : ''}" type="button" data-igne="${esc(g.id)}" title="${igneli ? 'İğneyi kaldır' : 'En üste iğnele'}">
+            <svg class="ic"><use href="#i-pin" /></svg>
+          </button>
           ${calisiyor ? `
             <span class="seans-durum-canli">
               <span class="led canli"></span>
-              ${rozet > 0 ? `<span class="seans-rozet mono">${rozet}</span>` : ''}
+              ${calisanToplam > 0 ? `<span class="seans-rozet mono">${calisanToplam}</span>` : ''}
             </span>
           ` : `
             <span class="seans-zaman">${kisaZaman(g.ms)}</span>
           `}
         </div>
         <div class="seans-satir-alt">
-          <svg class="ic seans-klasor"><use href="#i-folder" /></svg>
+          ${kaynakHtml}
           <span class="seans-proje">${esc(g.projeAd)}</span>
-          ${g.evren ? '<span class="tag-evren">EVREN</span>' : ''}
+          ${dalVar ? `<button class="tag-ajan${calisanToplam ? ' canli' : ''}" data-ajan-toggle="${esc(g.id)}" type="button" title="${tumAjanlar.length + tumIsler.length} alt görev${calisanToplam ? `, ${calisanToplam} çalışıyor` : ''}">${rozetMetin}</button>` : ''}
         </div>
+        ${dalVar && ajanAcik ? `
+        <div class="ajan-agac">
+          ${ajanlar.map((a) => `
+            <div class="ajan" title="${esc(a.tanim)}${a.faz ? ' · ' + esc(a.faz) : ''}">
+              <div class="ajan-satir">
+                <span class="ajan-nokta${a.canli ? ' canli' : ''}"></span>
+                <span class="ajan-tanim">${esc(a.tanim)}</span>
+              </div>
+              <div class="ajan-meta">
+                ${a.tur ? `<span class="ajan-tur">${esc(a.tur)}</span>` : ''}
+                ${a.isAkisi ? `<span class="ajan-wf">${esc(a.isAkisiAdi || 'wf')}${a.faz ? ' · ' + esc(a.faz) : ''}</span>` : ''}
+                ${kisaModel(a.model) ? `<span class="ajan-model mono">${esc(kisaModel(a.model))}</span>` : ''}
+                <span class="ajan-zaman mono">${esc(kisaZaman(a.ms))}</span>
+              </div>
+            </div>
+          `).join('')}
+          ${isler.map((e) => `
+            <div class="ajan evren-is${evrenSinif(e.durum)}" data-evren-id="${esc(e.id)}" data-evren-dizin="${esc(e.dizin || '')}" data-evren-model="${esc(e.model || '')}" role="button" tabindex="0" title="${esc(e.baslik)} · ${esc(e.durum)}${e.dizin ? ' · ' + esc(e.dizin) : ''}">
+              <div class="ajan-satir">
+                <span class="ajan-nokta${evrenSinif(e.durum)}"></span>
+                <span class="ajan-tanim">${esc(e.baslik)}</span>
+              </div>
+              <div class="ajan-meta">
+                ${kaynakIsaret(true)}
+                ${kisaModel(e.model) ? `<span class="ajan-model mono">${esc(kisaModel(e.model))}</span>` : ''}
+                <span class="ajan-zaman mono">${esc(kisaZaman(e.ms))}</span>
+              </div>
+            </div>
+          `).join('')}
+        </div>` : ''}
       </div>`;
   };
-
   // Grup başlığı gerçek bir düğme: Enter/Space ile katlanır, ok solda, sayı sağda hep görünür.
   // Arama varken eşleşen gruplar geçici olarak açık gösterilir; kayıtlı katlanma durumu değişmez.
   const grupHtml = (anahtar, etiket, kayitlar, calisiyor) => {
@@ -217,21 +273,19 @@ function gecmisCiz() {
           <span class="grup-sayi mono">${kayitlar.length}</span>
         </button>
         <div class="seans-grup-govde" id="grup-${anahtar}">
-          <div class="seans-grup-ic">${kayitlar.map((g) => kartHtml(g, calisiyor)).join('')}</div>
+          <div class="seans-grup-ic">${kayitlar.map((g, i) => kartHtml(g, calisiyor, i)).join('')}</div>
         </div>
       </div>`;
   };
-
-  const html = grupHtml('calisiyor', 'Çalışıyor', inProgress, true) + grupHtml('bosta', 'Boşta', idle, false);
-
+  const html = grupHtml('ignelenenler', 'İğnelenenler', ignelenenList, null) + grupHtml('calisiyor', 'Çalışıyor', inProgress, true) + grupHtml('bosta', 'Boşta', idle, false);
   // Aynı HTML'i yeniden yazmayız: kaydırma yeri ve fare altındaki satır bozulmasın.
   if (html === gecmisSonHtml) return;
   gecmisSonHtml = html;
   const kaydirma = el.scrollTop;
   el.innerHTML = html;
   el.scrollTop = kaydirma;
+  ilkGecmisYukleme = false;
 }
-
 // Grup başlığına tıklama: yalnız sınıf ve kayıt değişir, liste yeniden çizilmez (animasyon akıcı kalır).
 function grupKatla(dugme) {
   const anahtar = dugme.dataset.grupDugme;
@@ -243,26 +297,37 @@ function grupKatla(dugme) {
   S.grupKapali = { ...S.grupKapali, [anahtar]: !acik };
   sakla.yaz('grupKapali', S.grupKapali);
 }
-
+async function oturumIzle(g) {
+  if (!g || !g.id) return;
+  seciliOturumGecmisi = g;
+  const panel = $('sohbetPanel');
+  if (panel) panel.hidden = false;
+  S.sohbetAcik = true; // yalnız bu izleme için: kalıcı tercihe yazılmaz
+  if ($('sohbetBtn')) $('sohbetBtn').classList.toggle('aktif', true);
+  const forkBtn = $('sohbetForkBtn');
+  if (forkBtn) forkBtn.hidden = false;
+  await sohbetYukle(true);
+  sohbetIgneDurumGuncelle();
+  setTimeout(() => sigdir(), 80);
+}
 async function gecmisYukle() {
   const no = ++gecmisIstek;
-  if (!S.projeler || !S.projeler.length) { S.gecmis = []; gecmisCiz(); return; }
-
-  const sonuclar = await Promise.all(
-    S.projeler.map(async (p) => {
-      const list = await window.evren.gecmis(p.yol).catch(() => []);
-      const ad = p.ad || (p.yol ? p.yol.split(/[\\/]/).filter(Boolean).pop() : 'Proje');
-      return (Array.isArray(list) ? list : []).map((x) => ({
-        ...x,
-        projeAd: ad,
-        projeYol: p.yol,
-      }));
-    })
-  );
-  if (no !== gecmisIstek) return;
-  const hepsi = sonuclar.flat().sort((a, b) => b.ms - a.ms);
-  S.gecmis = hepsi;
-  gecmisCiz();
+  try {
+    const hepsi = await window.evren.gecmis().catch(() => []);
+    if (no !== gecmisIstek) return;
+    S.gecmis = Array.isArray(hepsi) ? hepsi : [];
+    const igneParam = new URLSearchParams(location.search).get('igne');
+    if (igneParam && S.gecmis.length > 0) {
+      const hedefId = igneParam === '1' ? S.gecmis[0].id : igneParam;
+      ignelenenler.add(hedefId);
+    }
+    gecmisCiz();
+    if (typeof Takimyildiz !== 'undefined' && Takimyildiz.guncelle) {
+      Takimyildiz.guncelle();
+    }
+  } catch (e) {
+    console.error('Geçmiş yüklenemedi:', e);
+  }
 }
 function gecmisAc(id) {
   const var_ = S.oturumlar.find((o) => o.canli && o.devam === id);
@@ -277,7 +342,6 @@ function evrenIsiniSurdur(el) {
   if (var_) { sekmeSec(var_.id); return; }
   basla(id, { dizin: (el.dataset.evrenDizin || '').trim() || S.proje, modelId: (el.dataset.evrenModel || '').trim() });
 }
-
 // ---------- proje özeti: commit ısı haritası, dil dağılımı, son commit ----------
 let prjIstek = 0;
 const goreli = (sn) => {
@@ -320,7 +384,6 @@ async function projeOzetYukle() {
     : 'henüz commit yok';
   $('sonCommit').title = v.son ? v.son.mesaj : '';
 }
-
 // ---------- olay günlüğü (zaman çizelgesi) ----------
 let olaySayisi = 0;
 const saat = (z) => [z.getHours(), z.getMinutes(), z.getSeconds()].map((x) => String(x).padStart(2, '0')).join(':');
@@ -333,7 +396,6 @@ function olay(tur, metin, sinif = '') {
   while (ol.children.length > 40) ol.lastChild.remove();
   $('olaySay').textContent = ++olaySayisi;
 }
-
 function listeKlavye(listeId, getir, sec) {
   $(listeId).addEventListener('keydown', (e) => {
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
@@ -349,7 +411,6 @@ function listeKlavye(listeId, getir, sec) {
     if (e.target.closest('[data-eylem="ekle"]')) klasorEkle();
   });
 }
-
 // ---------- özet: başlık, brifing kartı, durum çubuğu ----------
 function hucre(id, metin) {
   const el = $(id);
@@ -358,13 +419,11 @@ function hucre(id, metin) {
   const dd = el.closest('.stat, dd');
   if (dd && S.yuklendi && !AZ_HAREKET) { dd.classList.remove('guncel'); void dd.offsetWidth; dd.classList.add('guncel'); }
 }
-
 function ozetYaz() {
   const m = seciliModel() || {};
   const p = seciliProje();
   $('crProje').textContent = p ? p.ad : '—';
   $('crDal').textContent = p && p.dal ? p.dal : '—';
-
   hucre('bModel', m.ad || m.id || '—');
   $('bModelId').textContent = m.ad && m.id ? m.id : '';
   hucre('bBaglam', kisaBaglam(m.baglamSayisi));
@@ -375,11 +434,9 @@ function ozetYaz() {
   $('bYol').textContent = p ? kisaYol(p.yol, 46) : '';
   hucre('bDal', p && p.dal ? p.dal : '—');
   $('bDalS').textContent = p ? (p.dal ? 'git deposu' : 'git deposu değil') : '—';
-
   $('sModel').textContent = m.id || '—';
   $('sBaglam').textContent = kisaBaglam(m.baglamSayisi);
   $('sDal').textContent = p && p.dal ? p.dal : '—';
-
   const hazir = S.yuklendi && S.anahtarVar && !!m.id;
   $('baslaBtn').disabled = !hazir;
   $('baslaBtn2').disabled = !hazir;
@@ -390,7 +447,6 @@ function ozetYaz() {
   cipYaz();
 }
 
-
 function tokenFormatla(n) {
   if (n == null || isNaN(n)) return '—';
   const num = Number(n);
@@ -398,7 +454,6 @@ function tokenFormatla(n) {
   if (num >= 1000) return Math.round(num / 1000) + 'K';
   return String(num);
 }
-
 function baglantiYaz() {
   const a = S.api;
   const led = $('led'), sLed = $('sLed');
@@ -411,7 +466,6 @@ function baglantiYaz() {
   $('apiDurum').textContent = metin;
   $('apiMs').textContent = a && a.ok ? `${a.ms} ms` : '—';
   $('kasa').textContent = S.anahtarVar ? 'DPAPI · hazır' : 'kasa boş';
-
   // Kota ve Token hesaplama
   const apiKotaEl = $('apiKota');
   const sKotaMetin = $('sKotaMetin');
@@ -420,14 +474,12 @@ function baglantiYaz() {
   const kotaSifirlanmaMetin = $('kotaSifirlanmaMetin');
   const kotaBarDolgu = $('kotaBarDolgu');
   const kotaYuzdeMetin = $('kotaYuzdeMetin');
-
   if (a && a.kota) {
     const k = a.kota;
     const gunlukLimit = Number(k.daily_limit_tokens) || 15000000;
     const gunlukKullanilan = Number(k.daily_used_tokens) || 0;
     const gunlukKalan = k.daily_remaining_tokens != null ? Number(k.daily_remaining_tokens) : Math.max(0, gunlukLimit - gunlukKullanilan);
     const yuzde = Math.min(100, Math.max(0, (gunlukKullanilan / gunlukLimit) * 100));
-
     // Sıfırlanma süresi hesapla (k.daily_reset_at)
     let sifirlanmaFarkMetni = '';
     if (k.daily_reset_at) {
@@ -436,25 +488,24 @@ function baglantiYaz() {
       if (diffMs > 0) {
         const sa = Math.floor(diffMs / (1000 * 60 * 60));
         const dk = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-        sifirlanmaFarkMetni = ` · ${sa} sa ${dk} dk sonra`;
+        sifirlanmaFarkMetni = `${sa} sa ${dk} dk sonra sıfırlanır`;
       }
     }
-
     if (kotaKalanSayi) kotaKalanSayi.textContent = gunlukKalan.toLocaleString('tr-TR');
     if (kotaKullanilanMetin) {
-      kotaKullanilanMetin.textContent = `${gunlukKullanilan.toLocaleString('tr-TR')} / ${gunlukLimit.toLocaleString('tr-TR')} kullanıldı`;
+      kotaKullanilanMetin.textContent = `${gunlukKullanilan.toLocaleString('tr-TR')} / ${gunlukLimit.toLocaleString('tr-TR')}`;
     }
     if (kotaSifirlanmaMetin) {
-      kotaSifirlanmaMetin.textContent = `Sıfırlanma: 03:00 TSİ${sifirlanmaFarkMetni}`;
+      kotaSifirlanmaMetin.textContent = sifirlanmaFarkMetni || '03:00 TSİ sıfırlanır';
     }
     if (kotaYuzdeMetin) {
       kotaYuzdeMetin.textContent = `%${yuzde.toFixed(1)}`;
     }
-    if (kotaBarDolgu) {
+    KotaSerit.ekle(gunlukKullanilan);
+      if (kotaBarDolgu) {
       kotaBarDolgu.style.width = `${yuzde.toFixed(1)}%`;
       kotaBarDolgu.className = 'kota-bar-dolgu' + (yuzde >= 90 ? ' kritik' : (yuzde >= 70 ? ' uyari' : ''));
     }
-
     if (apiKotaEl) {
       apiKotaEl.textContent = `${tokenFormatla(gunlukKalan)} / ${tokenFormatla(gunlukLimit)}`;
       apiKotaEl.title = `Kalan: ${gunlukKalan.toLocaleString('tr-TR')} token (%${(100 - yuzde).toFixed(1)})`;
@@ -470,7 +521,6 @@ function baglantiYaz() {
     if (apiKotaEl) apiKotaEl.textContent = S.anahtarVar ? (a && a.ok ? '—' : 'alınamadı') : '—';
     if (sKotaMetin) sKotaMetin.textContent = '—';
   }
-
     $('sApiMetin').textContent = a && a.ok ? `API ${a.ms} ms` : (S.anahtarVar ? (a ? 'API yok' : 'API …') : 'Anahtar yok');
   $('sApi').classList.toggle('kotu', !!a && !a.ok);
   hucre('bGecikme', a && a.ok ? `${a.ms} ms` : '—');
@@ -481,10 +531,8 @@ function baglantiYaz() {
   $('hazirPill').className = 'pill ' + sinif;
 }
 
-
 // ---------- veri ----------
 const modelImza = (l) => l.map((m) => m.id + ':' + (m.baglamSayisi || '') + ':' + (m.cikti || '')).join('|');
-
 async function yukle() {
   modelleriCiz(); projeleriCiz();
   try {
@@ -513,13 +561,13 @@ async function yukle() {
   projeOzetYukle();
   gecmisYukle();
   apiYenile();
+  setTimeout(() => { if (typeof Kare !== 'undefined') console.log('[kare:p95]', Kare.p95().toFixed(2) + ' ms'); }, 3000);
   // Boşta 15 sn'de bir ölçüm (gecikme grafiği canlı kalsın); oturumda 60 sn; pencere gizliyken hiç.
   let tik = 0;
   setInterval(() => { tik++; if (!document.hidden && (!S.calisiyor || tik % 4 === 0)) apiYenile(); }, 15000);
   // Geçmiş: pencere görünürken 15 sn'de bir (çalışıyor/bitti durumu güncel kalsın).
   setInterval(() => { if (!document.hidden) gecmisYukle(); }, 15000);
 }
-
 async function apiYenile() {
   const btn = $('yenileBtn');
   btn.classList.add('donuyor');
@@ -543,7 +591,6 @@ async function apiYenile() {
   btn.classList.remove('donuyor');
   baglantiYaz(); ozetYaz();
 }
-
 async function klasorEkle() {
   const sec = await window.evren.klasorSec();
   if (!sec) return false;
@@ -552,7 +599,6 @@ async function klasorEkle() {
   projeleriCiz(); ozetYaz(); projeOzetYukle();
   return true;
 }
-
 // ---------- terminal (her oturumun kendi xterm örneği) ----------
 const TEMA = {
   background: '#07090b', foreground: '#d8dde3', cursor: '#e6e8eb', cursorAccent: '#07090b',
@@ -563,7 +609,6 @@ const TEMA = {
   brightBlue: '#9cc4ff', brightMagenta: '#dcb8ff', brightCyan: '#8be0ea', brightWhite: '#ffffff',
 };
 const GENEL_TUS = new Set(['KeyP', 'KeyB', 'KeyT', 'KeyW', 'KeyF', 'KeyH']); // Ctrl+Shift+<tuş>: uygulamaya ait
-
 async function terminalOlustur(o) {
   try { await document.fonts.ready; await document.fonts.load(`${S.fs}px "IBM Plex Mono"`); } catch {}
   const el = document.createElement('div');
@@ -637,18 +682,13 @@ async function terminalOlustur(o) {
   el.addEventListener('wheel', (e) => {
     if (e.ctrlKey) return;
     const tip = t.buffer && t.buffer.active ? t.buffer.active.type : 'normal';
-    if (tip === 'alternate' && e.deltaY < -20 && !S.sohbetAcik) {
-      sohbetToggle(true);
-    }
+    // Tekerlekle panel kendiliğinden açılmaz; yalnız konuşma düğmesi / Ctrl+Shift+H açar.
   }, { passive: true });
   setTimeout(olcTampon, 1200);
-
   Object.assign(o, { el, term: t, fit: f, webgl, olcTampon });
 }
-
 const aktifOturum = () => S.oturumlar.find((o) => o.id === S.aktif) || null;
 const aktifTerm = () => { const o = aktifOturum(); return o ? o.term : null; };
-
 // Kenar paneli/odak geçişi sürerken tuval ölçümü ertelenir: ölçüm geçişin SONUNDA bir kez yapılır
 // (geçiş hiç olmazsa 320 ms'lik yedek zamanlayıcı devreye girer). Geçiş boyunca ResizeObserver yok sayılır.
 let gecisSuruyor = false, gecisZaman = 0;
@@ -669,7 +709,6 @@ function gecisSonrasi(f) {
   if (side) side.addEventListener('transitionend', dinle);
   gecisZaman = setTimeout(bitir, 320);
 }
-
 let sigdirZaman = 0;
 function sigdir() {
   const o = aktifOturum();
@@ -680,7 +719,36 @@ function sigdir() {
     if (o.pid && o.term.cols && o.term.rows) window.evren.boyut(o.pid, { cols: o.term.cols, rows: o.term.rows });
   });
 }
-
+// "/" menüsü açılıp kapanınca satır içi arayüz ekranın ortasında kalabiliyor (altta boş satırlar).
+// Çıktı durulunca görünür alanın altında boş satır varsa pty'ye bir satırlık boyut dürtmesi gönderilir;
+// araç yeniden boyutlanma bildirimiyle kendini baştan çizer. Aynı boş durum için yalnız bir kez denenir.
+const HIZA_BOS_ESIK = 4;
+function hizaKontrol(o) {
+  if (!o || !o.term || !o.pid || o.id !== S.aktif) return;
+  const b = o.term.buffer.active, rows = o.term.rows;
+  if (b.type !== 'normal' || b.baseY <= 0 || b.viewportY !== b.baseY) { o.hizaDeneme = 0; return; }
+  let son = -1;
+  for (let y = rows - 1; y >= 0; y--) {
+    const l = b.getLine(b.baseY + y);
+    if (l && l.translateToString(true).trim()) { son = y; break; }
+  }
+  const bos = son >= 0 ? rows - 1 - son : 0;
+  if (bos < HIZA_BOS_ESIK) { o.hizaDeneme = 0; return; }
+  // Kademeli onarım: 1) boyut dürtmesi, 2) Ctrl+L (elle yapılan düzeltmenin aynısı), sonra bırak.
+  const deneme = o.hizaDeneme || 0;
+  if (deneme >= 2) return;
+  o.hizaDeneme = deneme + 1;
+  if (deneme === 0) {
+    const cols = o.term.cols;
+    window.evren.boyut(o.pid, { cols, rows: rows - 1 });
+    setTimeout(() => { if (o.pid) window.evren.boyut(o.pid, { cols, rows }); }, 80);
+  } else {
+    window.evren.yaz(o.pid, '\x0c');
+  }
+  // Onarım çıktı üretmese de sonucu bir kez daha denetle.
+  clearTimeout(o.hizaZaman);
+  o.hizaZaman = setTimeout(() => hizaKontrol(o), 900);
+}
 function fsDegis(d) {
   S.fs = Math.min(18, Math.max(11, S.fs + d));
   sakla.yaz('fs', S.fs);
@@ -696,7 +764,6 @@ function fsDegis(d) {
   }
   sigdir();
 }
-
 // Model adı / etiketinden EVREN model kimliğini çözer
 function modelKimligiCoz(metin) {
   if (!metin) return null;
@@ -715,7 +782,6 @@ function modelKimligiCoz(metin) {
   if (s.includes('haiku')) return 'claude-haiku-5-5';
   return null;
 }
-
 // Oturumun terminal tamponunu geriye doğru tarayarak gerçekte çalışan modeli tespit eder
 function oturumModeliTara(o) {
   if (!o || !o.term || !o.term.buffer || !o.term.buffer.active) return;
@@ -727,7 +793,6 @@ function oturumModeliTara(o) {
     if (!l) continue;
     const str = l.translateToString(true);
     if (!str) continue;
-
     // 1. "Set model to `?Model Adı`?"
     const mSet = str.match(/Set model to [`'\"]?([^`'\"\r\n()]+)/i);
     if (mSet) {
@@ -742,7 +807,6 @@ function oturumModeliTara(o) {
         return;
       }
     }
-
     // 2. "Model Adı (hizli...) • API/Subscription Usage Billing"
     const mHeader = str.match(/(?:^|\r|\n)\s*([^\r\n•·]+?)\s*[•·]\s*(?:API|Subscription)\s*Usage/i);
     if (mHeader) {
@@ -759,13 +823,11 @@ function oturumModeliTara(o) {
     }
   }
 }
-
 function oturumModeliTaraGecikmeli(o) {
   if (!o) return;
   clearTimeout(o._modelTaraTimer);
   o._modelTaraTimer = setTimeout(() => oturumModeliTara(o), 120);
 }
-
 // ---------- sekmeler ----------
 function sekmeleriCiz() {
   const kisaModel = (id) => {
@@ -788,7 +850,6 @@ function sekmeleriCiz() {
   durumYaz();
 }
 const cipYaz = sekmeleriCiz; // eski adla çağıranlar için
-
 function durumYaz() {
   const o = aktifOturum();
   S.calisiyor = !!(o && o.canli);
@@ -803,8 +864,13 @@ function durumYaz() {
   $('sOturum').textContent = `${S.oturumlar.filter((x) => x.canli).length}/${S.oturumlar.length} oturum`;
   sureYaz();
 }
-
 function sekmeSec(id) {
+  const izlemedeydi = !!seciliOturumGecmisi;
+  seciliOturumGecmisi = null;
+  if (izlemedeydi) sohbetToggle(false);
+  else if (id != null && !$('sohbetPanel').hidden) sohbetToggle(false); // tam ekran panel sekme geçişinde terminali örtmesin
+  sohbetIgneDurumGuncelle();
+  if ($('sohbetForkBtn')) $('sohbetForkBtn').hidden = true;
   S.aktif = id;
   const o = aktifOturum();
   if (o) o.yeni = false;
@@ -816,13 +882,11 @@ function sekmeSec(id) {
   if (o && o.term) { sigdir(); setTimeout(() => o.term.focus(), 0); }
   if (S.sohbetAcik) sohbetYukle();
 }
-
 function sekmeGez(yon) {
   const dizi = [null, ...S.oturumlar.map((o) => o.id)];
   const i = dizi.indexOf(S.aktif);
   sekmeSec(dizi[(i + yon + dizi.length) % dizi.length]);
 }
-
 async function sekmeKapat(id) {
   const i = S.oturumlar.findIndex((o) => o.id === id);
   if (i < 0) return;
@@ -837,7 +901,6 @@ async function sekmeKapat(id) {
     sekmeSec(komsu ? komsu.id : null);
   } else sekmeleriCiz();
 }
-
 // ---------- ana ekran (brifing) ----------
 function brifGizle() {
   const b = $('brif');
@@ -852,11 +915,9 @@ function brifGoster() {
   requestAnimationFrame(() => b.classList.remove('gidiyor'));
   Grafik.basla();
 }
-
 // ---------- oturum ----------
 let sonYerel = 0;
 const bekleyenVeri = new Map(); // pid -> [veri] (sekme kaydından önce gelen çıktı)
-
 async function basla(devamId, secenekler) {
   const devam = typeof devamId === 'string' ? devamId : null; // düğme olayı dize değildir
   // EVREN işini sürdürürken işin kendi dizini/modeli kullanılır; normal başlatmada seçili olanlar.
@@ -868,46 +929,49 @@ async function basla(devamId, secenekler) {
   if (S.oturumlar.filter((o) => o.canli).length >= 8) { olay('OTURUM', 'en çok 8 canlı oturum', 'uyari'); return; }
   if (!yol && !(await klasorEkle())) return;
   S.basliyor = true;
-  const o = { id: ++sonYerel, pid: 0, model: m.id, proje: p ? p.ad : yol, dal: p ? p.dal : '', yol, canli: true, kod: null, basladi: 0, yeni: false, devam };
-  S.oturumlar.push(o);
-  await terminalOlustur(o);
-  sekmeSec(o.id);
-  await bekle(30);
-  if (o.fit) { try { o.fit.fit(); } catch {} }
-  o.term.writeln(`\x1b[38;2;74;83;93m  evren \x1b[38;2;108;119;131m› ${m.id} › ${o.proje}\x1b[0m`);
-  const sonuc = await window.evren.baslat({ modelId: m.id, dizin: yol, cols: o.term.cols, rows: o.term.rows, devam });
-  S.basliyor = false;
-  if (!sonuc || sonuc.hata) {
-    o.canli = false; o.kod = 'hata';
-    o.term.writeln(`\x1b[38;2;236;106;110m  ✗ ${(sonuc && sonuc.hata) || 'başlatılamadı'}\x1b[0m`);
-    olay('OTURUM', `başlatılamadı · ${(sonuc && sonuc.hata) || ''}`, 'kotu');
+  try {
+    const o = { id: ++sonYerel, pid: 0, model: m.id, proje: p ? p.ad : ((yol || '').split(/[\\/]/).filter(Boolean).pop() || yol), dal: p ? p.dal : '', yol, canli: true, kod: null, basladi: 0, yeni: false, devam };
+    S.oturumlar.push(o);
+    await terminalOlustur(o);
+    sekmeSec(o.id);
+    await bekle(30);
+    if (o.fit) { try { o.fit.fit(); } catch {} }
+    o.term.writeln(`\x1b[38;2;74;83;93m  evren \x1b[38;2;108;119;131m› ${m.id} › ${o.proje}\x1b[0m`);
+    const sonuc = await window.evren.baslat({ modelId: m.id, dizin: yol, cols: o.term.cols, rows: o.term.rows, devam, forkSession: !!sec.fork });
+    if (!sonuc || sonuc.hata) {
+      o.canli = false; o.kod = 'hata';
+      o.term.writeln(`\x1b[38;2;236;106;110m  ✗ ${(sonuc && sonuc.hata) || 'başlatılamadı'}\x1b[0m`);
+      olay('OTURUM', `başlatılamadı · ${(sonuc && sonuc.hata) || ''}`, 'kotu');
+      sekmeleriCiz();
+      return;
+    }
+    o.pid = sonuc.id;
+    for (const v of bekleyenVeri.get(o.pid) || []) o.term.write(v);
+    bekleyenVeri.delete(o.pid);
+    o.basladi = Date.now();
+    olay('OTURUM', `#${S.oturumlar.indexOf(o) + 1} başladı · ${m.id} · ${o.proje}`, 'iyi');
+    o.sayac = setInterval(() => { if (o.id === S.aktif) { sureYaz(); oturumModeliTara(o); } }, 1000);
     sekmeleriCiz();
-    return;
+    sigdir();
+    o.term.focus();
+    setTimeout(gecmisYukle, 4000); // yeni oturumun kaydı birkaç sn sonra oluşur
+  } catch (err) {
+    console.error('[basla hatasi]', err);
+    olay('OTURUM', `Hata: ${err && err.message ? err.message : err}`, 'kotu');
+  } finally {
+    S.basliyor = false;
   }
-  o.pid = sonuc.id;
-  for (const v of bekleyenVeri.get(o.pid) || []) o.term.write(v);
-  bekleyenVeri.delete(o.pid);
-  o.basladi = Date.now();
-  olay('OTURUM', `#${S.oturumlar.indexOf(o) + 1} başladı · ${m.id} · ${o.proje}`, 'iyi');
-  o.sayac = setInterval(() => { if (o.id === S.aktif) { sureYaz(); oturumModeliTara(o); } }, 1000);
-  sekmeleriCiz();
-  sigdir();
-  o.term.focus();
-  setTimeout(gecmisYukle, 4000); // yeni oturumun kaydı birkaç sn sonra oluşur
 }
-
 function sureYaz() {
   const o = aktifOturum();
   $('sSure').textContent = o && o.basladi ? sureMetni((o.bitti || Date.now()) - o.basladi) : '—';
 }
-
 async function durdur() {
   const o = aktifOturum();
   if (!o || !o.canli) return;
   await window.evren.kapatOturum(o.pid);
   oturumBitti(o.pid, { kod: null });
 }
-
 function oturumBitti(pid, bilgi) {
   const o = S.oturumlar.find((x) => x.pid === pid);
   if (!o || !o.canli) return;
@@ -920,14 +984,12 @@ function oturumBitti(pid, bilgi) {
   sekmeleriCiz();
   gecmisYukle();
 }
-
 function sideToggle() {
   const kapali = !$('app').classList.contains('side-kapali');
   $('app').classList.toggle('side-kapali', kapali);
   sakla.yaz('sideKapali', kapali);
   gecisSonrasi(() => { sigdir(); Grafik.olc(); });
 }
-
 // Odak modu: yalnız terminal (ve başlık çubuğu) kalır; kenar paneli, sekme şeridi, durum çubuğu gizlenir.
 function odakToggle(zorla) {
   const acik = typeof zorla === 'boolean' ? zorla : !$('app').classList.contains('odak');
@@ -937,25 +999,40 @@ function odakToggle(zorla) {
   if (acik) { ip.classList.remove('sondu'); void ip.offsetWidth; ip.classList.add('sondu'); }
   gecisSonrasi(() => { sigdir(); Grafik.olc(); });
 }
-
 // ---------- konuşma / sohbet geçmişi paneli ----------
 let sohbetYukleniyor = false;
-
 function sohbetToggle(zorla) {
   const panel = $('sohbetPanel');
   if (!panel) return;
   const acik = typeof zorla === 'boolean' ? zorla : panel.hidden;
   panel.hidden = !acik;
   S.sohbetAcik = acik;
-  sakla.yaz('sohbetAcik', acik);
+  sakla.yaz('sohbetPanelAcik', acik);
   if ($('sohbetBtn')) $('sohbetBtn').classList.toggle('aktif', acik);
   if (acik) sohbetYukle(true);
   setTimeout(() => sigdir(), 80);
 }
-
 async function sohbetYukle(zorla = false) {
   const panel = $('sohbetPanel');
   if (!panel || panel.hidden) return;
+  if (seciliOturumGecmisi) {
+    if (sohbetYukleniyor && !zorla) return;
+    sohbetYukleniyor = true;
+    try {
+      const res = await window.evren.sohbetOturumKaydi({
+        dizin: seciliOturumGecmisi.projeYol,
+        id: seciliOturumGecmisi.id,
+      });
+      const girisler = (res && res.girisler) || [];
+      if (seciliOturumGecmisi) seciliOturumGecmisi.girisler = girisler;
+      sohbetCiz(girisler);
+    } catch (e) {
+      console.error('Sohbet kaydı okunamadı:', e);
+    } finally {
+      sohbetYukleniyor = false;
+    }
+    return;
+  }
   const o = aktifOturum();
   if (!o || !o.pid) {
     $('sohbetListe').innerHTML = '<div class="sohbet-bos">Aktif bir oturum yok</div>';
@@ -975,7 +1052,6 @@ async function sohbetYukle(zorla = false) {
     sohbetYukleniyor = false;
   }
 }
-
 function sohbetCiz(girisler) {
   const filtre = S.sohbetFiltre || 'hepsi';
   const filtrelenmis = (girisler || []).filter((g) => {
@@ -983,30 +1059,24 @@ function sohbetCiz(girisler) {
     if (filtre === 'arac') return g.rol === 'arac';
     return true;
   });
-
   if ($('sohbetSayac')) $('sohbetSayac').textContent = filtrelenmis.length;
-
   const liste = $('sohbetListe');
   if (!liste) return;
   if (!filtrelenmis.length) {
     liste.innerHTML = '<div class="sohbet-bos">Bu filtrede kayıt bulunamadı</div>';
     return;
   }
-
   const zamanMetni = (ms) => {
     if (!ms) return '';
     const d = new Date(ms);
     return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   };
-
   const rolEtiketleri = {
     kullanici: 'Kullanıcı',
     asistan: 'Asistan',
     arac: 'Araç',
   };
-
   const enAlttaMi = (liste.scrollHeight - liste.scrollTop - liste.clientHeight) < 60;
-
   liste.innerHTML = filtrelenmis.map((g, idx) => {
     const rol = g.rol || 'asistan';
     const zaman = zamanMetni(g.ms);
@@ -1028,22 +1098,22 @@ function sohbetCiz(girisler) {
       </div>
     `;
   }).join('');
-
   if (enAlttaMi || !liste.dataset.kaydirildi) {
     liste.scrollTop = liste.scrollHeight;
     liste.dataset.kaydirildi = '1';
   }
 }
-
 // ---------- komut paleti ----------
 const P = { ogeler: [], gorunen: [], aktif: 0 };
-
 function paletOgeleri() {
   const kilit = false; // çoklu oturum: seçimler her zaman yeni oturum içindir
   const ao = aktifOturum();
   const ey = [
     { ad: 'Yeni oturum başlat', ic: 'play', alt: S.aktif == null ? 'Enter' : '', yap: basla, pasif: !S.anahtarVar || !S.yuklendi },
-    ...(ao && ao.canli ? [{ ad: 'Bu oturumu sonlandır', ic: 'stop', yap: durdur }] : []),
+    ...(ao && ao.canli ? [
+      { ad: 'Bu oturumu sonlandır', ic: 'stop', yap: durdur },
+      { ad: 'Yeni sohbet özeti iste (/summarize)', ic: 'chat', yap: () => { window.evren.yaz(ao.pid, '/summarize\r'); } },
+    ] : []),
     ...(ao ? [{ ad: 'Sekmeyi kapat', ic: 'clear', alt: 'Ctrl ⇧ W', yap: () => sekmeKapat(ao.id) }] : []),
     { ad: 'Ana ekran', ic: 'term', alt: 'Ctrl ⇧ T', yap: () => sekmeSec(null) },
     { ad: 'Odak modu', ic: 'odak', alt: 'Ctrl ⇧ F', yap: () => odakToggle() },
@@ -1060,7 +1130,6 @@ function paletOgeleri() {
   const ot = S.oturumlar.map((o, i) => ({ g: 'Oturumlar', ad: `${i + 1} · ${o.proje}`, alt: `${o.model}${o.canli ? '' : ' · kapandı'}`, ic: 'term', secili: o.id === S.aktif, yap: () => sekmeSec(o.id) }));
   return [...ey, ...ot, ...md, ...pr];
 }
-
 function eslesme(q, s) {
   const a = s.toLocaleLowerCase('tr'), b = q.toLocaleLowerCase('tr').replace(/\s+/g, '');
   let i = 0, onceki = -2, skor = 0;
@@ -1073,13 +1142,11 @@ function eslesme(q, s) {
   }
   return { skor: skor - a.length * 0.01, idx };
 }
-
 function vurgula(s, idx) {
   if (!idx.length) return esc(s);
   const set = new Set(idx);
   return [...s].map((c, i) => (set.has(i) ? `<mark>${esc(c)}</mark>` : esc(c))).join('');
 }
-
 function paletCiz() {
   const q = $('paletGiris').value.trim();
   P.gorunen = [];
@@ -1100,7 +1167,6 @@ function paletCiz() {
     return `${bas}<div class="pal-i${i === P.aktif ? ' aktif' : ''}${o.pasif ? ' pasif' : ''}" data-i="${i}" role="option">${ikon(o.ic)}<span class="ad">${vurgula(o.ad, o.idx)}</span>${o.secili ? '<span class="secili">seçili</span>' : ''}${o.alt ? `<span class="alt">${esc(o.alt)}</span>` : ''}</div>`;
   }).join('');
 }
-
 function paletAktif(i) {
   if (!P.gorunen.length) return;
   P.aktif = (i + P.gorunen.length) % P.gorunen.length;
@@ -1108,7 +1174,6 @@ function paletAktif(i) {
   const a = $('paletListe').querySelector('.pal-i.aktif');
   if (a) a.scrollIntoView({ block: 'nearest' });
 }
-
 function paletAc() {
   P.ogeler = paletOgeleri();
   $('palet').hidden = false;
@@ -1126,7 +1191,6 @@ function paletUygula(i) {
   paletKapat();
   o.yap();
 }
-
 $('paletGiris').addEventListener('input', paletCiz);
 $('paletGiris').addEventListener('keydown', (e) => {
   if (e.key === 'ArrowDown') { e.preventDefault(); paletAktif(P.aktif + 1); }
@@ -1140,17 +1204,158 @@ $('paletListe').addEventListener('mousemove', (e) => {
 });
 $('paletListe').addEventListener('click', (e) => { const r = e.target.closest('.pal-i'); if (r) paletUygula(Number(r.dataset.i)); });
 $('palet').addEventListener('mousedown', (e) => { if (e.target === $('palet')) paletKapat(); });
-
 // ---------- paylaşılan kare zamanlayıcı ----------
 // Tek requestAnimationFrame döngüsü; tüm paneller (ana grafik, gecikme, ileride eklenecekler)
 // aynı kareden beslenir. Böylece panel sayısı artsa da yalnız bir zamanlayıcı çalışır.
+// ---------- Token Harcama Şeridi (Item 5b) ----------
+const KotaSerit = (() => {
+  const cv = $('kotaSerit');
+  if (!cv) return { ekle: () => {}, ciz: () => {} };
+  const c = cv.getContext('2d');
+  let gecmis = sakla.oku('kotaSeritGecmis', []);
+  if (!Array.isArray(gecmis)) gecmis = [];
+  function ekle(kullanilan) {
+    if (typeof kullanilan !== 'number' || isNaN(kullanilan)) return;
+    gecmis.push(kullanilan);
+    if (gecmis.length > 24) gecmis = gecmis.slice(-24);
+    sakla.yaz('kotaSeritGecmis', gecmis);
+    ciz();
+  }
+  function ciz() {
+    if (!cv) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const w = cv.clientWidth || 280;
+    const h = cv.clientHeight || 12;
+    cv.width = Math.round(w * dpr);
+    cv.height = Math.round(h * dpr);
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.clearRect(0, 0, w, h);
+    const farklar = gecmis.slice(1).map((v, i) => Math.max(0, v - gecmis[i]));
+    if (!farklar.length) return;
+    const enCok = Math.max(...farklar, 1), gen = 3, ara = 2;
+    farklar.forEach((f, i) => {
+      const x = Math.round(w - (farklar.length - i) * (gen + ara) + ara);
+      const yuk = f > 0 ? Math.max(2, Math.round((f / enCok) * (h - 1))) : 1;
+      c.fillStyle = f === 0 ? 'rgba(255,255,255,0.14)' : (i === farklar.length - 1 ? 'rgba(255,255,255,0.95)' : 'rgba(236,238,241,0.5)');
+      c.fillRect(x, h - yuk, gen, yuk);
+    });
+  }
+  return { ekle, ciz };
+})();
+// ---------- Canlı Takımyıldız Paneli (Item 5a) ----------
+const Takimyildiz = (() => {
+  const cv = $('takimyildizTuval');
+  const sakin = $('takimyildizSakin');
+  const sayEl = $('takimyildizSay');
+  if (!cv) return { olc: () => {}, guncelle: () => {}, parla: () => {}, ciz: () => {} };
+  const c = cv.getContext('2d');
+  let w = 0, h = 0, dpr = 1;
+  const yildizlar = new Map();
+  let sonZaman = performance.now();
+  function olc() {
+    const b = cv.getBoundingClientRect();
+    dpr = Math.min(2, window.devicePixelRatio || 1);
+    w = b.width;
+    h = b.height;
+    if (w <= 0 || h <= 0) return false;
+    cv.width = Math.round(w * dpr);
+    cv.height = Math.round(h * dpr);
+    return true;
+  }
+  function guncelle() {
+    if (!Array.isArray(S.gecmis)) return;
+    const canlilar = S.gecmis.filter((g) => g.canli || g.turCanli || (g.calisanAjan > 0) || (g.calisanEvren > 0) || gecmisAcikMi(g)).slice(0, 12);
+    if (sayEl) sayEl.textContent = `${canlilar.length} etkin`;
+    if (sakin) sakin.hidden = canlilar.length > 0;
+    const yeni = canlilar.map((g) => {
+      const e = yildizlar.get(g.id);
+      return { id: g.id, g, baslik: g.baslik || g.projeAd || 'Oturum', ajanlar: [...(g.altAjanlar || []), ...(g.evrenIsleri || [])], parlama: e ? e.parlama : 0.7, sx: e ? e.sx : 0, sy: e ? e.sy : 0 };
+    });
+    yildizlar.clear();
+    for (const y of yeni) yildizlar.set(y.id, y);
+  }
+  function parla(id) { const y = yildizlar.get(id); if (y) y.parlama = 1; }
+  function sigdirMetin(m, enCok) {
+    if (c.measureText(m).width <= enCok) return m;
+    let s = m;
+    while (s.length > 1 && c.measureText(s + '…').width > enCok) s = s.slice(0, -1);
+    return s.trimEnd() + '…';
+  }
+  function ciz(now) {
+    if (!w && !olc()) return;
+    const dt = Math.min(0.1, (now - sonZaman) / 1000);
+    sonZaman = now;
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.clearRect(0, 0, w, h);
+    const liste = [...yildizlar.values()], n = liste.length;
+    if (!n) return;
+    const t = now / 1000, adim = w / n, sal = n > 1 ? Math.min(12, h * 0.1) : 0;
+    liste.forEach((y, i) => {
+      y.sx = (i + 0.5) * adim;
+      y.sy = h * 0.42 + (i % 2 ? sal : -sal) + (AZ_HAREKET ? 0 : Math.sin(t * 0.5 + i * 1.7) * 2);
+    });
+    c.strokeStyle = 'rgba(255,255,255,0.11)'; c.lineWidth = 1;
+    c.beginPath(); liste.forEach((y, i) => (i ? c.lineTo(y.sx, y.sy) : c.moveTo(y.sx, y.sy))); c.stroke();
+    c.font = '500 9.5px "IBM Plex Mono", Consolas, monospace';
+    c.textAlign = 'center'; c.textBaseline = 'alphabetic';
+    for (const y of liste) {
+      y.parlama = Math.max(0, y.parlama - dt * 1.2);
+      y.ajanlar.slice(0, 8).forEach((a, i, d) => {
+        const aci = (AZ_HAREKET ? 0 : t * 0.5) + (i * 6.283) / d.length;
+        const ux = y.sx + Math.cos(aci) * 13, uy = y.sy + Math.sin(aci) * 13;
+        c.strokeStyle = 'rgba(255,255,255,0.12)';
+        c.beginPath(); c.moveTo(y.sx, y.sy); c.lineTo(ux, uy); c.stroke();
+        c.fillStyle = a.canli ? '#3ec28a' : 'rgba(236,238,241,0.55)';
+        c.beginPath(); c.arc(ux, uy, 1.5, 0, 6.283); c.fill();
+      });
+      if (y.parlama > 0) {
+        c.strokeStyle = `rgba(255,255,255,${(y.parlama * 0.45).toFixed(3)})`;
+        c.beginPath(); c.arc(y.sx, y.sy, 4 + (1 - y.parlama) * 9, 0, 6.283); c.stroke();
+      }
+      c.fillStyle = `rgba(255,255,255,${(0.7 + y.parlama * 0.3).toFixed(3)})`;
+      c.beginPath(); c.arc(y.sx, y.sy, 3, 0, 6.283); c.fill();
+      if (adim >= 52) { c.fillStyle = 'rgba(162,170,181,0.9)'; c.fillText(sigdirMetin(y.baslik, adim - 10), y.sx, y.sy + 26); }
+    }
+  }
+  cv.addEventListener('click', (e) => {
+    const r = cv.getBoundingClientRect(), cx = e.clientX - r.left, cy = e.clientY - r.top;
+    for (const y of yildizlar.values()) {
+      if ((cx - y.sx) ** 2 + (cy - y.sy) ** 2 > 484) continue;
+      const var_ = S.oturumlar.find((o) => o.canli && o.devam === y.id);
+      if (var_) sekmeSec(var_.id); else oturumIzle(y.g);
+      break;
+    }
+  });
+  new ResizeObserver(() => olc()).observe(cv.parentElement);
+  return { olc, guncelle, parla, ciz };
+})();
 const Kare = (() => {
   const aboneler = new Set();
   let raf = 0;
+  let sonKare = performance.now();
+  const kareSureleri = [];
+  function isModalAcik() {
+    const m1 = $('yeniOturumModal'), m2 = $('kumandaModal'), m3 = $('palet');
+    return (m1 && !m1.hidden) || (m2 && !m2.hidden) || (m3 && !m3.hidden);
+  }
   function dongu(now) {
     raf = 0;
-    for (const f of [...aboneler]) { try { f(now); } catch (e) { console.error(e); } }
+    const dt = now - sonKare;
+    sonKare = now;
+    if (dt > 0 && dt < 100) {
+      kareSureleri.push(dt);
+      if (kareSureleri.length > 120) kareSureleri.shift();
+    }
+    if (!document.hidden && !isModalAcik()) {
+      for (const f of [...aboneler]) { try { f(now); } catch (e) { console.error(e); } }
+    }
     if (aboneler.size) raf = requestAnimationFrame(dongu);
+  }
+  function p95() {
+    if (!kareSureleri.length) return 0;
+    const sirali = [...kareSureleri].sort((a, b) => a - b);
+    const idx = Math.min(sirali.length - 1, Math.floor(sirali.length * 0.95));
+    return sirali[idx];
   }
   function uyandir() { if (!raf && !document.hidden && aboneler.size) raf = requestAnimationFrame(dongu); }
   document.addEventListener('visibilitychange', () => { if (document.hidden) { cancelAnimationFrame(raf); raf = 0; } else uyandir(); });
@@ -1159,9 +1364,9 @@ const Kare = (() => {
     durdur() { cancelAnimationFrame(raf); raf = 0; },
     get calisiyor() { return !!raf; },
     aboneSayisi: () => aboneler.size,
+    p95,
   };
 })();
-
 // ---------- durum sütunu: gecikme grafiği ----------
 const kanvas = (id) => {
   const cv = $(id), c = cv.getContext('2d');
@@ -1176,7 +1381,6 @@ const kanvas = (id) => {
   o.hazirla = () => { c.setTransform(o.dpr, 0, 0, o.dpr, 0, 0); c.clearRect(0, 0, o.w, o.h); };
   return o;
 };
-
 const Gecikme = (() => {
   const k = kanvas('gecGrafik');
   const MONO = '"IBM Plex Mono", Consolas, monospace';
@@ -1222,7 +1426,7 @@ const Gecikme = (() => {
   }
   return { olc: k.olc, ciz };
 })();
-
+Kare.abone((now) => Takimyildiz.ciz(now));
 // ---------- canlı grafik: Model → EVREN → Proje akışı + takımyıldız ----------
 const Grafik = (() => {
   const kutu = $('brif');
@@ -1235,7 +1439,6 @@ const Grafik = (() => {
     x: Math.random(), y: Math.random(), vx: (Math.random() - 0.5) * 0.008, vy: (Math.random() - 0.5) * 0.008, r: Math.random() * 1.1 + 0.5,
   }));
   const MONO = '"IBM Plex Mono", Consolas, monospace';
-
   function olc() {
     const b = kutu.getBoundingClientRect();
     dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -1243,15 +1446,14 @@ const Grafik = (() => {
     cv.width = Math.max(1, Math.round(w * dpr)); cv.height = Math.max(1, Math.round(h * dpr));
     const k = kutu.querySelector('.ops').getBoundingClientRect();
     Gecikme.olc();
+    Takimyildiz.olc();
     kart = { x: k.left - b.left, y: k.top - b.top, w: k.width, h: k.height };
     if (!bag) ciz(performance.now(), true);
   }
-
   const bez = (p0, c0, p1, t) => {
     const u = 1 - t;
     return [u * u * p0[0] + 2 * u * t * c0[0] + t * t * p1[0], u * u * p0[1] + 2 * u * t * c0[1] + t * t * p1[1]];
   };
-
   function kolon(liste, sag, secili, t, etiketli) {
     if (!kart || !liste.length) return [];
     const bosluk = sag ? w - (kart.x + kart.w) : kart.x;
@@ -1269,7 +1471,6 @@ const Grafik = (() => {
       return { o, x, y, ank, sec: o.id === secili, sag };
     });
   }
-
   // Yatay sıra: kartın üstünde (modeller) ya da altında (projeler); en az 64 px dikey boşluk gerekir.
   function satir(liste, ust, secili, t) {
     if (!kart || !liste.length) return [];
@@ -1284,7 +1485,6 @@ const Grafik = (() => {
       return { o, x, y: y0, ank, sec: o.id === secili, sag: !ust, yatay: true };
     });
   }
-
   function ciz(now, zorla) {
     if (!zorla && now - son < 33) return; // ~30 kare/sn yeter, işlemciyi yormaz
     const dt = Math.min(0.1, (now - son) / 1000 || 0);
@@ -1293,7 +1493,6 @@ const Grafik = (() => {
     c.setTransform(dpr, 0, 0, dpr, 0, 0);
     c.fillStyle = '#0a0c0f';
     c.fillRect(0, 0, w, h);
-
     // takımyıldız
     const pts = [];
     for (const s of yildiz) {
@@ -1311,7 +1510,6 @@ const Grafik = (() => {
     }
     c.fillStyle = 'rgba(164,174,185,0.38)';
     for (const p of pts) { c.beginPath(); c.arc(p[0], p[1], p[2], 0, 6.283); c.fill(); }
-
     // akış
     // İki sütun simetrik: biri etiketiyle sığmıyorsa ikisi de etiketsiz çizilir; tek taraflı görüntü olmaz.
     const mL = S.modeller.map((m) => ({ id: m.id, ust: m.id, alt: kisaBaglam(m.baglamSayisi) }));
@@ -1387,7 +1585,6 @@ const Grafik = (() => {
     Gecikme.ciz(t);
     cv.style.cursor = fare && isabet.some((d) => Math.hypot(fare[0] - d.x, fare[1] - d.y) < 16) && S.aktif == null ? 'pointer' : '';
   }
-
   cv.addEventListener('mousemove', (e) => { const b = cv.getBoundingClientRect(); fare = [e.clientX - b.left, e.clientY - b.top]; });
   cv.addEventListener('mouseleave', () => { fare = null; });
   cv.addEventListener('click', (e) => {
@@ -1396,10 +1593,8 @@ const Grafik = (() => {
     if (!d) return;
     d.sag ? projeSec(d.o.id) : modelSec(d.o.id);
   });
-
   new ResizeObserver(() => { if (!gecisSuruyor) olc(); }).observe(kutu);
   document.addEventListener('visibilitychange', () => (document.hidden ? dur() : basla()));
-
   function basla() {
     if (bag || document.hidden || kutu.hidden || S.aktif != null) return;
     olc();
@@ -1415,19 +1610,15 @@ const Grafik = (() => {
   return { basla, dur, olc };
 })();
 
-
 // ---------- Yeni Oturum Başlat Modalı: Proje ve Model Seçimi ----------
 let modalSecilenProje = '';
 let modalSecilenModel = '';
-
 function yeniOturumModalGuncelle() {
   const pIzgara = $('modalProjeIzgara');
   const mIzgara = $('modalModelIzgara');
   if (!pIzgara || !mIzgara) return;
-
   if (!modalSecilenProje && S.projeler.length) modalSecilenProje = S.proje || S.projeler[0].yol;
   if (!modalSecilenModel && S.modeller.length) modalSecilenModel = S.model || S.modeller[0].id;
-
   // Proje kartları
   pIzgara.innerHTML = S.projeler.map((p) => `
     <button class="oturum-secim-kart${p.yol === modalSecilenProje ? ' aktif' : ''}" type="button" data-proje="${esc(p.yol)}">
@@ -1438,7 +1629,6 @@ function yeniOturumModalGuncelle() {
       <span class="oturum-secim-kart-alt mono">${esc(kisaYol(p.yol, 28))}</span>
     </button>
   `).join('');
-
   // Model kartları
   mIzgara.innerHTML = S.modeller.map((m) => `
     <button class="oturum-secim-kart${m.id === modalSecilenModel ? ' aktif' : ''}" type="button" data-model="${esc(m.id)}">
@@ -1449,23 +1639,19 @@ function yeniOturumModalGuncelle() {
       ${m.not ? `<span class="oturum-secim-kart-alt">${esc(m.not)}</span>` : ''}
     </button>
   `).join('');
-
   const pObj = S.projeler.find((p) => p.yol === modalSecilenProje);
   const mObj = S.modeller.find((m) => m.id === modalSecilenModel);
   const pAd = pObj ? pObj.ad : 'Proje seçilmedi';
   const mAd = mObj ? (mObj.ad || mObj.id) : 'Model seçilmedi';
-
   if ($('modalSeciliBilgi')) {
     $('modalSeciliBilgi').innerHTML = `Seçili: <b>${esc(pAd)}</b> · ${esc(mAd)}`;
   }
 }
-
 // Açık modal varken tuval döngüsü durur; modal kapanınca kaldığı yerden sürer.
 function modalDurumGuncelle() {
   const acik = [...document.querySelectorAll('.modal-ortu')].some((m) => !m.hidden);
   if (acik) Grafik.dur(); else Grafik.basla();
 }
-
 function yeniOturumModalAc() {
   modalSecilenProje = S.proje || (S.projeler[0] ? S.projeler[0].yol : '');
   modalSecilenModel = S.model || (S.modeller[0] ? S.modeller[0].id : '');
@@ -1474,13 +1660,11 @@ function yeniOturumModalAc() {
   if (m) m.hidden = false;
   modalDurumGuncelle();
 }
-
 function yeniOturumModalKapat() {
   const m = $('yeniOturumModal');
   if (m) m.hidden = true;
   modalDurumGuncelle();
 }
-
 function yeniOturumBaslat() {
   const yol = modalSecilenProje || S.proje;
   const modelId = modalSecilenModel || S.model;
@@ -1489,7 +1673,6 @@ function yeniOturumBaslat() {
   if (modelId && modelId !== S.model) modelSec(modelId);
   basla(null, { dizin: yol, modelId });
 }
-
 // ---------- olaylar ----------
 listeKlavye('modelList', () => ({ liste: S.modeller.map((m) => m.id), deger: S.model }), modelSec);
 listeKlavye('projeList', () => ({ liste: S.projeler.map((p) => p.yol), deger: S.proje }), projeSec);
@@ -1530,6 +1713,21 @@ if ($('gecmisAra')) {
   });
 }
 $('gecmisList').addEventListener('click', (e) => {
+  const igneBtn = e.target.closest('[data-igne]');
+  if (igneBtn) {
+    e.stopPropagation();
+    oturumIgnele(igneBtn.dataset.igne);
+    return;
+  }
+  const tog = e.target.closest('[data-ajan-toggle]');
+  if (tog) {
+    e.stopPropagation();
+    const id = tog.dataset.ajanToggle;
+    if (acikAjanlar.has(id)) acikAjanlar.delete(id);
+    else acikAjanlar.add(id);
+    gecmisCiz();
+    return;
+  }
   const baslik = e.target.closest('.seans-grup-baslik');
   if (baslik) { grupKatla(baslik); return; }
   const kart = e.target.closest('.seans-kart');
@@ -1539,7 +1737,13 @@ $('gecmisList').addEventListener('click', (e) => {
   if (yol && yol !== S.proje) {
     projeSec(yol);
   }
-  gecmisAc(id);
+  const var_ = S.oturumlar.find((o) => o.canli && (o.devam === id || o.id === id));
+  if (var_) {
+    sekmeSec(var_.id);
+    return;
+  }
+  // Soldaki karta tıklamak her zaman terminalde açar; konuşma paneli yalnız üstteki konuşma düğmesiyle (Ctrl+Shift+H) açılır.
+  basla(id, yol ? { dizin: yol } : undefined);
 });
 $('sekmeler').addEventListener('click', (e) => {
   const x = e.target.closest('[data-kapat]');
@@ -1549,7 +1753,6 @@ $('sekmeler').addEventListener('click', (e) => {
 });
 $('sekmeler').addEventListener('auxclick', (e) => { const t = e.target.closest('.tab'); if (e.button === 1 && t && t.dataset.id !== 'ana') sekmeKapat(Number(t.dataset.id)); });
 $('stage').addEventListener('wheel', (e) => { if (e.ctrlKey) { e.preventDefault(); fsDegis(e.deltaY < 0 ? 1 : -1); } }, { passive: false });
-
 window.addEventListener('keydown', (e) => {
   if (e.ctrlKey && e.shiftKey && e.code === 'KeyP') { e.preventDefault(); $('palet').hidden ? paletAc() : paletKapat(); return; }
   if (e.ctrlKey && e.shiftKey && e.code === 'KeyB') { e.preventDefault(); sideToggle(); return; }
@@ -1574,17 +1777,19 @@ window.addEventListener('keydown', (e) => {
   const odak = document.activeElement;
   if (e.key === 'Enter' && !(odak && /^(BUTTON|INPUT|TEXTAREA)$/.test(odak.tagName))) { e.preventDefault(); basla(); }
 }, true);
-
 window.evren.veriDinle((pid, veri) => {
   const o = S.oturumlar.find((x) => x.pid === pid);
   if (!o) { const l = bekleyenVeri.get(pid) || []; l.push(veri); bekleyenVeri.set(pid, l); return; }
   o.term.write(veri);
+  clearTimeout(o.hizaZaman);
+  o.hizaZaman = setTimeout(() => hizaKontrol(o), 450);
+  if (o.id === S.aktif) akimCizgiTetikle();
+  if (typeof Takimyildiz !== 'undefined') Takimyildiz.parla(o.devam || o.id);
   if (o.id !== S.aktif && !o.yeni) { o.yeni = true; sekmeleriCiz(); } // arka planda çıktı: sekmede işaret
   oturumModeliTaraGecikmeli(o);
 });
 window.evren.cikisDinle((pid, bilgi) => oturumBitti(pid, bilgi));
 new ResizeObserver(() => sigdir()).observe($('terminaller'));
-
 if (sakla.oku('sideKapali', false)) $('app').classList.add('side-kapali');
 sekmeleriCiz();
 // Mobil Kumanda Modalı
@@ -1609,7 +1814,6 @@ async function kumandaBilgiCiz(bilgi) {
   } catch (e) {}
   kumandaDurumGuncelle(bilgi);
 }
-
 async function kumandaModalAc() {
   const modal = $('kumandaModal');
   if (!modal) return;
@@ -1617,13 +1821,11 @@ async function kumandaModalAc() {
   modalDurumGuncelle();
   try { await kumandaBilgiCiz(await window.evren.remoteBilgi()); } catch (e) {}
 }
-
 function kumandaModalKapat() {
   const modal = $('kumandaModal');
   if (modal) modal.hidden = true;
   modalDurumGuncelle();
 }
-
 function kumandaDurumGuncelle(bilgi) {
   const nokta = $('kumandaNokta');
   const txt = $('kumandaDurumText');
@@ -1636,7 +1838,6 @@ function kumandaDurumGuncelle(bilgi) {
     if (txt) txt.textContent = 'Cihaz bekleniyor...';
   }
 }
-
 if ($('kumandaBtn')) $('kumandaBtn').addEventListener('click', kumandaModalAc);
 if ($('kumandaKapatBtn')) $('kumandaKapatBtn').addEventListener('click', kumandaModalKapat);
 // "Bağlantıyı yenile": yeni token üretilir, bağlı istemciler kopar, QR ve adres tazelenir.
@@ -1658,16 +1859,27 @@ if ($('kumandaModal')) {
     if (e.target === $('kumandaModal')) kumandaModalKapat();
   });
 }
-
 if (window.evren && window.evren.remoteDinle) {
   window.evren.remoteDinle((bilgi) => kumandaDurumGuncelle(bilgi));
 }
-
 // Sohbet paneli olay dinleyicileri
 if ($('sohbetBtn')) $('sohbetBtn').addEventListener('click', () => sohbetToggle());
 if ($('sohbetKapatBtn')) $('sohbetKapatBtn').addEventListener('click', () => sohbetToggle(false));
 if ($('sohbetYenileBtn')) $('sohbetYenileBtn').addEventListener('click', () => sohbetYukle(true));
-
+if ($('sohbetForkBtn')) $('sohbetForkBtn').addEventListener('click', () => {
+  const g = seciliOturumGecmisi;
+  if (g && g.id) basla(g.id, g.projeYol ? { dizin: g.projeYol, fork: true } : { dizin: S.proje, fork: true });
+});
+// Sağ kolonun alt paneli: Proje / Gecikme / Olaylar tek yerde, sayfa taşmaz.
+function panelSayfa(ad) {
+  for (const b of document.querySelectorAll('.panel-sekme')) { const on = b.dataset.panel === ad; b.classList.toggle('aktif', on); b.setAttribute('aria-selected', String(on)); }
+  for (const s of document.querySelectorAll('.panel-sayfa')) s.hidden = s.dataset.panel !== ad;
+  for (const x of document.querySelectorAll('[data-panel-x]')) x.hidden = x.dataset.panelX !== ad;
+  sakla.yaz('panelSayfa', ad);
+  if (ad === 'gecikme') Gecikme.olc();
+}
+document.querySelectorAll('.panel-sekme').forEach((b) => b.addEventListener('click', () => panelSayfa(b.dataset.panel)));
+panelSayfa(sakla.oku('panelSayfa', 'proje'));
 if ($('sohbetPanel')) {
   $('sohbetPanel').addEventListener('click', (e) => {
     const f = e.target.closest('.sohbet-filtre');
@@ -1676,9 +1888,12 @@ if ($('sohbetPanel')) {
       f.classList.add('aktif');
       S.sohbetFiltre = f.dataset.filtre;
       const o = aktifOturum();
-      if (o && o.sohbetGirisler) sohbetCiz(o.sohbetGirisler);
+      const kayit = seciliOturumGecmisi ? seciliOturumGecmisi.girisler : (o && o.sohbetGirisler);
+      if (kayit) sohbetCiz(kayit);
       return;
     }
+    const aracKart = e.target.closest('.sohbet-kart.arac');
+    if (aracKart && !e.target.closest('.sohbet-kopyala')) { aracKart.classList.toggle('acik'); return; }
     const k = e.target.closest('.sohbet-kopyala');
     if (k) {
       const kart = k.closest('.sohbet-kart');
@@ -1692,18 +1907,12 @@ if ($('sohbetPanel')) {
     }
   });
 }
-
 // Canlı güncelleme: Sohbet paneli açıksa ve oturum seçiliyse 3 saniyede bir güncelle
 setInterval(() => {
-  if (S.sohbetAcik && S.aktif != null) {
+  if (S.sohbetAcik && (S.aktif != null || seciliOturumGecmisi)) {
     sohbetYukle();
   }
 }, 3000);
-
-if (S.sohbetAcik) {
-  setTimeout(() => sohbetToggle(true), 200);
-}
-
 $('fsMetin').textContent = S.fs;
 yukle().then(() => {
   if (new URLSearchParams(location.search).get('palet')) paletAc();
@@ -1712,7 +1921,6 @@ yukle().then(() => {
   const n = Number(new URLSearchParams(location.search).get('oturum') || 0);
   if (n) (async () => { for (let i = 0; i < n; i++) { if (i) projeSec((S.projeler[i] || S.projeler[0]).yol); await basla(); await bekle(700); } const t = aktifTerm(); if (t && new URLSearchParams(location.search).get('yaz')) window.evren.yaz(aktifOturum().pid, 'echo EVREN coklu oturum testi' + String.fromCharCode(13)); if (new URLSearchParams(location.search).get('odak')) odakToggle(true); })();
 });
-
 
 // Yeni Oturum Modalı Olayları
 if ($('yeniOturumKapatBtn')) $('yeniOturumKapatBtn').addEventListener('click', yeniOturumModalKapat);
@@ -1725,7 +1933,6 @@ if ($('modalKlasorEkleBtn')) $('modalKlasorEkleBtn').addEventListener('click', a
     yeniOturumModalGuncelle();
   }
 });
-
 if ($('modalProjeIzgara')) {
   $('modalProjeIzgara').addEventListener('click', (e) => {
     const k = e.target.closest('.oturum-secim-kart');
@@ -1734,7 +1941,6 @@ if ($('modalProjeIzgara')) {
     yeniOturumModalGuncelle();
   });
 }
-
 if ($('modalModelIzgara')) {
   $('modalModelIzgara').addEventListener('click', (e) => {
     const k = e.target.closest('.oturum-secim-kart');
@@ -1743,9 +1949,24 @@ if ($('modalModelIzgara')) {
     yeniOturumModalGuncelle();
   });
 }
-
 if ($('yeniOturumModal')) {
   $('yeniOturumModal').addEventListener('click', (e) => {
     if (e.target === $('yeniOturumModal')) yeniOturumModalKapat();
+  });
+}
+
+function sohbetIgneDurumGuncelle() {
+  const btn = $('sohbetIgneBtn');
+  if (!btn) return;
+  const o = aktifOturum();
+  const id = seciliOturumGecmisi ? seciliOturumGecmisi.id : (o ? (o.devam || o.id) : null);
+  btn.classList.toggle('aktif', !!(id && ignelenenler.has(id)));
+}
+
+if ($('sohbetIgneBtn')) {
+  $('sohbetIgneBtn').addEventListener('click', () => {
+    const o = aktifOturum();
+    const id = seciliOturumGecmisi ? seciliOturumGecmisi.id : (o ? (o.devam || o.id) : null);
+    if (id) oturumIgnele(id);
   });
 }

@@ -63,6 +63,15 @@ function baslikOku(dosya) {
   return { baslik, kaynak };
 }
 
+// Ajanların aralarda attığı yoklama/deneme oturumları ("echo test", "node -v", "--yardim"): kısa, komut/bayrak biçimli başlık,
+// alt ajanı yok ve çalışmıyor. Gerçek iş sayılmaz, listede görünmez.
+const DENEME_BASLIK = /^(echo(\s|$)|node\s+(-v|--version)|npm\s+(-v|--version)|git\s+(--version|status$)|--?[a-z][\w-]*$|test$|ping$|deneme$|hello$|hi$|selam$|merhaba$)/i;
+function denemeOturumu(baslik, boyut, altAjanSayisi, canli) {
+  // EVREN ajan köprüsü isteğin sonuna ' Kural: ...' eki getirir; karşılaştırma yalnız asıl isteğe bakar.
+  const asil = baslik.replace(/\s+Kural:[\s\S]*$/, '').trim();
+  return !canli && !altAjanSayisi && asil.length <= 40 && DENEME_BASLIK.test(asil);
+}
+
 function oturumBilgisi(dosya, id, seansDizin) {
   const c = baslikOnbellek.get(id);
   if (c) return c;
@@ -260,6 +269,7 @@ function oturumGecmisi(dizin, secenekler) {
         id: x.id,
         ...oturumBilgisi(x.dosya, x.id, seansDizin),
         ms: x.ms,
+        boyut: x.boyut,
         turCanli,
         ajanCalisiyor: calisanAjan > 0,
         calisanAjan,
@@ -268,12 +278,13 @@ function oturumGecmisi(dizin, secenekler) {
         evrenIsleri: [],
       };
     })
-    .filter((x) => x.baslik); // hiç kullanıcı mesajı olmayan (yalnız açılış kaydı) oturumlar listelenmez
+    .filter((x) => x.baslik && !denemeOturumu(x.baslik, x.boyut, x.altAjanlar.length, x.canli)); // kullanıcı mesajı olmayan (yalnız açılış kaydı) ve ajan yoklama oturumları listelenmez
 
   const ustHarita = new Map(oturumlar.map((o) => [o.id, o]));
   const kayitsizlar = []; // üstü bulunamayan EVREN işleri üst düzeyde "EVREN işi" olarak kalır
   for (const k of evrenKayitlari) {
     const is = evrenIsiOku(k, klasor, simdi);
+    if (denemeOturumu(is.baslik || '', 0, 0, is.canli)) continue; // ajan yoklama işi
     const ust = is.ust ? ustHarita.get(is.ust) : null;
     if (ust) ust.evrenIsleri.push(is);
     else {
@@ -328,11 +339,18 @@ function oturumSayilari(dizin, kimlik, secenekler) {
 
 
 const ON_DORT_GUN_MS = 14 * 24 * 60 * 60 * 1000;
-const TEMP_PATTERNS = [/\\temp\\/i, /\/temp\//i, /scratch-workspaces/i, /evren-slash-test/i, /[\\/]test[\\/]/i];
+const TEMP_PATTERNS = [/[\/\\]temp([\/\\]|$)/i, /scratch-workspaces/i, /evren-slash-test/i, /[\/\\]test[\/\\]/i];
 
 function tempMi(p) {
   if (!p || typeof p !== 'string') return false;
   return TEMP_PATTERNS.some((rx) => rx.test(p));
+}
+
+// Claude'un kendi oturum arşivi (.claude/projects/<slug>) gerçek bir proje dizini değildir;
+// oradan okunan cwd listeye proje olarak düşmemeli.
+const ARSIV_PATTERN = /[\/\\]\.claude[\/\\]projects([\/\\]|$)/i;
+function arsivMi(p) {
+  return typeof p === 'string' && ARSIV_PATTERN.test(p);
 }
 
 function cwdOku(dosya) {
@@ -384,10 +402,11 @@ function tumOturumlariTara(secenekler) {
       if (simdi - s.mtimeMs > ON_DORT_GUN_MS) continue;
 
       const cwd = cwdOku(dosya);
-      if (tempMi(cwd)) continue;
+      // Klasörü bilinmeyen ya da silinmiş oturum sürdürülemez; listede yanıltıcı satır olmasın.
+      if (!cwd || tempMi(cwd) || arsivMi(cwd) || !fs.existsSync(cwd)) continue;
 
-      const projeYol = cwd || k.name;
-      const projeAd = (cwd ? path.basename(cwd) : k.name) || 'Proje';
+      const projeYol = cwd;
+      const projeAd = path.basename(cwd) || 'Proje';
       const seansDizin = path.join(kYol, id);
       const taze = simdi - s.mtimeMs < CANLI_ESIK_MS;
       const turCanli = taze && turDevamEdiyor(dosya, s.size) !== false;
@@ -396,6 +415,7 @@ function tumOturumlariTara(secenekler) {
       const bilgi = oturumBilgisi(dosya, id, seansDizin);
 
       if (!bilgi.baslik) continue;
+      if (denemeOturumu(bilgi.baslik, s.size, altAjanlar.length, turCanli || calisanAjan > 0)) continue;
 
       oturumlar.push({
         id,
@@ -417,9 +437,10 @@ function tumOturumlariTara(secenekler) {
   const kayitsizlar = [];
   for (const k of evrenKayitlari) {
     const is = evrenIsiOku(k, '', simdi);
+    if (denemeOturumu(is.baslik || '', 0, 0, is.canli)) continue; // ajan yoklama işi
     const ust = is.ust ? ustHarita.get(is.ust) : null;
     if (ust) ust.evrenIsleri.push(is);
-    else if (!tempMi(is.dizin)) {
+    else if (is.dizin && !tempMi(is.dizin) && !arsivMi(is.dizin) && fs.existsSync(is.dizin)) {
       const projeAd = (is.dizin ? path.basename(is.dizin) : 'EVREN') || 'EVREN';
       kayitsizlar.push({
         id: is.id,
