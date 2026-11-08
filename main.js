@@ -104,7 +104,58 @@ async function apiDurum() {
   }
 }
 
-async function oturumBaslat({ modelId, dizin, cols, rows }) {
+// Claude Code her sohbeti ~/.claude/projects/<klasör yolu, harf/rakam dışı '-'>/<id>.jsonl dosyasına yazar.
+const OTURUM_KIMLIK = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const CANLI_ESIK_MS = 90 * 1000; // son yazmadan bu yana bu kadar geçmediyse "çalışıyor"
+
+function metinCikar(icerik) {
+  if (typeof icerik === 'string') return icerik;
+  if (Array.isArray(icerik)) return icerik.map((x) => (x && x.type === 'text' ? x.text : '')).join(' ');
+  return '';
+}
+
+// İlk gerçek kullanıcı mesajı = oturum başlığı. Yalnız dosyanın ilk 256 KB'ı okunur.
+const baslikOnbellek = new Map(); // id -> başlık (bulunanlar bir daha okunmaz)
+function oturumBasligi(dosya, id) {
+  if (baslikOnbellek.has(id)) return baslikOnbellek.get(id);
+  const b = baslikOku(dosya);
+  if (b) baslikOnbellek.set(id, b);
+  return b;
+}
+function baslikOku(dosya) {
+  let fd;
+  try {
+    fd = fs.openSync(dosya, 'r');
+    const tampon = Buffer.alloc(256 * 1024);
+    const n = fs.readSync(fd, tampon, 0, tampon.length, 0);
+    for (const satir of tampon.toString('utf8', 0, n).split('\n')) {
+      let j; try { j = JSON.parse(satir); } catch { continue; }
+      if (!j || j.type !== 'user' || j.isMeta || !j.message) continue;
+      const m = metinCikar(j.message.content).replace(/<[^>]+>[\s\S]*?<\/[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      if (m && !m.startsWith('Caveat:') && !m.startsWith('[Request interrupted')) return m.slice(0, 90);
+    }
+  } catch {} finally { if (fd != null) try { fs.closeSync(fd); } catch {} }
+  return '';
+}
+
+function oturumGecmisi(dizin) {
+  if (!dizin || typeof dizin !== 'string') return [];
+  const klasor = path.join(os.homedir(), '.claude', 'projects', dizin.replace(/[^a-zA-Z0-9]/g, '-'));
+  let adlar;
+  try { adlar = fs.readdirSync(klasor); } catch { return []; }
+  const simdi = Date.now();
+  return adlar
+    .filter((a) => a.endsWith('.jsonl') && OTURUM_KIMLIK.test(a.slice(0, -6)))
+    .map((a) => { const d = path.join(klasor, a); try { const s = fs.statSync(d); return { id: a.slice(0, -6), dosya: d, ms: s.mtimeMs, boyut: s.size }; } catch { return null; } })
+    .filter((x) => x && x.boyut > 0)
+    .sort((a, b) => b.ms - a.ms)
+    .map((x) => ({ id: x.id, baslik: oturumBasligi(x.dosya, x.id), ms: x.ms, canli: simdi - x.ms < CANLI_ESIK_MS }))
+    .filter((x) => x.baslik) // hiç kullanıcı mesajı olmayan (yalnız açılış kaydı) oturumlar listelenmez
+    .slice(0, 30);
+}
+
+async function oturumBaslat({ modelId, dizin, cols, rows, devam }) {
+  if (devam != null && !OTURUM_KIMLIK.test(String(devam))) throw new Error('Geçersiz oturum kimliği.');
   if (kabuklar.size >= 8) throw new Error('En çok 8 oturum açık olabilir; birini kapatın.');
   const p = await panelModulu();
   const anahtarDeger = await anahtar();
@@ -146,10 +197,13 @@ async function oturumBaslat({ modelId, dizin, cols, rows }) {
   const secenek = { name: 'xterm-256color', cols: olcu.cols, rows: olcu.rows, cwd: dizin, env, useConpty: true };
   let bu;
   if (TEST_KOMUT) bu = pty.spawn(TEST_KOMUT, [], secenek);
-  else try {
-    bu = pty.spawn('claude.exe', ['--dangerously-skip-permissions'], secenek);
-  } catch {
-    bu = pty.spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'claude', '--dangerously-skip-permissions'], secenek);
+  else {
+    const arg = ['--dangerously-skip-permissions', ...(devam ? ['--resume', String(devam)] : [])];
+    try {
+      bu = pty.spawn('claude.exe', arg, secenek);
+    } catch {
+      bu = pty.spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'claude', ...arg], secenek);
+    }
   }
   const id = ++sonKimlik;
   kabuklar.set(id, bu);
@@ -293,6 +347,7 @@ ipcMain.handle('klasor-sec', async () => {
 });
 
 ipcMain.handle('baslat', async (_e, secim) => { try { return await oturumBaslat(secim); } catch (e) { return { hata: e.message }; } });
+ipcMain.handle('gecmis', async (_e, dizin) => { try { return oturumGecmisi(dizin); } catch { return []; } });
 ipcMain.handle('yaz', (_e, id, veri) => { const k = kabuklar.get(id); if (k) { try { k.write(veri); } catch {} } });
 ipcMain.handle('boyut', (_e, id, { cols, rows }) => {
   const k = kabuklar.get(id);

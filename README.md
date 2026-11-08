@@ -34,6 +34,7 @@ Amaç, kamu ve savunma sanayii ekosistemindeki geliştiricilere yerli altyapı �
 | --- | --- |
 | **Çoklu oturum** | Her oturum kendi sekmesinde ve kendi terminalinde; farklı proje ve modelle aynı anda çalışın. Arka planda çıktı gelen sekme işaretlenir, biten oturumun çıktısı okunabilir kalır. |
 | **Odak modu** | `Ctrl+Shift+F` ile kenar paneli, sekmeler ve durum çubuğu kaybolur; ekranda yalnız terminal kalır. |
+| **Oturum geçmişi** | Kenar panelindeki *Geçmiş* bölümü, seçili projenin Claude Code kayıtlarını (`~/.claude/projects`) listeler: başlık, zaman, *çalışıyor* / *bitti*. Tıklayınca `claude --resume` ile aynı sohbet yeni sekmede sürer; zaten açık olan sekmeye geçer. |
 | **Tek tık oturum** | Model ve proje seç, `Enter`. Ortam değişkenleri, bağlam penceresi ve çıktı sınırı modele göre otomatik ayarlanır. |
 | **Canlı model kataloğu** | Liste `/v1/models` uç noktasından gelir; her modelin bağlam boyutu ve çıktı sınırı API'nin bildirdiği değerdir. |
 | **Gerçek terminal** | Windows ConPTY + xterm.js; renkler, imleç, kopyala/yapıştır ve yeniden boyutlandırma yerel terminal gibi çalışır. |

@@ -84,6 +84,39 @@ function projeSec(yol) {
   const p = seciliProje();
   olay('PROJE', `${p ? p.ad : yol}${p && p.dal ? ' · ' + p.dal : ''}`);
   projeOzetYukle();
+  gecmisYukle();
+}
+
+// ---------- oturum geçmişi: Claude Code'un ~/.claude/projects kayıtlarından ----------
+let gecmisIstek = 0;
+S.gecmis = [];
+const gecmisCanliMi = (g) => S.oturumlar.some((o) => o.canli && o.devam === g.id);
+function gecmisCiz() {
+  const el = $('gecmisList');
+  $('gecmisSay').textContent = S.proje ? S.gecmis.length : '—';
+  if (!S.proje) { el.innerHTML = '<div class="bos-satir">Önce bir proje seçin.</div>'; return; }
+  if (!S.gecmis.length) { el.innerHTML = '<div class="bos-satir">Bu projede kayıtlı oturum yok.</div>'; return; }
+  el.innerHTML = S.gecmis.map((g) => {
+    const canli = g.canli || gecmisCanliMi(g);
+    return `
+    <div class="row kompakt" role="option" data-id="${esc(g.id)}" title="${esc(g.baslik)}\n${canli ? 'Çalışıyor · ' : ''}${esc(goreli(g.ms / 1000))}\nTıkla: devam et (claude --resume)">
+      <div class="row-l"><span class="led${canli ? ' canli' : ''}"></span><span class="row-t">${esc(g.baslik)}</span></div>
+      <div class="row-s mono">${canli ? 'çalışıyor' : 'bitti'} · ${esc(goreli(g.ms / 1000))}</div>
+    </div>`;
+  }).join('');
+}
+async function gecmisYukle() {
+  const yol = S.proje, no = ++gecmisIstek;
+  if (!yol) { S.gecmis = []; gecmisCiz(); return; }
+  const l = await window.evren.gecmis(yol).catch(() => []);
+  if (no !== gecmisIstek) return; // bu arada başka proje seçildi
+  S.gecmis = Array.isArray(l) ? l : [];
+  gecmisCiz();
+}
+function gecmisAc(id) {
+  const var_ = S.oturumlar.find((o) => o.canli && o.devam === id);
+  if (var_) { sekmeSec(var_.id); return; }
+  basla(id);
 }
 
 // ---------- proje özeti: commit ısı haritası, dil dağılımı, son commit ----------
@@ -310,10 +343,13 @@ async function yukle() {
   olay('PROJE', `${S.projeler.length} proje · ${S.projeler.filter((p) => p.dal).length} git deposu`);
   Grafik.basla();
   projeOzetYukle();
+  gecmisYukle();
   apiYenile();
   // Boşta 15 sn'de bir ölçüm (gecikme grafiği canlı kalsın); oturumda 60 sn; pencere gizliyken hiç.
   let tik = 0;
   setInterval(() => { tik++; if (!document.hidden && (!S.calisiyor || tik % 4 === 0)) apiYenile(); }, 15000);
+  // Geçmiş: pencere görünürken 15 sn'de bir (çalışıyor/bitti durumu güncel kalsın).
+  setInterval(() => { if (!document.hidden) gecmisYukle(); }, 15000);
 }
 
 async function apiYenile() {
@@ -493,20 +529,21 @@ function brifGoster() {
 let sonYerel = 0;
 const bekleyenVeri = new Map(); // pid -> [veri] (sekme kaydından önce gelen çıktı)
 
-async function basla() {
+async function basla(devamId) {
+  const devam = typeof devamId === 'string' ? devamId : null; // düğme olayı dize değildir
   if (S.basliyor || !S.yuklendi || !S.anahtarVar) return;
   if (S.oturumlar.filter((o) => o.canli).length >= 8) { olay('OTURUM', 'en çok 8 canlı oturum', 'uyari'); return; }
   if (!S.proje && !(await klasorEkle())) return;
   S.basliyor = true;
   const m = seciliModel() || {}, p = seciliProje();
-  const o = { id: ++sonYerel, pid: 0, model: m.id, proje: p ? p.ad : S.proje, dal: p ? p.dal : '', yol: S.proje, canli: true, kod: null, basladi: 0, yeni: false };
+  const o = { id: ++sonYerel, pid: 0, model: m.id, proje: p ? p.ad : S.proje, dal: p ? p.dal : '', yol: S.proje, canli: true, kod: null, basladi: 0, yeni: false, devam };
   S.oturumlar.push(o);
   await terminalOlustur(o);
   sekmeSec(o.id);
   await bekle(30);
   if (o.fit) { try { o.fit.fit(); } catch {} }
   o.term.writeln(`\x1b[38;2;74;83;93m  evren \x1b[38;2;108;119;131m› ${m.id} › ${o.proje}\x1b[0m`);
-  const sonuc = await window.evren.baslat({ modelId: m.id, dizin: S.proje, cols: o.term.cols, rows: o.term.rows });
+  const sonuc = await window.evren.baslat({ modelId: m.id, dizin: S.proje, cols: o.term.cols, rows: o.term.rows, devam });
   S.basliyor = false;
   if (!sonuc || sonuc.hata) {
     o.canli = false; o.kod = 'hata';
@@ -524,6 +561,7 @@ async function basla() {
   sekmeleriCiz();
   sigdir();
   o.term.focus();
+  setTimeout(gecmisYukle, 4000); // yeni oturumun kaydı birkaç sn sonra oluşur
 }
 
 function sureYaz() {
@@ -548,6 +586,7 @@ function oturumBitti(pid, bilgi) {
   olay('OTURUM', `${o.proje} kapandı · çıkış ${o.kod ?? '—'} · ${sureMetni(o.bitti - (o.basladi || o.bitti))}`, o.kod ? 'uyari' : '');
   if (o.term) o.term.writeln(`\r\n\x1b[38;2;108;119;131m  [oturum kapandı${o.kod != null ? ' · çıkış ' + o.kod : ''} · Ctrl+Shift+W sekmeyi kapat · Ctrl+Shift+T yeni oturum]\x1b[0m`);
   sekmeleriCiz();
+  gecmisYukle();
 }
 
 function sideToggle() {
@@ -950,6 +989,8 @@ $('anahtarForm').addEventListener('submit', async (e) => {
 });
 $('odakIpucu').addEventListener('click', () => odakToggle(false));
 $('yeniSekme').addEventListener('click', () => sekmeSec(null));
+$('gecmisYenile').addEventListener('click', gecmisYukle);
+$('gecmisList').addEventListener('click', (e) => { const r = e.target.closest('.row'); if (r) gecmisAc(r.dataset.id); });
 $('sekmeler').addEventListener('click', (e) => {
   const x = e.target.closest('[data-kapat]');
   if (x) { e.stopPropagation(); sekmeKapat(Number(x.dataset.kapat)); return; }
