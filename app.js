@@ -625,7 +625,25 @@ async function terminalOlustur(o) {
       }).catch(() => {});
     }
   });
-  Object.assign(o, { el, term: t, fit: f, webgl });
+    // Tampon olcumu ve alternate buffer tespiti
+  const olcTampon = () => {
+    const tip = t.buffer && t.buffer.active ? t.buffer.active.type : 'normal';
+    const uzunluk = t.buffer && t.buffer.active ? t.buffer.active.length : 0;
+    console.log('[terminal:buffer]', JSON.stringify({ oturum: o.id, type: tip, length: uzunluk, scrollback: t.options.scrollback }));
+    return tip;
+  };
+  t.buffer.onBufferChange && t.buffer.onBufferChange(() => olcTampon());
+  // Eger alternate buffer ise tekerlekle yukari kaydirmada sohbet kaydini ac
+  el.addEventListener('wheel', (e) => {
+    if (e.ctrlKey) return;
+    const tip = t.buffer && t.buffer.active ? t.buffer.active.type : 'normal';
+    if (tip === 'alternate' && e.deltaY < -20 && !S.sohbetAcik) {
+      sohbetToggle(true);
+    }
+  }, { passive: true });
+  setTimeout(olcTampon, 1200);
+
+  Object.assign(o, { el, term: t, fit: f, webgl, olcTampon });
 }
 
 const aktifOturum = () => S.oturumlar.find((o) => o.id === S.aktif) || null;
