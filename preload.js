@@ -18,4 +18,9 @@ contextBridge.exposeInMainWorld('evren', {
   disari: (url) => ipcRenderer.invoke('disari', url),
   veriDinle: (f) => ipcRenderer.on('pty:veri', (_e, id, veri) => f(id, veri)),
   cikisDinle: (f) => ipcRenderer.on('pty:cikis', (_e, id, bilgi) => f(id, bilgi)),
+  remoteBilgi: () => ipcRenderer.invoke('remote:bilgi'),
+  remoteQr: () => ipcRenderer.invoke('remote:qr'),
+  remoteYenile: () => ipcRenderer.invoke('remote:yenile'), // yeni token üret, istemcileri kopar
+  remoteIpSec: (ip) => ipcRenderer.invoke('remote:ip-sec', ip), // QR'da kullanılacak yerel IP
+  remoteDinle: (f) => ipcRenderer.on('remote:durum', (_e, bilgi) => f(bilgi)),
 });

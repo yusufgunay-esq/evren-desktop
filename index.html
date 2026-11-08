@@ -28,6 +28,8 @@
       <symbol id="i-term" viewBox="0 0 16 16"><path d="m3.5 5 3 3-3 3M8.5 11.5h4" /></symbol>
       <symbol id="i-odak" viewBox="0 0 16 16"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" /></symbol>
       <symbol id="i-alert" viewBox="0 0 16 16"><path d="M8 2 14.5 13.5h-13z" /><path d="M8 6.5v3.5M8 11.8v.2" /></symbol>
+      <symbol id="i-chevron" viewBox="0 0 16 16"><path d="m4.5 6 3.5 3.5 3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></symbol>
+      <symbol id="i-remote" viewBox="0 0 16 16"><rect x="3.5" y="1.5" width="9" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="11.5" r="1" fill="currentColor"/><path d="M6 4h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></symbol>
     </defs>
   </svg>
 
@@ -52,14 +54,21 @@
         <span>Model, proje ya da komut ara…</span>
         <kbd>Ctrl ⇧ P</kbd>
       </button>
-      <div class="tb-right"></div>
+      <div class="tb-right">
+        <button class="tb-btn" id="kumandaBtn" type="button" title="Mobil Uzaktan Kumanda">
+          <svg class="ic"><use href="#i-remote" /></svg>
+          <span>Kumanda</span>
+          <span class="kumanda-nokta" id="kumandaNokta"></span>
+        </button>
+      </div>
     </header>
 
     <div class="body">
       <!-- Sol kenar paneli -->
       <aside class="side" id="side">
-        <section class="sec">
-          <header class="sec-h">
+        <section class="sec" data-sec="baglanti">
+          <header class="sec-h" title="Katla / Genişlet">
+            <svg class="ic sec-ok"><use href="#i-chevron" /></svg>
             <span class="sec-t">Bağlantı</span>
             <button class="sec-a" id="yenileBtn" type="button" title="Bağlantıyı yenile"><svg class="ic"><use href="#i-refresh" /></svg></button>
           </header>
@@ -72,27 +81,33 @@
           </dl>
         </section>
 
-        <section class="sec grow">
-          <header class="sec-h">
+        <section class="sec grow" data-sec="modeller">
+          <header class="sec-h" title="Katla / Genişlet">
+            <svg class="ic sec-ok"><use href="#i-chevron" /></svg>
             <span class="sec-t">Modeller</span><span class="sec-c mono" id="modelSay">—</span>
           </header>
           <div class="list" id="modelList" role="listbox" tabindex="0" aria-label="Modeller"></div>
         </section>
 
-        <section class="sec grow">
-          <header class="sec-h">
+        <section class="sec grow" data-sec="projeler">
+          <header class="sec-h" title="Katla / Genişlet">
+            <svg class="ic sec-ok"><use href="#i-chevron" /></svg>
             <span class="sec-t">Projeler</span><span class="sec-c mono" id="projeSay">—</span>
             <button class="sec-a txt" id="ekleBtn" type="button"><svg class="ic"><use href="#i-plus" /></svg>Ekle</button>
           </header>
           <div class="list" id="projeList" role="listbox" tabindex="0" aria-label="Projeler"></div>
         </section>
 
-        <section class="sec grow">
-          <header class="sec-h">
-            <span class="sec-t">Geçmiş</span><span class="sec-c mono" id="gecmisSay">—</span>
-            <button class="sec-a" id="gecmisYenile" type="button" title="Geçmişi yenile"><svg class="ic"><use href="#i-refresh" /></svg></button>
+        <section class="sec grow" data-sec="gecmis">
+          <header class="sec-h" title="Katla / Genişlet">
+            <svg class="ic sec-ok"><use href="#i-chevron" /></svg>
+            <span class="sec-t">Oturumlar</span><span class="sec-c mono" id="gecmisSay">—</span>
           </header>
-          <div class="list" id="gecmisList" role="listbox" tabindex="0" aria-label="Seçili projenin geçmiş oturumları"></div>
+          <div class="gecmis-ara">
+            <svg class="ic"><use href="#i-search" /></svg>
+            <input id="gecmisAra" type="text" placeholder="Oturum ya da ajan ara…" spellcheck="false" autocomplete="off" aria-label="Oturumlarda ara" />
+          </div>
+          <div class="list" id="gecmisList" role="listbox" tabindex="0" aria-label="Seçili projenin oturumları"></div>
         </section>
 
         <footer class="side-foot">
@@ -238,6 +253,44 @@
   </div>
 
   <button class="odak-ipucu" id="odakIpucu" type="button" hidden>odak modu · <kbd>Ctrl ⇧ F</kbd> çık</button>
+
+  <!-- Mobil Kumanda Modalı -->
+  <div class="modal-ortu" id="kumandaModal" hidden>
+    <div class="modal-kutu kumanda-kutu" role="dialog" aria-label="Mobil Kumanda">
+      <header class="modal-baslik">
+        <div class="modal-baslik-sol">
+          <svg class="ic"><use href="#i-remote" /></svg>
+          <h3>Mobil Uzaktan Kumanda</h3>
+        </div>
+        <button class="modal-kapat" id="kumandaKapatBtn" type="button" aria-label="Kapat">×</button>
+      </header>
+      <div class="kumanda-govde">
+        <div class="kumanda-qr-alan">
+          <img id="kumandaQrResim" src="" alt="QR Kod" />
+        </div>
+        <div class="kumanda-detay">
+          <p class="kumanda-aciklama">Telefonunun kamerasını veya EVREN Kumanda uygulamasını bu koda tutarak anında bağlanabilirsin.</p>
+          <div class="kumanda-satir">
+            <span class="k-etiket">Yerel Adres</span>
+            <code class="k-kod mono" id="kumandaUrlText">—</code>
+          </div>
+          <div class="kumanda-satir" id="kumandaIpSatir" hidden>
+            <span class="k-etiket">Ağ</span>
+            <select class="k-secim" id="kumandaIpSec" aria-label="Ağ adresi seç"></select>
+          </div>
+          <div class="kumanda-satir">
+            <span class="k-etiket">Bağlantı</span>
+            <span class="k-deger" id="kumandaDurumText">Cihaz bekleniyor...</span>
+          </div>
+          <button class="btn wide" id="kumandaYenileBtn" type="button" title="Yeni bağlantı anahtarı üretir; bağlı cihazların yeniden bağlanması gerekir">
+            <svg class="ic"><use href="#i-refresh" /></svg>
+            <span>Bağlantıyı yenile</span>
+          </button>
+          <p class="kumanda-not">Telefon bilgisayarla <b>aynı Wi-Fi</b> ağında olmalı. Bağlanmıyorsa Windows Güvenlik Duvarı'nda EVREN/Electron uygulamasına <b>özel ağ</b> izni ver.</p>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- Komut paleti -->
   <div class="palette" id="palet" hidden>

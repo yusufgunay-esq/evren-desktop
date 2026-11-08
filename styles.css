@@ -106,7 +106,20 @@ kbd {
 }
 .cmdk span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cmdk:hover { border-color: var(--line-3); background: var(--bg-3); color: var(--text-2); }
-.tb-right { height: 100%; padding-right: 140px; }
+.tb-right { height: 100%; padding-right: 140px; display: flex; align-items: center; justify-content: flex-end; }
+.tb-btn {
+  -webkit-app-region: no-drag;
+  display: flex; align-items: center; gap: 6px;
+  height: 26px; padding: 0 10px;
+  background: var(--bg-2); border: 1px solid var(--line-2); border-radius: var(--r);
+  color: var(--text-2); font-size: 12px; font-weight: 500;
+  cursor: pointer; transition: all 0.15s ease;
+}
+.tb-btn:hover { background: var(--bg-3); border-color: var(--line-3); color: var(--text); }
+.kumanda-nokta {
+  width: 6px; height: 6px; border-radius: 50%; background: #6e7681; transition: background 0.3s;
+}
+.kumanda-nokta.bagli { background: var(--ok); }
 
 /* ---------- Kenar paneli ---------- */
 .side {
@@ -120,14 +133,23 @@ kbd {
 .app.side-kapali .side { width: 0; border-right-color: transparent; }
 .side > * { width: var(--side-w); }
 
-.sec { display: flex; flex-direction: column; min-height: 0; padding: 4px 0 6px; animation: belir 0.5s var(--ease) both; }
+.sec { display: flex; flex-direction: column; min-height: 0; padding: 4px 0 6px; animation: belir 0.5s var(--ease) both; transition: flex 0.2s var(--ease); }
 .sec + .sec { border-top: 1px solid var(--line); }
+.sec.grow { flex: 1 1 0; min-height: 0; }
 .sec:nth-child(1) { animation-delay: 0.04s; }
-.sec:nth-child(2) { animation-delay: 0.1s; flex: 1.35 1 0; }
+.sec:nth-child(2) { animation-delay: 0.1s; flex: 1 1 0; }
 .sec:nth-child(3) { animation-delay: 0.16s; flex: 1 1 0; }
+.sec:nth-child(4) { animation-delay: 0.22s; flex: 1.6 1 0; }
 @keyframes belir { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
 
-.sec-h { height: 36px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 10px 0 18px; }
+.sec-h { height: 36px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 10px 0 14px; cursor: pointer; user-select: none; }
+.sec-h .sec-ok { width: 12px; height: 12px; color: var(--text-4); transition: transform 0.2s var(--ease), color 0.15s; flex: none; }
+.sec-h:hover .sec-ok { color: var(--text-2); }
+.sec-h:hover .sec-t { color: var(--text-2); }
+.sec.katli { flex: 0 0 auto !important; }
+.sec.katli .list, .sec.katli .kv, .sec.katli .gecmis-ara { display: none; }
+.sec.katli .sec-h { opacity: 0.65; }
+.sec.katli .sec-ok { transform: rotate(-90deg); }
 .sec-t { font: 600 11px/1 var(--sans); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
 .sec-c { font: 500 10.5px/1 var(--sans); font-feature-settings: "tnum"; color: var(--text-3); padding: 3px 6px; border-radius: 99px; background: rgba(255, 255, 255, 0.05); }
 .sec-a { margin-left: auto; height: 26px; min-width: 26px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; border-radius: var(--r); color: var(--text-3); transition: background 0.15s, color 0.15s; }
@@ -485,15 +507,16 @@ kbd {
 /* ---------- Durum çubuğu ekleri ---------- */
 #sOturum { font-family: var(--mono); font-size: 11px; }
 .seg.kunye { font-family: var(--mono); font-size: 10.5px; color: var(--text-4); letter-spacing: 0.04em; }
-.side-foot { display: flex; flex-direction: column; gap: 8px; }
+.side-foot { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px 10px; }
 
 /* Model satırı: tek satır (ad + bağlam), altında ince bağlam çizgisi; açıklama ipucunda */
 .row.kompakt { padding: 7px 10px 7px; }
 .row.kompakt .row-t { font-size: 12.5px; }
 .row.kompakt .meter { height: 2px; margin-top: 6px; }
 .sec:nth-child(1) { flex: none; }
-.sec:nth-child(2) { flex: 0.9 1 0; }
-.sec:nth-child(4) { animation-delay: 0.2s; flex: 1.1 1 0; } /* Geçmiş */
+.sec:nth-child(2) { flex: 0.85 1 0; }
+.sec:nth-child(3) { flex: 0.85 1 0; }
+.sec:nth-child(4), .sec[data-sec="gecmis"] { animation-delay: 0.2s; flex: 2.2 1 0; } /* Oturumlar */
 .row.kompakt .row-s { margin-top: 3px; }
 
 /* Uygulama içi anahtar girişi */
@@ -520,3 +543,169 @@ kbd {
 /* Geçmiş: oturumun hangi uygulamadan geldiği */
 .kaynak { padding: 1px 5px; border-radius: 4px; font-size: 10px; letter-spacing: 0.04em; background: rgba(255, 255, 255, 0.06); color: var(--text-3); }
 .kaynak.evren { color: var(--accent-2); background: var(--accent-bg-2); }
+
+/* ---------- Oturumlar ve Alt Ajanlar (Minimalist & Ferah) ---------- */
+.gecmis-row { padding: 8px 10px 8px; }
+.gecmis-row + .gecmis-row { margin-top: 3px; }
+.gecmis-row.sec-li { background: var(--accent-bg); border-color: var(--accent-line); }
+
+.tag-ajan {
+  margin-left: auto;
+  height: 17px;
+  min-width: 17px;
+  padding: 0 5px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--line-2);
+  color: var(--text-3);
+  font: 500 10.5px/1 var(--mono);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s var(--ease);
+}
+.tag-ajan:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  border-color: var(--line-3);
+}
+
+.ajan-agac {
+  margin-top: 6px;
+  margin-left: 6px;
+  padding-left: 9px;
+  border-left: 1px solid var(--line-2);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ajan { display: flex; flex-direction: column; gap: 1px; padding: 2.5px 0; }
+.ajan-satir {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-3);
+  line-height: 1.3;
+}
+.ajan-nokta {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--text-4);
+  flex: none;
+}
+.ajan-nokta.canli {
+  background: var(--ok);
+  box-shadow: 0 0 5px var(--ok);
+  animation: nabiz 1.4s infinite;
+}
+.ajan-tanim {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: -0.01em;
+}
+
+/* ---------- Mobil Kumanda Modalı ---------- */
+.modal-ortu {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(8px);
+  display: flex; align-items: center; justify-content: center;
+}
+.modal-kutu.kumanda-kutu {
+  width: 440px; max-width: 90vw;
+  background: var(--bg-1);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-l);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+  animation: modal-belir 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes modal-belir {
+  from { opacity: 0; transform: scale(0.96) translateY(6px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+.modal-baslik {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid var(--line);
+}
+.modal-baslik-sol { display: flex; align-items: center; gap: 8px; color: var(--text); }
+.modal-baslik-sol h3 { font-size: 13.5px; font-weight: 600; margin: 0; }
+.modal-kapat {
+  background: none; border: none; font-size: 18px; color: var(--text-3);
+  cursor: pointer; padding: 2px 6px; border-radius: var(--r-s);
+}
+.modal-kapat:hover { color: var(--text); background: var(--bg-3); }
+.kumanda-govde { padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.kumanda-qr-alan {
+  width: 220px; height: 220px;
+  background: #ffffff;
+  border-radius: var(--r);
+  padding: 10px;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+.kumanda-qr-alan img { width: 100%; height: 100%; display: block; object-fit: contain; }
+.kumanda-detay { width: 100%; display: flex; flex-direction: column; gap: 10px; }
+.kumanda-aciklama { font-size: 12.5px; color: var(--text-2); text-align: center; line-height: 1.45; }
+.kumanda-satir {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px; background: var(--bg-2); border: 1px solid var(--line-2); border-radius: var(--r);
+}
+.k-etiket { font-size: 11.5px; color: var(--text-3); }
+.k-kod { font-size: 11px; color: var(--text); max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.k-deger { font-size: 11.5px; color: var(--text-2); }
+
+/* hidden niteliği display:flex'i ezemediği için Kumanda modalı her açılışta görünürdü */
+.modal-ortu[hidden] { display: none; }
+
+/* ---------- Oturum arama ---------- */
+.gecmis-ara {
+  display: flex; align-items: center; gap: 6px;
+  margin: 0 10px 8px; padding: 0 8px; height: 26px;
+  background: var(--bg-2); border: 1px solid var(--line-2); border-radius: var(--r-s);
+  transition: border-color 0.15s var(--ease);
+}
+.gecmis-ara .ic { width: 12px; height: 12px; color: var(--text-4); flex: none; }
+.gecmis-ara input {
+  flex: 1; min-width: 0; background: none; border: none; outline: none;
+  color: var(--text); font: 400 11.5px var(--sans);
+}
+.gecmis-ara input::placeholder { color: var(--text-4); }
+.gecmis-ara:focus-within { border-color: var(--line-3); }
+
+/* ---------- Alt ajan satırı: tür, model, zaman ---------- */
+.ajan-meta {
+  display: flex; align-items: center; gap: 5px;
+  padding-left: 10px; min-width: 0; flex-wrap: wrap;
+}
+.ajan-tur {
+  flex: none; font: 500 9.5px/1 var(--mono); text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--accent-2); background: var(--accent-bg-2); border-radius: 3px; padding: 2px 4px;
+}
+.ajan-wf {
+  flex: none; font: 500 9.5px/1 var(--mono); color: var(--text-4);
+  background: rgba(255, 255, 255, 0.04); border: 1px solid var(--line-2); border-radius: 3px;
+  padding: 2px 4px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ajan-model { flex: none; font-size: 9.5px; color: var(--text-4); }
+.ajan-zaman { flex: none; font-size: 9.5px; color: var(--text-4); opacity: 0.75; }
+.tag-ajan.canli {
+  color: var(--ok); border-color: rgba(62, 194, 138, 0.45); background: rgba(62, 194, 138, 0.1);
+}
+
+/* ---------- Kumanda: IP seçici ve not ---------- */
+.k-secim {
+  flex: 1; max-width: 230px; padding: 3px 6px; outline: none;
+  background: var(--bg-3); color: var(--text); border: 1px solid var(--line-2);
+  border-radius: var(--r-s); font: 400 11.5px var(--sans);
+}
+.k-secim:focus { border-color: var(--line-3); }
+.kumanda-detay .btn { margin-top: 2px; }
+.kumanda-not { margin: 0; font-size: 10.5px; line-height: 1.5; color: var(--text-4); text-align: center; }
+.kumanda-not b { color: var(--text-3); font-weight: 500; }

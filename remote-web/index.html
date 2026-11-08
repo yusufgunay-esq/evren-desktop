@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>EVREN Kumanda</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#07090b">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="kumanda-kok" class="kumanda-kok">
+    <!-- Üst Başlık ve Bağlantı Çubuğu -->
+    <header class="kumanda-ust">
+      <div class="logo-alan">
+        <span class="logo-isaret"></span>
+        <span class="logo-metin">EVREN</span>
+        <span class="logo-alt">Kumanda</span>
+      </div>
+      <div class="baglanti-durum" id="baglanti-gosterge">
+        <span class="durum-nokta"></span>
+        <span class="durum-metin" id="baglanti-metin">Bağlanıyor...</span>
+      </div>
+    </header>
+
+    <!-- Oturum Sekmeleri (Yatay Kaydırılabilir) -->
+    <nav class="oturum-cubuk" id="oturum-listesi" aria-label="Açık Oturumlar">
+      <!-- Dinamik sekmeler buraya yerleşir -->
+    </nav>
+
+    <!-- Onay Bekleyen Kritik İşlem Banner'ı -->
+    <div id="onay-alani" class="onay-alani gizli">
+      <div class="onay-kart">
+        <div class="onay-baslik-satir">
+          <span class="onay-rozet">Onay Bekliyor</span>
+          <span class="onay-zaman" id="onay-zaman">Şimdi</span>
+        </div>
+        <p class="onay-soru" id="onay-soru">Claude Code araç izni istiyor</p>
+        <div class="onay-onizleme" id="onay-onizleme"></div>
+        <div class="onay-butonlar">
+          <button type="button" class="buton-onay" id="btn-hizli-onay">Onayla (Enter / Y)</button>
+          <button type="button" class="buton-reddet" id="btn-hizli-red">Reddet (N)</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Canlı Terminal Görünümü -->
+    <main class="terminal-alani">
+      <div class="terminal-govde" id="terminal-metin" tabindex="0">
+        <div class="bos-durum" id="bos-durum">
+          <div class="bos-halka"></div>
+          <p class="bos-metin">Aktif oturum seçilmedi veya başlatılmadı.</p>
+        </div>
+      </div>
+      <button type="button" class="kaydir-asagi gizli" id="btn-oto-kaydir" title="En alta kaydır">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="6 9 12 15 18 9"></polyline>
+        </svg>
+      </button>
+    </main>
+
+    <!-- Hızlı Eylem Düğmeleri Çubuğu (Apple Minimalizmi) -->
+    <section class="hizli-eylemler">
+      <button type="button" class="eylem-btn" id="btn-aksiyon-y" data-val="y">Y (Evet)</button>
+      <button type="button" class="eylem-btn" id="btn-aksiyon-n" data-val="n">N (Hayır)</button>
+      <button type="button" class="eylem-btn" id="btn-aksiyon-1" data-val="1">1</button>
+      <button type="button" class="eylem-btn" id="btn-aksiyon-2" data-val="2">2</button>
+      <button type="button" class="eylem-btn eylem-btn-tehlike" id="btn-aksiyon-dur" title="Durdur (Ctrl+C)">Ctrl+C</button>
+      <button type="button" class="eylem-btn eylem-btn-vurgu" id="btn-aksiyon-enter">Enter</button>
+    </section>
+
+    <!-- Alt Giriş Çubuğu (Prompt / Talimat Gönderme) -->
+    <footer class="kumanda-alt">
+      <form id="komut-formu" class="komut-formu">
+        <input 
+          type="text" 
+          id="komut-girdi" 
+          class="komut-girdi" 
+          placeholder="Ajana talimat yaz veya sesle dikte et..." 
+          autocomplete="off" 
+          autocorrect="off" 
+          autocapitalize="off" 
+          spellcheck="false"
+        >
+        <button type="submit" class="gonder-btn" id="btn-gonder" aria-label="Gönder">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+        </button>
+      </form>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -89,20 +89,68 @@ function projeSec(yol) {
 
 // ---------- oturum geçmişi: Claude Code'un ~/.claude/projects kayıtlarından ----------
 let gecmisIstek = 0;
+let gecmisAra = ''; // oturum listesi süzgeci (başlıkta ve ajan tanımında arar)
 S.gecmis = [];
+const acikAjanlar = new Set();
 const gecmisAcikMi = (g) => S.oturumlar.some((o) => o.canli && o.devam === g.id); // sekme açık; çalıştığı anlamına gelmez
+const kucult = (s) => String(s || '').toLocaleLowerCase('tr');
+
+// Model kimliğinden kısa ad: claude-opus-5-5 → opus, deepseek-v4.1-flash → deepseek …
+function kisaModel(ad) {
+  const s = String(ad || '');
+  if (!s) return '';
+  const p = s.toLowerCase();
+  for (const k of ['opus', 'sonnet', 'haiku', 'fable', 'deepseek', 'glm', 'qwen', 'gemma', 'flash', 'argon']) if (p.includes(k)) return k;
+  return s.length > 14 ? s.slice(0, 14) : s;
+}
+
 function gecmisCiz() {
   const el = $('gecmisList');
-  $('gecmisSay').textContent = S.proje ? S.gecmis.length : '—';
-  if (!S.proje) { el.innerHTML = '<div class="bos-satir">Önce bir proje seçin.</div>'; return; }
-  if (!S.gecmis.length) { el.innerHTML = '<div class="bos-satir">Bu projede kayıtlı oturum yok.</div>'; return; }
-  el.innerHTML = S.gecmis.map((g) => {
-    const canli = g.canli; // yalnız kayıt yeni yazılmış ve tur sürüyorsa
-    const durum = canli ? 'çalışıyor' : gecmisAcikMi(g) ? 'açık · bekliyor' : 'bitti';
+  if (!S.proje) { $('gecmisSay').textContent = '—'; el.innerHTML = '<div class="bos-satir">Önce bir proje seçin.</div>'; return; }
+  if (!S.gecmis.length) { el.innerHTML = '<div class="bos-satir">Kayıtlı oturum yok.</div>'; return; }
+
+  const q = kucult(gecmisAra.trim());
+  const eslesir = (g) => kucult(g.baslik).includes(q) || (g.altAjanlar || []).some((a) => kucult(a.tanim).includes(q) || kucult(a.tur).includes(q));
+  const liste = q ? S.gecmis.filter(eslesir) : S.gecmis;
+  $('gecmisSay').textContent = q ? `${liste.length}/${S.gecmis.length}` : S.gecmis.length;
+  if (!liste.length) { el.innerHTML = '<div class="bos-satir">Aramanla eşleşen oturum yok.</div>'; return; }
+
+  const aktifDevam = aktifOturum() ? aktifOturum().devam : null;
+  el.innerHTML = liste.map((g) => {
+    const canli = g.canli; // tur sürüyorsa ya da arka planda çalışan alt ajan varsa
+    const durum = g.turCanli ? 'çalışıyor' : g.ajanCalisiyor ? 'ajan çalışıyor' : gecmisAcikMi(g) ? 'açık' : 'bitti';
+    const secili = aktifDevam === g.id;
+    const tumAjanlar = Array.isArray(g.altAjanlar) ? g.altAjanlar : [];
+    const ajanVar = tumAjanlar.length > 0;
+    // Arama başlıkta eşleşmediyse yalnız eşleşen ajanlar gösterilir (neden eşleştiği görünsün).
+    const ajanlar = q && !kucult(g.baslik).includes(q) ? tumAjanlar.filter((a) => kucult(a.tanim).includes(q) || kucult(a.tur).includes(q)) : tumAjanlar;
+    const ajanAcik = acikAjanlar.has(g.id) || tumAjanlar.some((a) => a.canli) || (q && ajanlar.length > 0);
+    const rozet = g.calisanAjan ? `${g.calisanAjan}/${tumAjanlar.length}` : `${tumAjanlar.length}`;
     return `
-    <div class="row kompakt" role="option" data-id="${esc(g.id)}" title="${esc(g.baslik)}\n${durum} · ${esc(goreli(g.ms / 1000))}\nTıkla: devam et (claude --resume)">
-      <div class="row-l"><span class="led${canli ? ' canli' : ''}"></span><span class="row-t">${esc(g.baslik)}</span></div>
-      <div class="row-s mono">${g.kaynak ? `<span class="kaynak ${g.kaynak}">${g.kaynak}</span> · ` : ''}${durum} · ${esc(goreli(g.ms / 1000))}</div>
+    <div class="row kompakt gecmis-row${secili ? ' sec-li' : ''}" role="option" data-id="${esc(g.id)}" title="${esc(g.baslik)}\n${durum} · ${esc(goreli(g.ms / 1000))}">
+      <div class="row-l">
+        <span class="led${canli ? ' canli' : ''}"></span>
+        <span class="row-t">${esc(g.baslik)}</span>
+        ${ajanVar ? `<button class="tag-ajan${g.calisanAjan ? ' canli' : ''}" data-ajan-toggle="${esc(g.id)}" type="button" title="${tumAjanlar.length} alt görev${g.calisanAjan ? `, ${g.calisanAjan} çalışıyor` : ''}">${rozet}</button>` : ''}
+      </div>
+      <div class="row-s mono">${durum} · ${esc(goreli(g.ms / 1000))}</div>
+      ${ajanVar && ajanAcik ? `
+      <div class="ajan-agac">
+        ${ajanlar.map((a) => `
+          <div class="ajan" title="${esc(a.tanim)}${a.faz ? ' · ' + esc(a.faz) : ''}">
+            <div class="ajan-satir">
+              <span class="ajan-nokta${a.canli ? ' canli' : ''}"></span>
+              <span class="ajan-tanim">${esc(a.tanim)}</span>
+            </div>
+            <div class="ajan-meta">
+              ${a.tur ? `<span class="ajan-tur">${esc(a.tur)}</span>` : ''}
+              ${a.isAkisi ? `<span class="ajan-wf">${esc(a.isAkisiAdi || 'wf')}${a.faz ? ' · ' + esc(a.faz) : ''}</span>` : ''}
+              ${kisaModel(a.model) ? `<span class="ajan-model mono">${esc(kisaModel(a.model))}</span>` : ''}
+              <span class="ajan-zaman mono">${esc(goreli(a.ms / 1000))}</span>
+            </div>
+          </div>
+        `).join('')}
+      </div>` : ''}
     </div>`;
   }).join('');
 }
@@ -336,6 +384,15 @@ async function yukle() {
     S.projeler = d.projeler || [];
     S.model = S.modeller.some((m) => m.id === d.sonModel) ? d.sonModel : (S.modeller[0] && S.modeller[0].id) || '';
     S.proje = (S.projeler[0] && S.projeler[0].yol) || '';
+    // Test/otomasyon: ?proje=<yol> açılışta o projeyi seçer (listedeyse onu, değilse listenin başına ekler).
+    const istenen = new URLSearchParams(location.search).get('proje');
+    if (istenen) {
+      if (!S.projeler.some((p) => p.yol === istenen)) S.projeler = [{ yol: istenen, ad: istenen.split(/[\\/]/).filter(Boolean).pop() || istenen, dal: '' }, ...S.projeler];
+      S.proje = istenen;
+    }
+    // Test/otomasyon: ?ara=<metin> arama kutusunu doldurur (ajan ağaçları açık gelir).
+    const araParam = new URLSearchParams(location.search).get('ara');
+    if (araParam && $('gecmisAra')) { gecmisAra = araParam; $('gecmisAra').value = araParam; }
   } catch (e) { console.error('durum', e); }
   S.yuklendi = true;
   modelleriCiz(); projeleriCiz(); ozetYaz(); baglantiYaz();
@@ -487,6 +544,7 @@ function sekmeSec(id) {
   for (const x of S.oturumlar) if (x.el) x.el.hidden = x.id !== S.aktif;
   if (!o) brifGoster(); else brifGizle();
   sekmeleriCiz();
+  gecmisCiz();
   if (o && o.term) { sigdir(); setTimeout(() => o.term.focus(), 0); }
 }
 
@@ -990,8 +1048,41 @@ $('anahtarForm').addEventListener('submit', async (e) => {
 });
 $('odakIpucu').addEventListener('click', () => odakToggle(false));
 $('yeniSekme').addEventListener('click', () => sekmeSec(null));
-$('gecmisYenile').addEventListener('click', gecmisYukle);
-$('gecmisList').addEventListener('click', (e) => { const r = e.target.closest('.row'); if (r) gecmisAc(r.dataset.id); });
+if ($('gecmisYenile')) $('gecmisYenile').addEventListener('click', gecmisYukle);
+if ($('gecmisAra')) {
+  $('gecmisAra').addEventListener('input', (e) => { gecmisAra = e.target.value; gecmisCiz(); });
+  $('gecmisAra').addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    e.stopPropagation();
+    e.target.value = ''; gecmisAra = ''; gecmisCiz(); e.target.blur();
+  });
+}
+$('gecmisList').addEventListener('click', (e) => {
+  const tog = e.target.closest('[data-ajan-toggle]');
+  if (tog) {
+    e.stopPropagation();
+    const id = tog.dataset.ajanToggle;
+    if (acikAjanlar.has(id)) acikAjanlar.delete(id);
+    else acikAjanlar.add(id);
+    gecmisCiz();
+    return;
+  }
+  const r = e.target.closest('.row');
+  if (r) gecmisAc(r.dataset.id);
+});
+document.querySelectorAll('.side .sec').forEach((sec) => {
+  const ad = sec.dataset.sec;
+  if (!ad) return;
+  if (sakla.oku('katli_' + ad, false)) sec.classList.add('katli');
+  const h = sec.querySelector('.sec-h');
+  if (h) {
+    h.addEventListener('click', (e) => {
+      if (e.target.closest('.sec-a') || e.target.closest('button')) return;
+      const k = sec.classList.toggle('katli');
+      sakla.yaz('katli_' + ad, k);
+    });
+  }
+});
 $('sekmeler').addEventListener('click', (e) => {
   const x = e.target.closest('[data-kapat]');
   if (x) { e.stopPropagation(); sekmeKapat(Number(x.dataset.kapat)); return; }
@@ -1025,9 +1116,84 @@ new ResizeObserver(() => sigdir()).observe($('terminaller'));
 
 if (sakla.oku('sideKapali', false)) $('app').classList.add('side-kapali');
 sekmeleriCiz();
+// Mobil Kumanda Modalı
+// Sunucu bilgisini arayüze yazar: adres, QR, IP seçici (birden çok gerçek ağ varsa) ve bağlantı durumu.
+async function kumandaBilgiCiz(bilgi) {
+  if (!bilgi) return;
+  if (bilgi.url) $('kumandaUrlText').textContent = bilgi.url;
+  const sec = $('kumandaIpSec'), satir = $('kumandaIpSatir');
+  const ipler = Array.isArray(bilgi.ipler) ? bilgi.ipler : [];
+  if (sec && satir) {
+    const secili = bilgi.seciliIp || bilgi.ip;
+    if (ipler.length > 1) {
+      sec.innerHTML = ipler.map((x) => `<option value="${esc(x.ip)}"${x.ip === secili ? ' selected' : ''}>${esc(x.ad)} · ${esc(x.ip)}</option>`).join('');
+      satir.hidden = false;
+    } else {
+      satir.hidden = true;
+    }
+  }
+  try {
+    const qrData = await window.evren.remoteQr();
+    if (qrData) $('kumandaQrResim').src = qrData;
+  } catch (e) {}
+  kumandaDurumGuncelle(bilgi);
+}
+
+async function kumandaModalAc() {
+  const modal = $('kumandaModal');
+  if (!modal) return;
+  modal.hidden = false;
+  try { await kumandaBilgiCiz(await window.evren.remoteBilgi()); } catch (e) {}
+}
+
+function kumandaModalKapat() {
+  const modal = $('kumandaModal');
+  if (modal) modal.hidden = true;
+}
+
+function kumandaDurumGuncelle(bilgi) {
+  const nokta = $('kumandaNokta');
+  const txt = $('kumandaDurumText');
+  if (!bilgi) return;
+  if (bilgi.bagliCihazSayisi > 0) {
+    if (nokta) nokta.classList.add('bagli');
+    if (txt) txt.textContent = `${bilgi.bagliCihazSayisi} cihaz bağlı`;
+  } else {
+    if (nokta) nokta.classList.remove('bagli');
+    if (txt) txt.textContent = 'Cihaz bekleniyor...';
+  }
+}
+
+if ($('kumandaBtn')) $('kumandaBtn').addEventListener('click', kumandaModalAc);
+if ($('kumandaKapatBtn')) $('kumandaKapatBtn').addEventListener('click', kumandaModalKapat);
+// "Bağlantıyı yenile": yeni token üretilir, bağlı istemciler kopar, QR ve adres tazelenir.
+if ($('kumandaYenileBtn')) $('kumandaYenileBtn').addEventListener('click', async () => {
+  const btn = $('kumandaYenileBtn');
+  btn.disabled = true;
+  try {
+    const bilgi = await window.evren.remoteYenile();
+    await kumandaBilgiCiz(bilgi);
+    if ($('kumandaDurumText')) $('kumandaDurumText').textContent = 'Bağlantı yenilendi · telefonu yeniden bağla';
+  } catch (e) {} finally { btn.disabled = false; }
+});
+// IP seçici: seçim kumanda.json'a yazılır, QR yeni adresle yenilenir.
+if ($('kumandaIpSec')) $('kumandaIpSec').addEventListener('change', async (e) => {
+  try { await kumandaBilgiCiz(await window.evren.remoteIpSec(e.target.value)); } catch {}
+});
+if ($('kumandaModal')) {
+  $('kumandaModal').addEventListener('click', (e) => {
+    if (e.target === $('kumandaModal')) kumandaModalKapat();
+  });
+}
+
+if (window.evren && window.evren.remoteDinle) {
+  window.evren.remoteDinle((bilgi) => kumandaDurumGuncelle(bilgi));
+}
+
 $('fsMetin').textContent = S.fs;
 yukle().then(() => {
   if (new URLSearchParams(location.search).get('palet')) paletAc();
+  if (new URLSearchParams(location.search).get('kumanda')) setTimeout(kumandaModalAc, 250); // test: modalı açık yakala
   const n = Number(new URLSearchParams(location.search).get('oturum') || 0);
   if (n) (async () => { for (let i = 0; i < n; i++) { if (i) projeSec((S.projeler[i] || S.projeler[0]).yol); await basla(); await bekle(700); } const t = aktifTerm(); if (t && new URLSearchParams(location.search).get('yaz')) window.evren.yaz(aktifOturum().pid, 'echo EVREN coklu oturum testi' + String.fromCharCode(13)); if (new URLSearchParams(location.search).get('odak')) odakToggle(true); })();
 });

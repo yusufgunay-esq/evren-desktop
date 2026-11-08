@@ -1,0 +1,10 @@
+{
+  "name": "EVREN Kumanda",
+  "short_name": "Kumanda",
+  "description": "EVREN Desktop Uzaktan Operasyon Konsolu",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#07090b",
+  "theme_color": "#07090b",
+  "orientation": "portrait"
+}

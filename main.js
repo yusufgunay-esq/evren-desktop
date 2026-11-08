@@ -6,9 +6,10 @@ const { app, BrowserWindow, ipcMain, dialog, shell, screen } = require('electron
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
-const { StringDecoder } = require('node:string_decoder');
 const pty = require('@homebridge/node-pty-prebuilt-multiarch');
 const motor = require('./motor');
+const gecmis = require('./gecmis');
+const RemoteSunucu = require('./remote-sunucu');
 
 // Yerel dosyalar ağdan gelmiyor; önbellek eski CSS/JS servis etmesin.
 app.commandLine.appendSwitch('disable-http-cache');
@@ -21,6 +22,7 @@ const argv = process.argv;
 const EKRAN = argv.includes('--ekran') ? argv[argv.indexOf('--ekran') + 1] : null;
 const EKRAN_PALET = argv.includes('--ekran-palet');
 const EKRAN_OTURUM = argv.includes('--ekran-oturum'); // test: iki oturum açar
+const EKRAN_PROJE = argv.includes('--ekran-proje') ? argv[argv.indexOf('--ekran-proje') + 1] : null; // test: açılışta proje seç
 // Yalnız test/doğrulama için: claude yerine verilen komutu açar (ör. cmd.exe); API kredisi harcanmaz.
 const TEST_KOMUT = process.env.EVREN_TEST_KOMUT || '';
 
@@ -29,6 +31,7 @@ const kabuklar = new Map(); // oturum kimliği -> pty (çoklu oturum)
 let sonKimlik = 0;
 let anahtarOnbellek = null; // kasa okuması (DPAPI) yavaş; süreç boyunca bir kez okunur
 let modelOnbellek = null;   // son canlı /v1/models çözümü
+let remoteSunucu = null;
 const { ayarOku, ayarYaz } = motor;
 const panelModulu = async () => motor;
 
@@ -105,99 +108,8 @@ async function apiDurum() {
   }
 }
 
-// Claude Code her sohbeti ~/.claude/projects/<klasör yolu, harf/rakam dışı '-'>/<id>.jsonl dosyasına yazar.
-const OTURUM_KIMLIK = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const CANLI_ESIK_MS = 90 * 1000; // son yazmadan bu yana bu kadar geçmediyse "çalışıyor"
-
-function metinCikar(icerik) {
-  if (typeof icerik === 'string') return icerik;
-  if (Array.isArray(icerik)) return icerik.map((x) => (x && x.type === 'text' ? x.text : '')).join(' ');
-  return '';
-}
-
-// İlk gerçek kullanıcı mesajı = oturum başlığı; ilk yanıtın modeli = kaynak (claude-* ise Claude, değilse EVREN).
-// Başlık ve model bulununca sonuç önbelleğe alınır, dosya bir daha okunmaz.
-const baslikOnbellek = new Map(); // id -> { baslik, kaynak }
-function oturumBilgisi(dosya, id) {
-  const c = baslikOnbellek.get(id);
-  if (c) return c;
-  const b = baslikOku(dosya);
-  if (b.baslik && b.kaynak) baslikOnbellek.set(id, b);
-  return b;
-}
-function baslikOku(dosya) {
-  let fd, baslik = '', kaynak = '';
-  try {
-    fd = fs.openSync(dosya, 'r');
-    const tampon = Buffer.alloc(512 * 1024);
-    const kod = new StringDecoder('utf8');
-    let konum = 0, kalan = '';
-    // Açılış kayıtları büyük olabilir (ilk yanıt yüzlerce KB sonra gelir): parça parça oku, en çok 6 MB.
-    while (konum < 6 * 1024 * 1024 && !(baslik && kaynak)) {
-      const n = fs.readSync(fd, tampon, 0, tampon.length, konum);
-      if (n <= 0) break;
-      konum += n;
-      const satirlar = (kalan + kod.write(tampon.subarray(0, n))).split('\n');
-      kalan = satirlar.pop(); // yarım satır bir sonraki parçayla tamamlanır
-      for (const satir of satirlar) {
-        let j; try { j = JSON.parse(satir); } catch { continue; }
-        if (!j || !j.message) continue;
-        if (!baslik && j.type === 'user' && !j.isMeta) {
-          const m = metinCikar(j.message.content).replace(/<[^>]+>[\s\S]*?<\/[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-          if (m && !m.startsWith('Caveat:') && !m.startsWith('[Request interrupted')) baslik = m.slice(0, 90);
-        } else if (!kaynak && j.type === 'assistant' && typeof j.message.model === 'string' && j.message.model !== '<synthetic>') {
-          kaynak = /^(claude|opus|sonnet|haiku)/i.test(j.message.model) ? 'claude' : 'evren';
-        }
-        if (baslik && kaynak) break;
-      }
-    }
-  } catch {} finally { if (fd != null) try { fs.closeSync(fd); } catch {} }
-  return { baslik, kaynak };
-}
-
-// "Çalışıyor" yalnız kayıt yeni yazılmışsa VE son giriş yanıt beklenen bir giriş ise (kullanıcı mesajı, araç sonucu ya da
-// tamamlanmamış asistan yanıtı). Asistan turu bitirdiyse (end_turn) oturum boştadır: sekme açık olsa da çalışmıyordur.
-function turDevamEdiyor(dosya, boyut) {
-  let fd;
-  try {
-    fd = fs.openSync(dosya, 'r');
-    const uzunluk = Math.min(boyut, 128 * 1024);
-    const t = Buffer.alloc(uzunluk);
-    fs.readSync(fd, t, 0, uzunluk, boyut - uzunluk);
-    const satirlar = t.toString('utf8').split('\n');
-    if (boyut > uzunluk) satirlar.shift(); // baştaki yarım satır
-    for (let i = satirlar.length - 1; i >= 0; i--) {
-      let j; try { j = JSON.parse(satirlar[i]); } catch { continue; }
-      if (!j || (j.type !== 'user' && j.type !== 'assistant') || !j.message) continue;
-      if (j.type === 'user') return true;
-      return !['end_turn', 'stop_sequence', 'max_tokens', 'refusal'].includes(j.message.stop_reason);
-    }
-  } catch {} finally { if (fd != null) try { fs.closeSync(fd); } catch {} }
-  return null; // anlaşılamadı
-}
-
-function oturumGecmisi(dizin) {
-  if (!dizin || typeof dizin !== 'string') return [];
-  const klasor = path.join(os.homedir(), '.claude', 'projects', dizin.replace(/[^a-zA-Z0-9]/g, '-'));
-  let adlar;
-  try { adlar = fs.readdirSync(klasor); } catch { return []; }
-  const simdi = Date.now();
-  return adlar
-    .filter((a) => a.endsWith('.jsonl') && OTURUM_KIMLIK.test(a.slice(0, -6)))
-    .map((a) => { const d = path.join(klasor, a); try { const s = fs.statSync(d); return { id: a.slice(0, -6), dosya: d, ms: s.mtimeMs, boyut: s.size }; } catch { return null; } })
-    .filter((x) => x && x.boyut > 0)
-    .sort((a, b) => b.ms - a.ms)
-    .map((x) => {
-      const taze = simdi - x.ms < CANLI_ESIK_MS;
-      const tur = taze ? turDevamEdiyor(x.dosya, x.boyut) : false;
-      return { id: x.id, ...oturumBilgisi(x.dosya, x.id), ms: x.ms, canli: taze && tur !== false };
-    })
-    .filter((x) => x.baslik) // hiç kullanıcı mesajı olmayan (yalnız açılış kaydı) oturumlar listelenmez
-    .slice(0, 30);
-}
-
 async function oturumBaslat({ modelId, dizin, cols, rows, devam }) {
-  if (devam != null && !OTURUM_KIMLIK.test(String(devam))) throw new Error('Geçersiz oturum kimliği.');
+  if (devam != null && !gecmis.OTURUM_KIMLIK.test(String(devam))) throw new Error('Geçersiz oturum kimliği.');
   if (kabuklar.size >= 8) throw new Error('En çok 8 oturum açık olabilir; birini kapatın.');
   const p = await panelModulu();
   const anahtarDeger = await anahtar();
@@ -249,12 +161,21 @@ async function oturumBaslat({ modelId, dizin, cols, rows, devam }) {
   }
   const id = ++sonKimlik;
   kabuklar.set(id, bu);
-  bu.onData((veri) => pencere && !pencere.isDestroyed() && pencere.webContents.send('pty:veri', id, veri));
+  bu.onData((veri) => {
+    if (pencere && !pencere.isDestroyed()) pencere.webContents.send('pty:veri', id, veri);
+    if (remoteSunucu) remoteSunucu.ptyCiktiEkle(id, veri);
+  });
   bu.onExit(({ exitCode }) => {
     if (pencere && !pencere.isDestroyed()) pencere.webContents.send('pty:cikis', id, { kod: exitCode });
     kabuklar.delete(id);
+  if (remoteSunucu) remoteSunucu.oturumKapandi(id, 0);
+    if (remoteSunucu) remoteSunucu.oturumKapandi(id, exitCode);
   });
 
+  if (remoteSunucu) {
+    remoteSunucu.aktifOturumId = id;
+    remoteSunucu.oturumListesiGuncelle();
+  }
   ayarYaz({ sonModel: model.id, sonKlasorler: [dizin, ...(ayarOku().sonKlasorler || []).filter((x) => x !== dizin)].slice(0, 8) });
   return { id, model: model.id, dizin };
 }
@@ -264,6 +185,7 @@ function kabukKapat(id) {
   if (!k) return;
   try { k.kill(); } catch {}
   kabuklar.delete(id);
+  if (remoteSunucu) remoteSunucu.oturumKapandi(id, 0);
 }
 function tumunuKapat() { for (const id of [...kabuklar.keys()]) kabukKapat(id); }
 
@@ -287,7 +209,19 @@ function pencereOlustur() {
       spellcheck: false,
     },
   });
-  pencere.loadFile(path.join(__dirname, 'index.html'), EKRAN_PALET ? { query: { palet: '1' } } : EKRAN_OTURUM ? { query: { oturum: argv.includes('--ekran-tek') ? '1' : '2', odak: argv.includes('--ekran-odak') ? '1' : '', yaz: TEST_KOMUT ? '1' : '' } } : undefined);
+  // Test bayrakları sorgu parametresiyle renderer'a geçer (--ekran-proje açılışta o projeyi seçtirir).
+  const sorgu = {};
+  if (EKRAN_PALET) sorgu.palet = '1';
+  if (EKRAN_OTURUM) {
+    sorgu.oturum = argv.includes('--ekran-tek') ? '1' : '2';
+    sorgu.odak = argv.includes('--ekran-odak') ? '1' : '';
+    sorgu.yaz = TEST_KOMUT ? '1' : '';
+  }
+  if (EKRAN_PROJE) sorgu.proje = EKRAN_PROJE;
+  const araIx = argv.indexOf('--ekran-ara');
+  if (araIx >= 0 && argv[araIx + 1]) sorgu.ara = argv[araIx + 1];
+  if (argv.includes('--ekran-kumanda')) sorgu.kumanda = '1'; // test: Kumanda modalını açık yakala
+  pencere.loadFile(path.join(__dirname, 'index.html'), Object.keys(sorgu).length ? { query: sorgu } : undefined);
   pencere.once('ready-to-show', () => pencere.show());
   pencere.on('closed', () => { tumunuKapat(); pencere = null; });
 
@@ -312,7 +246,34 @@ function pencereOlustur() {
 }
 
 app.whenReady().then(() => {
+function remoteSunucuBaslat() {
+  remoteSunucu = new RemoteSunucu({
+    veriDizini: app.getPath('userData'), // kumanda.json (token, port, IP) burada kalıcı tutulur
+    onPtyYaz: (id, veri) => {
+      const k = kabuklar.get(id);
+      if (k) { try { k.write(veri); } catch {} }
+    },
+    onYeniOturum: (secim) => oturumBaslat(secim),
+    onOturumKapat: (id) => kabukKapat(id),
+    oturumListesiAl: () => {
+      const list = [];
+      for (const [id] of kabuklar.entries()) {
+        list.push({ id, baslik: `Oturum #${id}` });
+      }
+      return list;
+    },
+    uygulamaDurumuAl: () => yerelDurum(),
+    onDurumDegisti: (bilgi) => {
+      if (pencere && !pencere.isDestroyed()) {
+        pencere.webContents.send('remote:durum', bilgi);
+      }
+    }
+  });
+  remoteSunucu.baslat().catch((err) => console.error('[remote] sunucu hatası:', err));
+}
+
   pencereOlustur();
+  remoteSunucuBaslat();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) pencereOlustur(); });
 });
 app.on('window-all-closed', () => { tumunuKapat(); app.quit(); });
@@ -389,7 +350,7 @@ ipcMain.handle('klasor-sec', async () => {
 });
 
 ipcMain.handle('baslat', async (_e, secim) => { try { return await oturumBaslat(secim); } catch (e) { return { hata: e.message }; } });
-ipcMain.handle('gecmis', async (_e, dizin) => { try { return oturumGecmisi(dizin); } catch { return []; } });
+ipcMain.handle('gecmis', async (_e, dizin) => { try { return gecmis.oturumGecmisi(dizin); } catch { return []; } });
 ipcMain.handle('yaz', (_e, id, veri) => { const k = kabuklar.get(id); if (k) { try { k.write(veri); } catch {} } });
 ipcMain.handle('boyut', (_e, id, { cols, rows }) => {
   const k = kabuklar.get(id);
@@ -398,3 +359,7 @@ ipcMain.handle('boyut', (_e, id, { cols, rows }) => {
 });
 ipcMain.handle('kapat-oturum', (_e, id) => { kabukKapat(id); });
 ipcMain.handle('disari', (_e, url) => { if (/^https:\/\//.test(url)) shell.openExternal(url); });
+ipcMain.handle('remote:bilgi', async () => (remoteSunucu ? remoteSunucu.bilgi() : { acik: false }));
+ipcMain.handle('remote:qr', async () => (remoteSunucu ? await remoteSunucu.qrKodPngDataUrl() : ''));
+ipcMain.handle('remote:yenile', async () => (remoteSunucu ? await remoteSunucu.tokenYenile() : { acik: false }));
+ipcMain.handle('remote:ip-sec', async (_e, ip) => (remoteSunucu ? remoteSunucu.ipSec(ip) : { acik: false }));
