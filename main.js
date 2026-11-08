@@ -11,6 +11,7 @@ const os = require('node:os');
 const pty = require('@homebridge/node-pty-prebuilt-multiarch');
 const motor = require('./motor');
 const gecmis = require('./gecmis');
+const sohbet = require('./sohbet');
 const RemoteSunucu = require('./remote-sunucu');
 
 // Yerel dosyalar ağdan gelmiyor; önbellek eski CSS/JS servis etmesin.
@@ -30,6 +31,7 @@ const TEST_KOMUT = process.env.EVREN_TEST_KOMUT || '';
 
 let pencere = null;
 const kabuklar = new Map(); // oturum kimliği -> pty (çoklu oturum)
+const oturumBilgi = new Map(); // kimlik -> { modelId, modelAd, dizin, proje, devam, baslangic } (kumanda listesi için)
 let sonKimlik = 0;
 let anahtarOnbellek = null; // kasa okuması (DPAPI) yavaş; süreç boyunca bir kez okunur
 let modelOnbellek = null;   // son canlı /v1/models çözümü
@@ -164,6 +166,29 @@ async function oturumBaslat({ modelId, dizin, cols, rows, devam }) {
   }
   const id = ++sonKimlik;
   kabuklar.set(id, bu);
+  const bilgi = {
+    id,
+    modelId: model.id || '',
+    modelAd: model.ad || model.id || '',
+    dizin,
+    proje: path.basename(dizin) || dizin,
+    devam: devam ? String(devam) : null,
+    baslangic: Date.now(),
+  };
+  oturumBilgi.set(id, bilgi);
+  // Kayıt kimliği yoksa: PTY açıldıktan sonra dizinde oluşan en yeni jsonl bu oturumun kaydıdır.
+  if (!bilgi.devam) {
+    let deneme = 0;
+    const ara = setInterval(() => {
+      if (!kabuklar.has(id) || deneme++ > 120) { clearInterval(ara); return; }
+      const dosya = sohbet.oturumDosyasiBul({ dizin, baslangicMs: bilgi.baslangic });
+      if (!dosya) return;
+      bilgi.devam = path.basename(dosya, '.jsonl');
+      clearInterval(ara);
+      if (remoteSunucu) remoteSunucu.oturumListesiGuncelle();
+    }, 1500);
+    if (ara.unref) ara.unref();
+  }
   bu.onData((veri) => {
     if (pencere && !pencere.isDestroyed()) pencere.webContents.send('pty:veri', id, veri);
     if (remoteSunucu) remoteSunucu.ptyCiktiEkle(id, veri);
@@ -171,7 +196,6 @@ async function oturumBaslat({ modelId, dizin, cols, rows, devam }) {
   bu.onExit(({ exitCode }) => {
     if (pencere && !pencere.isDestroyed()) pencere.webContents.send('pty:cikis', id, { kod: exitCode });
     kabuklar.delete(id);
-  if (remoteSunucu) remoteSunucu.oturumKapandi(id, 0);
     if (remoteSunucu) remoteSunucu.oturumKapandi(id, exitCode);
   });
 
@@ -180,7 +204,21 @@ async function oturumBaslat({ modelId, dizin, cols, rows, devam }) {
     remoteSunucu.oturumListesiGuncelle();
   }
   ayarYaz({ sonModel: model.id, sonKlasorler: [dizin, ...(ayarOku().sonKlasorler || []).filter((x) => x !== dizin)].slice(0, 8) });
-  return { id, model: model.id, dizin };
+  return { id, model: model.id, modelAd: model.ad || model.id, dizin, proje: bilgi.proje, devam: bilgi.devam };
+}
+
+// Kumanda listesi için proje listesi: son kullanılan klasörler (var olanlar), git dalıyla.
+function kumandaProjeleri() {
+  const p = motor;
+  const sonlar = Array.isArray(ayarOku().sonKlasorler) ? ayarOku().sonKlasorler : [];
+  return sonlar
+    .filter((d) => { try { return fs.statSync(d).isDirectory(); } catch { return false; } })
+    .map((d) => ({ yol: d, ad: path.basename(d) || d, dal: p.gitDal(d) }));
+}
+
+function kumandaModelleri() {
+  const liste = modelOnbellek || motor.MODELLER;
+  return liste.map((m) => ({ id: m.id, ad: m.ad || m.id, baglam: m.baglam || '' }));
 }
 
 function kabukKapat(id) {
@@ -261,10 +299,25 @@ function remoteSunucuBaslat() {
     oturumListesiAl: () => {
       const list = [];
       for (const [id] of kabuklar.entries()) {
-        list.push({ id, baslik: `Oturum #${id}` });
+        const b = oturumBilgi.get(id) || {};
+        list.push({
+          id,
+          baslik: b.proje ? `${b.proje} · oturum #${id}` : `Oturum #${id}`,
+          model: b.modelId || '',
+          modelAd: b.modelAd || '',
+          dizin: b.dizin || '',
+          proje: b.proje || '',
+          devam: b.devam || null,
+        });
       }
       return list;
     },
+    oturumBilgisiAl: (id) => oturumBilgi.get(id) || {},
+    oturumSayilariAl: (dizin, devam) => {
+      try { return gecmis.oturumSayilari(dizin, devam); } catch { return null; }
+    },
+    modellerAl: () => kumandaModelleri(),
+    projelerAl: () => kumandaProjeleri(),
     uygulamaDurumuAl: () => yerelDurum(),
     onDurumDegisti: (bilgi) => {
       if (pencere && !pencere.isDestroyed()) {
@@ -354,6 +407,22 @@ ipcMain.handle('klasor-sec', async () => {
 
 ipcMain.handle('baslat', async (_e, secim) => { try { return await oturumBaslat(secim); } catch (e) { return { hata: e.message }; } });
 ipcMain.handle('gecmis', async (_e, dizin) => { try { return gecmis.oturumGecmisi(dizin); } catch { return []; } });
+ipcMain.handle('sohbet-gecmisi', async (_e, id) => {
+  const bilgi = oturumBilgi.get(id);
+  if (!bilgi) return { girisler: [] };
+  const dosya = sohbet.oturumDosyasiBul({
+    dizin: bilgi.dizin,
+    devam: bilgi.devam,
+    baslangicMs: bilgi.baslangic,
+  });
+  if (!dosya) return { girisler: [] };
+  try {
+    const sonuc = sohbet.sonGirisler(dosya, 200);
+    return { girisler: sonuc.girisler || [] };
+  } catch {
+    return { girisler: [] };
+  }
+});
 ipcMain.handle('yaz', (_e, id, veri) => { const k = kabuklar.get(id); if (k) { try { k.write(veri); } catch {} } });
 ipcMain.handle('boyut', (_e, id, { cols, rows }) => {
   const k = kabuklar.get(id);

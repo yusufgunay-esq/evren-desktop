@@ -19,6 +19,7 @@ const S = {
   anahtarVar: true, api: null, pingler: [], yuklendi: false,
   calisiyor: false, basliyor: false, oturumlar: [], aktif: null,
   fs: Math.min(18, Math.max(11, Number(sakla.oku('fs', 13)) || 13)),
+  sohbetAcik: sakla.oku('sohbetAcik', false), sohbetFiltre: 'hepsi',
 };
 
 
@@ -491,7 +492,7 @@ const TEMA = {
   brightBlack: '#4a535d', brightRed: '#ff8a8d', brightGreen: '#6fdcab', brightYellow: '#ffd27e',
   brightBlue: '#9cc4ff', brightMagenta: '#dcb8ff', brightCyan: '#8be0ea', brightWhite: '#ffffff',
 };
-const GENEL_TUS = new Set(['KeyP', 'KeyB', 'KeyT', 'KeyW', 'KeyF']); // Ctrl+Shift+<tuş>: uygulamaya ait
+const GENEL_TUS = new Set(['KeyP', 'KeyB', 'KeyT', 'KeyW', 'KeyF', 'KeyH']); // Ctrl+Shift+<tuş>: uygulamaya ait
 
 async function terminalOlustur(o) {
   try { await document.fonts.load(`${S.fs}px "IBM Plex Mono"`); } catch {}
@@ -585,6 +586,7 @@ function sekmeSec(id) {
   sekmeleriCiz();
   gecmisCiz();
   if (o && o.term) { sigdir(); setTimeout(() => o.term.focus(), 0); }
+  if (S.sohbetAcik) sohbetYukle();
 }
 
 function sekmeGez(yon) {
@@ -708,6 +710,103 @@ function odakToggle(zorla) {
   setTimeout(() => { sigdir(); Grafik.olc(); }, 240);
 }
 
+// ---------- konuşma / sohbet geçmişi paneli ----------
+let sohbetYukleniyor = false;
+
+function sohbetToggle(zorla) {
+  const panel = $('sohbetPanel');
+  if (!panel) return;
+  const acik = typeof zorla === 'boolean' ? zorla : panel.hidden;
+  panel.hidden = !acik;
+  S.sohbetAcik = acik;
+  sakla.yaz('sohbetAcik', acik);
+  if ($('sohbetBtn')) $('sohbetBtn').classList.toggle('aktif', acik);
+  if (acik) sohbetYukle(true);
+  setTimeout(() => sigdir(), 80);
+}
+
+async function sohbetYukle(zorla = false) {
+  const panel = $('sohbetPanel');
+  if (!panel || panel.hidden) return;
+  const o = aktifOturum();
+  if (!o || !o.pid) {
+    $('sohbetListe').innerHTML = '<div class="sohbet-bos">Aktif bir oturum yok</div>';
+    $('sohbetSayac').textContent = '0';
+    return;
+  }
+  if (sohbetYukleniyor && !zorla) return;
+  sohbetYukleniyor = true;
+  try {
+    const res = await window.evren.sohbetGecmisi(o.pid);
+    const girisler = (res && res.girisler) || [];
+    o.sohbetGirisler = girisler;
+    sohbetCiz(girisler);
+  } catch (e) {
+    console.error('Sohbet geçmişi okunamadı:', e);
+  } finally {
+    sohbetYukleniyor = false;
+  }
+}
+
+function sohbetCiz(girisler) {
+  const filtre = S.sohbetFiltre || 'hepsi';
+  const filtrelenmis = (girisler || []).filter((g) => {
+    if (filtre === 'mesajlar') return g.rol === 'kullanici' || g.rol === 'asistan';
+    if (filtre === 'arac') return g.rol === 'arac';
+    return true;
+  });
+
+  if ($('sohbetSayac')) $('sohbetSayac').textContent = filtrelenmis.length;
+
+  const liste = $('sohbetListe');
+  if (!liste) return;
+  if (!filtrelenmis.length) {
+    liste.innerHTML = '<div class="sohbet-bos">Bu filtrede kayıt bulunamadı</div>';
+    return;
+  }
+
+  const zamanMetni = (ms) => {
+    if (!ms) return '';
+    const d = new Date(ms);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  };
+
+  const rolEtiketleri = {
+    kullanici: 'Kullanıcı',
+    asistan: 'Asistan',
+    arac: 'Araç',
+  };
+
+  const enAlttaMi = (liste.scrollHeight - liste.scrollTop - liste.clientHeight) < 60;
+
+  liste.innerHTML = filtrelenmis.map((g, idx) => {
+    const rol = g.rol || 'asistan';
+    const zaman = zamanMetni(g.ms);
+    const aracAd = (g.arac && g.arac.ad) ? esc(g.arac.ad) : '';
+    const icerik = esc(g.metin || '');
+    return `
+      <div class="sohbet-kart ${rol}" data-idx="${idx}">
+        <div class="sohbet-kart-ust">
+          <div class="sohbet-rol-grup">
+            <span class="sohbet-rol">${rolEtiketleri[rol] || rol}</span>
+            ${aracAd ? `<span class="mono" style="opacity:0.75">· ${aracAd}</span>` : ''}
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;">
+            ${zaman ? `<span class="sohbet-zaman">${zaman}</span>` : ''}
+            <button class="sohbet-kopyala" type="button" title="Metni kopyala">kopyala</button>
+          </div>
+        </div>
+        <div class="sohbet-icerik">${icerik}</div>
+      </div>
+    `;
+  }).join('');
+
+  if (enAlttaMi || !liste.dataset.kaydirildi) {
+    liste.scrollTop = liste.scrollHeight;
+    liste.dataset.kaydirildi = '1';
+  }
+}
+
 // ---------- komut paleti ----------
 const P = { ogeler: [], gorunen: [], aktif: 0 };
 
@@ -720,6 +819,7 @@ function paletOgeleri() {
     ...(ao ? [{ ad: 'Sekmeyi kapat', ic: 'clear', alt: 'Ctrl ⇧ W', yap: () => sekmeKapat(ao.id) }] : []),
     { ad: 'Ana ekran', ic: 'term', alt: 'Ctrl ⇧ T', yap: () => sekmeSec(null) },
     { ad: 'Odak modu', ic: 'odak', alt: 'Ctrl ⇧ F', yap: () => odakToggle() },
+    { ad: 'Konuşma geçmişi', ic: 'chat', alt: 'Ctrl ⇧ H', yap: () => sohbetToggle() },
     { ad: 'Klasör ekle', ic: 'folder', yap: klasorEkle },
     { ad: 'Kenar panelini aç / kapat', ic: 'side', alt: 'Ctrl ⇧ B', yap: sideToggle },
     { ad: 'Bağlantıyı yenile', ic: 'refresh', yap: apiYenile },
@@ -1146,6 +1246,7 @@ window.addEventListener('keydown', (e) => {
   if (e.ctrlKey && e.shiftKey && e.code === 'KeyP') { e.preventDefault(); $('palet').hidden ? paletAc() : paletKapat(); return; }
   if (e.ctrlKey && e.shiftKey && e.code === 'KeyB') { e.preventDefault(); sideToggle(); return; }
   if (e.ctrlKey && e.shiftKey && e.code === 'KeyF') { e.preventDefault(); odakToggle(); return; }
+  if (e.ctrlKey && e.shiftKey && e.code === 'KeyH') { e.preventDefault(); sohbetToggle(); return; }
   if (e.ctrlKey && e.shiftKey && e.code === 'KeyT') { e.preventDefault(); sekmeSec(null); return; }
   if (e.ctrlKey && e.shiftKey && e.code === 'KeyW') { e.preventDefault(); if (S.aktif != null) sekmeKapat(S.aktif); return; }
   if (e.ctrlKey && e.code === 'Tab') { e.preventDefault(); sekmeGez(e.shiftKey ? -1 : 1); return; }
@@ -1238,6 +1339,47 @@ if ($('kumandaModal')) {
 
 if (window.evren && window.evren.remoteDinle) {
   window.evren.remoteDinle((bilgi) => kumandaDurumGuncelle(bilgi));
+}
+
+// Sohbet paneli olay dinleyicileri
+if ($('sohbetBtn')) $('sohbetBtn').addEventListener('click', () => sohbetToggle());
+if ($('sohbetKapatBtn')) $('sohbetKapatBtn').addEventListener('click', () => sohbetToggle(false));
+if ($('sohbetYenileBtn')) $('sohbetYenileBtn').addEventListener('click', () => sohbetYukle(true));
+
+if ($('sohbetPanel')) {
+  $('sohbetPanel').addEventListener('click', (e) => {
+    const f = e.target.closest('.sohbet-filtre');
+    if (f) {
+      for (const b of $('sohbetPanel').querySelectorAll('.sohbet-filtre')) b.classList.remove('aktif');
+      f.classList.add('aktif');
+      S.sohbetFiltre = f.dataset.filtre;
+      const o = aktifOturum();
+      if (o && o.sohbetGirisler) sohbetCiz(o.sohbetGirisler);
+      return;
+    }
+    const k = e.target.closest('.sohbet-kopyala');
+    if (k) {
+      const kart = k.closest('.sohbet-kart');
+      const icerik = kart ? kart.querySelector('.sohbet-icerik').textContent : '';
+      if (icerik) {
+        navigator.clipboard.writeText(icerik);
+        const eski = k.textContent;
+        k.textContent = 'kopyalandı';
+        setTimeout(() => { k.textContent = eski; }, 1200);
+      }
+    }
+  });
+}
+
+// Canlı güncelleme: Sohbet paneli açıksa ve oturum seçiliyse 3 saniyede bir güncelle
+setInterval(() => {
+  if (S.sohbetAcik && S.aktif != null) {
+    sohbetYukle();
+  }
+}, 3000);
+
+if (S.sohbetAcik) {
+  setTimeout(() => sohbetToggle(true), 200);
 }
 
 $('fsMetin').textContent = S.fs;

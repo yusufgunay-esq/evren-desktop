@@ -1,0 +1,235 @@
+// أَعُوذُ بِاللَّهِ مِنَ الشَّيْطَانِ الرَّجِيمِ
+// بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
+/* This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
+ * If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ * Copyright (c) 2026 Yusuf Günay. */
+// Claude Code oturum kayıtlarını (~/.claude/projects/<dizin>/<kimlik>.jsonl) okunabilir sohbete çevirir.
+// İlk abonelikte son 50 giriş dosyanın SONUNDAN geriye okunur; sonrası artımlıdır (dosya baştan okunmaz).
+'use strict';
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { StringDecoder } = require('node:string_decoder');
+
+const OTURUM_KIMLIK = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const OZET_SINIRI = 200;
+const ILK_ADET = 50;
+
+// Dizin adı Claude Code'un kodlamasıyla aynı: harf/rakam dışı karakterler tireye döner.
+function projeKlasoru(dizin, kokDizin) {
+  const kok = kokDizin || path.join(os.homedir(), '.claude', 'projects');
+  return path.join(kok, String(dizin || '').replace(/[^a-zA-Z0-9]/g, '-'));
+}
+
+function dosyaYolu(dizin, kimlik, kokDizin) {
+  return path.join(projeKlasoru(dizin, kokDizin), kimlik + '.jsonl');
+}
+
+/**
+ * Oturumun Claude kayıt dosyasını bulur.
+ * `devam` varsa doğrudan o kimliğin dosyası; yoksa oturum başladıktan sonra dizinde
+ * oluşan en yeni jsonl dosyası (PTY açıldıktan hemen sonra dosya henüz olmayabilir).
+ */
+function oturumDosyasiBul({ dizin, devam, baslangicMs, kokDizin }) {
+  if (!dizin) return null;
+  if (devam && OTURUM_KIMLIK.test(String(devam))) {
+    const tam = dosyaYolu(dizin, String(devam), kokDizin);
+    try { if (fs.statSync(tam).isFile()) return tam; } catch { return null; }
+  }
+  const klasor = projeKlasoru(dizin, kokDizin);
+  let adlar;
+  try { adlar = fs.readdirSync(klasor); } catch { return null; }
+  const esik = (Number(baslangicMs) || 0) - 2000; // saat kayması payı
+  let enIyi = null;
+  for (const ad of adlar) {
+    if (!ad.endsWith('.jsonl')) continue;
+    const kimlik = ad.slice(0, -6);
+    if (!OTURUM_KIMLIK.test(kimlik)) continue;
+    const tam = path.join(klasor, ad);
+    let s;
+    try { s = fs.statSync(tam); } catch { continue; }
+    if (!s.isFile() || s.size <= 0) continue;
+    const dogum = Math.min(s.birthtimeMs || s.ctimeMs || 0, s.mtimeMs || 0);
+    if (esik > 0 && Math.max(s.ctimeMs || 0, s.mtimeMs || 0) < esik) continue;
+    if (!enIyi || dogum > enIyi.dogum) enIyi = { yol: tam, kimlik, dogum };
+  }
+  return enIyi ? enIyi.yol : null;
+}
+
+function metinParcasi(icerik) {
+  if (typeof icerik === 'string') return icerik;
+  if (Array.isArray(icerik)) {
+    return icerik.filter((x) => x && x.type === 'text').map((x) => x.text).join(' ');
+  }
+  return '';
+}
+
+// Araç girdisi/çıktısından tek satırlık, en çok 200 karakterlik özet.
+function ozetle(deger) {
+  let metin = '';
+  if (typeof deger === 'string') metin = deger;
+  else if (Array.isArray(deger)) metin = metinParcasi(deger) || deger.map((x) => (x && x.type === 'tool_result' ? metinParcasi(x.content) : '')).join(' ');
+  else if (deger && typeof deger === 'object') {
+    const adaylar = ['command', 'description', 'file_path', 'pattern', 'query', 'prompt', 'path', 'url', 'content'];
+    const secili = adaylar.map((k) => deger[k]).find((x) => typeof x === 'string' && x.trim());
+    metin = typeof secili === 'string' ? secili : JSON.stringify(deger);
+  }
+  metin = String(metin || '').replace(/\s+/g, ' ').trim();
+  return metin.length > OZET_SINIRI ? metin.slice(0, OZET_SINIRI - 1) + '…' : metin;
+}
+
+function zamanMs(j) {
+  const t = Date.parse(j && j.timestamp);
+  return Number.isFinite(t) ? t : 0;
+}
+
+/**
+ * Bir jsonl kaydını sohbet girişlerine çevirir.
+ * Dönen her giriş: { rol: 'kullanici'|'asistan'|'arac', metin, arac?: { ad, ozet }, ms }.
+ */
+function girisleriCoz(j, aracAdlari) {
+  const girisler = [];
+  if (!j || typeof j !== 'object' || j.isMeta === true || j.isSidechain === true) return girisler;
+  const ms = zamanMs(j);
+  const mesaj = j.message;
+  if (!mesaj) return girisler;
+
+  if (j.type === 'user') {
+    const icerik = mesaj.content;
+    if (typeof icerik === 'string') {
+      const metin = icerik.trim();
+      if (metin && !metin.startsWith('Caveat:') && !metin.startsWith('[Request interrupted')) {
+        girisler.push({ rol: 'kullanici', metin, ms });
+      }
+      return girisler;
+    }
+    if (!Array.isArray(icerik)) return girisler;
+    for (const blok of icerik) {
+      if (!blok) continue;
+      if (blok.type === 'text') {
+        const metin = String(blok.text || '').trim();
+        if (metin) girisler.push({ rol: 'kullanici', metin, ms });
+      } else if (blok.type === 'tool_result') {
+        const ad = (aracAdlari && aracAdlari.get(blok.tool_use_id)) || 'Araç sonucu';
+        const ozet = ozetle(blok.content);
+        girisler.push({ rol: 'arac', metin: ozet, arac: { ad, ozet }, ms });
+      }
+    }
+    return girisler;
+  }
+
+  if (j.type === 'assistant') {
+    if (typeof mesaj.model === 'string' && mesaj.model === '<synthetic>') return girisler;
+    const icerik = mesaj.content;
+    const bloklar = Array.isArray(icerik) ? icerik : [{ type: 'text', text: String(icerik || '') }];
+    for (const blok of bloklar) {
+      if (!blok) continue;
+      if (blok.type === 'text') {
+        const metin = String(blok.text || '').trim();
+        if (metin) girisler.push({ rol: 'asistan', metin, ms });
+      } else if (blok.type === 'tool_use') {
+        const ad = String(blok.name || 'Araç');
+        if (aracAdlari && blok.id) aracAdlari.set(blok.id, ad);
+        const ozet = ozetle(blok.input);
+        girisler.push({ rol: 'arac', metin: ozet, arac: { ad, ozet }, ms });
+      }
+    }
+  }
+  return girisler;
+}
+
+// Dosyanın sonundan geriye doğru okuyup son [adet] girişi döndürür (dosya baştan okunmaz).
+function sonGirisler(dosya, adet = ILK_ADET) {
+  let boyut, fd;
+  try { boyut = fs.statSync(dosya).size; fd = fs.openSync(dosya, 'r'); } catch { return { girisler: [], konum: 0 }; }
+  try {
+    const parcalar = [];
+    let konum = boyut, satirSayisi = 0, toplam = 0;
+    const SINIR = 16 * 1024 * 1024;
+    while (konum > 0 && satirSayisi < adet * 3 && toplam < SINIR) {
+      const n = Math.min(256 * 1024, konum);
+      konum -= n;
+      const t = Buffer.alloc(n);
+      fs.readSync(fd, t, 0, n, konum);
+      parcalar.unshift(t);
+      toplam += n;
+      for (let i = 0; i < n; i++) if (t[i] === 0x0a) satirSayisi++;
+    }
+    const ham = Buffer.concat(parcalar).toString('utf8');
+    const satirlar = ham.split('\n');
+    if (konum > 0) satirlar.shift(); // baştaki yarım satır atılır
+    const aracAdlari = new Map();
+    const tumu = [];
+    for (const satir of satirlar) {
+      if (!satir.trim()) continue;
+      let j; try { j = JSON.parse(satir); } catch { continue; }
+      tumu.push(...girisleriCoz(j, aracAdlari));
+    }
+    return { girisler: tumu.slice(-adet), konum: boyut };
+  } finally { try { fs.closeSync(fd); } catch {} }
+}
+
+/**
+ * Artımlı okuyucu: bir dosya konumundan sonuna kadar yalnız yeni tam satırları okur.
+ * UTF-8 çok baytlı karakter bölünmesi StringDecoder ile korunur.
+ */
+class ArtimliOkuyucu {
+  constructor() {
+    this.konum = 0;
+    this.kalan = '';
+    this.kod = new StringDecoder('utf8');
+    this.aracAdlari = new Map();
+  }
+
+  konumAyarla(konum) {
+    this.konum = Number(konum) || 0;
+    this.kalan = '';
+    this.kod = new StringDecoder('utf8');
+    this.aracAdlari = new Map();
+  }
+
+  // Dosyanın sonuna kadar okur; yeni sohbet girişlerini döndürür.
+  oku(dosya) {
+    let boyut;
+    try { boyut = fs.statSync(dosya).size; } catch { return []; }
+    if (boyut < this.konum) this.konumAyarla(0); // dosya kısaldı/yeniden yazıldı
+    if (boyut === this.konum) return [];
+    const n = boyut - this.konum;
+    const t = Buffer.alloc(n);
+    let fd;
+    try {
+      fd = fs.openSync(dosya, 'r');
+      fs.readSync(fd, t, 0, n, this.konum);
+    } catch { return []; } finally { if (fd != null) try { fs.closeSync(fd); } catch {} }
+    this.konum = boyut;
+    const metin = this.kalan + this.kod.write(t);
+    const satirlar = metin.split('\n');
+    this.kalan = satirlar.pop(); // yarım satır sonraki okumada tamamlanır
+    const girisler = [];
+    for (const satir of satirlar) {
+      if (!satir.trim()) continue;
+      let j; try { j = JSON.parse(satir); } catch { continue; }
+      girisler.push(...girisleriCoz(j, this.aracAdlari));
+    }
+    return girisler;
+  }
+
+  // İlk abonelik: son girişler + o konumdan devam.
+  sifirla(dosya, adet = ILK_ADET) {
+    const { girisler, konum } = sonGirisler(dosya, adet);
+    this.konumAyarla(konum);
+    return girisler;
+  }
+}
+
+module.exports = {
+  projeKlasoru,
+  dosyaYolu,
+  oturumDosyasiBul,
+  girisleriCoz,
+  sonGirisler,
+  ArtimliOkuyucu,
+  ozetle,
+  ILK_ADET,
+  OTURUM_KIMLIK,
+};

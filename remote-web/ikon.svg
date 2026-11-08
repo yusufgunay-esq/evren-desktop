@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" fill="none">
+  <defs>
+    <radialGradient id="zemin" cx="54" cy="48" r="76" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#18202c"/>
+      <stop offset="100%" stop-color="#06080b"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="65" cy="40" r="24" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#E30A17" stop-opacity="0.38"/>
+      <stop offset="100%" stop-color="#E30A17" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="hilal" x1="12" y1="3" x2="16" y2="21" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#CBD2D9"/>
+    </linearGradient>
+    <linearGradient id="yildiz" x1="18" y1="3" x2="16" y2="9.5" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FF3346"/>
+      <stop offset="100%" stop-color="#BA0815"/>
+    </linearGradient>
+  </defs>
+  <rect width="108" height="108" rx="24" fill="url(#zemin)"/>
+  <circle cx="54" cy="54" r="34" stroke="#FFFFFF" stroke-width="0.75" stroke-opacity="0.08"/>
+  <circle cx="65" cy="42" r="22" fill="url(#glow)"/>
+  <g transform="translate(42, 43.5) scale(2.7) translate(-12, -12)">
+    <path d="M19.88 11.57A9 9 0 1 1 12.43 4.12A7.65 7.65 0 1 0 19.88 11.57Z" fill="#000000" fill-opacity="0.4"/>
+    <path d="M15.4 8.6L16.52 6.4L14.77 4.66L17.21 5.04L18.33 2.84L18.72 5.28L21.16 5.67L18.96 6.79L19.34 9.23L17.6 7.48Z" fill="#000000" fill-opacity="0.4"/>
+  </g>
+  <g transform="translate(42, 42) scale(2.7) translate(-12, -12)">
+    <path d="M19.88 11.57A9 9 0 1 1 12.43 4.12A7.65 7.65 0 1 0 19.88 11.57Z" fill="url(#hilal)"/>
+    <path d="M15.4 8.6L16.52 6.4L14.77 4.66L17.21 5.04L18.33 2.84L18.72 5.28L21.16 5.67L18.96 6.79L19.34 9.23L17.6 7.48Z" fill="url(#yildiz)"/>
+  </g>
+</svg>

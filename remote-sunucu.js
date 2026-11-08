@@ -13,9 +13,26 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 const { WebSocketServer, WebSocket } = require('ws');
 const QRCode = require('qrcode');
+const sohbet = require('./sohbet');
 
 const VARSAYILAN_PORT = 4141;
 const TAMPON_LIMIT = 64 * 1024; // Oturum başına son 64 KB terminal çıktısı
+const CALISMA_ESIGI_MS = 4 * 1000; // son veri bu kadar yeniyse "çalışıyor"
+
+// ANSI kaçışları ve \r temizlenir; son boş olmayan satır 160 karaktere kısaltılır.
+function satirTemizle(veri) {
+  if (typeof veri !== 'string' || !veri) return '';
+  const duz = veri
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1b[@-_]/g, '');
+  let son = '';
+  for (const parca of duz.split(/[\r\n]+/)) {
+    const temiz = parca.trim();
+    if (temiz) son = temiz;
+  }
+  return son.slice(0, 160);
+}
 const KUMANDA_ADI = 'kumanda.json'; // token, port ve seçili IP burada kalıcı tutulur
 const SANAL_DESEN = /vethernet|virtualbox|virtual box|vmware|hyper-?v|wsl|bluetooth|loopback|docker|zerotier|tailscale|hamachi|npcap|openvpn|wireguard|tap-|tun\d/i;
 
@@ -41,6 +58,13 @@ class RemoteSunucu {
     this.istemciler = new Set();
     this.oturumTamponlari = new Map(); // id -> string
     this.aktifOturumId = null;
+    this.sonSatirlar = new Map();        // id -> okunabilir son çıktı satırı
+    this.sonVeriZamani = new Map();      // id -> son pty verisi zamanı
+    this.bekleyenOnaylar = new Map();    // id -> { baslik, soru, metin, secenekler } (bağlantıdan bağımsız)
+    this.kapaliOturumlar = new Set();    // id -> kapandı
+    this.sohbetAboneleri = new Map();    // oturum id -> Set<ws>
+    this.sohbetIzleyiciler = new Map();  // oturum id -> izleyici kaydı
+    this.claudeKoku = opsiyonlar.claudeKoku || null; // test: ~/.claude/projects yerine
 
     // Masaüstü geri çağrımları (callbacks)
     this.onPtyYaz = opsiyonlar.onPtyYaz || (() => {});
@@ -49,6 +73,10 @@ class RemoteSunucu {
     this.onDurumDegisti = opsiyonlar.onDurumDegisti || (() => {});
     this.oturumListesiAl = opsiyonlar.oturumListesiAl || (() => []);
     this.uygulamaDurumuAl = opsiyonlar.uygulamaDurumuAl || (() => ({}));
+    this.modellerAl = opsiyonlar.modellerAl || (() => []);
+    this.projelerAl = opsiyonlar.projelerAl || (() => []);
+    this.oturumBilgisiAl = opsiyonlar.oturumBilgisiAl || (() => ({}));
+    this.oturumSayilariAl = opsiyonlar.oturumSayilariAl || (() => null);
   }
 
   // Telefonun erişebileceği gerçek ağ adresleri: sanal adaptörler (Hyper-V, VirtualBox, VMware, WSL,
@@ -195,7 +223,7 @@ class RemoteSunucu {
         if (err.code === 'EADDRINUSE') {
           // Port doluysa bir sonrakini dene
           this.port++;
-          this.httpServer.close();
+          try { this.httpServer.close(); } catch {}
           this.httpServer = null;
           this.baslat().then(resolve).catch(reject);
         } else {
@@ -207,12 +235,21 @@ class RemoteSunucu {
         this.wss = new WebSocketServer({ server: this.httpServer });
         this.wss.on('connection', (ws, req) => this.wsBaglantiKarsila(ws, req));
         this.kumandaYaz(); // çalışan portu kalıcılaştır
+        this.adbTersYonlendir(); // USB kablo ile bağlı Android cihaz varsa portu otomatik eşle
         resolve(this.bilgi());
       });
     });
   }
 
+  adbTersYonlendir() {
+    try {
+      const { execFile } = require('node:child_process');
+      execFile('adb', ['reverse', `tcp:${this.port}`, `tcp:${this.port}`], () => {});
+    } catch {}
+  }
+
   durdur() {
+    for (const id of [...this.sohbetIzleyiciler.keys()]) this.sohbetIzlemeyiDurdur(id);
     for (const ws of this.istemciler) {
       try { ws.close(); } catch {}
     }
@@ -253,7 +290,7 @@ class RemoteSunucu {
       res.end(JSON.stringify({
         ok: true,
         bilgi: this.bilgi(),
-        oturumlar: this.oturumListesiAl(),
+        oturumlar: this.oturumListesiHazirla(),
         durum: this.uygulamaDurumuAl()
       }));
       return;
@@ -310,12 +347,21 @@ class RemoteSunucu {
     this.istemciler.add(ws);
     this.onDurumDegisti(this.bilgi());
 
-    // İlk durum paketini gönder
+    // İlk durum paketi: oturumlar, model/proje listeleri ve cevaplanmamış onaylar.
     const ilkPaket = {
       tip: 'baslangic',
       aktifId: this.aktifOturumId,
-      oturumlar: this.oturumListesiAl(),
-      tampon: this.aktifOturumId ? (this.oturumTamponlari.get(this.aktifOturumId) || '') : ''
+      oturumlar: this.oturumListesiHazirla(),
+      tampon: this.aktifOturumId ? (this.oturumTamponlari.get(this.aktifOturumId) || '') : '',
+      modeller: this.modellerAl() || [],
+      projeler: this.projelerAl() || [],
+      onaylar: [...this.bekleyenOnaylar.entries()].map(([id, onay]) => ({
+        id,
+        baslik: onay.baslik || 'Onay İsteği',
+        soru: onay.soru || '',
+        metin: onay.metin || '',
+        secenekler: onay.secenekler || [],
+      })),
     };
     this.wsGonder(ws, ilkPaket);
 
@@ -330,11 +376,13 @@ class RemoteSunucu {
 
     ws.on('close', () => {
       this.istemciler.delete(ws);
+      this.sohbetAbonelikBirak(ws);
       this.onDurumDegisti(this.bilgi());
     });
 
     ws.on('error', () => {
       this.istemciler.delete(ws);
+      this.sohbetAbonelikBirak(ws);
       this.onDurumDegisti(this.bilgi());
     });
   }
@@ -349,6 +397,7 @@ class RemoteSunucu {
 
       case 'yaz':
         if (mesaj.id && typeof mesaj.veri === 'string') {
+          this.onayCevabiTemizle(mesaj.id);
           this.onPtyYaz(mesaj.id, mesaj.veri);
         }
         break;
@@ -360,20 +409,28 @@ class RemoteSunucu {
                       mesaj.secim === 'h' || mesaj.secim === 'n' ? 'n\r' :
                       mesaj.secim === '1' ? '1\r' :
                       mesaj.secim === '2' ? '2\r' : '\r';
+          this.onayCevabiTemizle(mesaj.id);
           this.onPtyYaz(mesaj.id, tus);
         }
         break;
 
       case 'komut':
         if (mesaj.id && typeof mesaj.komut === 'string') {
+          this.onayCevabiTemizle(mesaj.id);
           this.onPtyYaz(mesaj.id, mesaj.komut + '\r');
         }
         break;
 
       case 'durdur':
         if (mesaj.id) {
+          this.onayCevabiTemizle(mesaj.id);
           this.onPtyYaz(mesaj.id, '\x03'); // Ctrl+C
         }
+        break;
+
+      // Telefon gerçek sohbete abone olur: ilk abonelikte son 50 giriş, sonrası artımlı.
+      case 'sohbet_iste':
+        if (mesaj.id) this.sohbetAbone(ws, mesaj.id);
         break;
 
       case 'oturum_sec':
@@ -417,8 +474,21 @@ class RemoteSunucu {
     }
     this.oturumTamponlari.set(id, mevcut);
 
+    // Okunabilir son satır (ANSI temizlenmiş) ve etkinlik zamanı.
+    const satir = satirTemizle(veri);
+    if (satir) this.sonSatirlar.set(id, satir);
+    this.sonVeriZamani.set(id, Date.now());
+
     // Onay bekleyen durumları filtrele ve tespit et
     const onayIstegi = this.onayTespitiYap(veri);
+    if (onayIstegi) {
+      this.bekleyenOnaylar.set(id, {
+        baslik: onayIstegi.baslik,
+        soru: onayIstegi.soru,
+        metin: onayIstegi.metin,
+        secenekler: onayIstegi.secenekler,
+      });
+    }
 
     // Bağlı tüm istemcilere yayınla
     const paket = {
@@ -428,6 +498,7 @@ class RemoteSunucu {
       onayIstegi
     };
     this.tumuneYayinla(paket);
+    if (onayIstegi) this.oturumListesiGuncelle();
   }
 
   onayTespitiYap(veri) {
@@ -438,10 +509,10 @@ class RemoteSunucu {
     const temiz = veri.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
 
     const kalıplar = [
-      { regex: /(?:allow\s+once|always\s+allow|deny)/i, baslik: 'İşlem İzni', soru: 'Araç çalıştırma izni gerekiyor' },
-      { regex: /\[y\/n\]|\(y\/n\)|\[Y\/n\]|\[y\/N\]/i, baslik: 'Onay İsteği', soru: 'Devam etmek istiyor musunuz?' },
-      { regex: /Do you want to (?:proceed|continue|execute|run)/i, baslik: 'Çalıştırma Onayı', soru: 'Komut çalıştırılsın mı?' },
-      { regex: /Press enter to continue/i, baslik: 'Devam', soru: 'Devam etmek için dokunun' }
+      { regex: /(?:allow\s+once|always\s+allow|deny)/i, baslik: 'İşlem İzni', soru: 'Araç çalıştırma izni gerekiyor', secenekler: ['Onayla', 'Reddet'] },
+      { regex: /\[y\/n\]|\(y\/n\)|\[Y\/n\]|\[y\/N\]/i, baslik: 'Onay İsteği', soru: 'Devam etmek istiyor musunuz?', secenekler: ['Evet', 'Hayır'] },
+      { regex: /Do you want to (?:proceed|continue|execute|run)/i, baslik: 'Çalıştırma Onayı', soru: 'Komut çalıştırılsın mı?', secenekler: ['Evet', 'Hayır'] },
+      { regex: /Press enter to continue/i, baslik: 'Devam', soru: 'Devam etmek için dokunun', secenekler: ['Devam'] }
     ];
 
     for (const k of kalıplar) {
@@ -450,24 +521,68 @@ class RemoteSunucu {
           tespit: true,
           baslik: k.baslik,
           soru: k.soru,
-          metin: temiz.trim().slice(-140)
+          metin: temiz.trim().slice(-140),
+          secenekler: k.secenekler
         };
       }
     }
     return null;
   }
 
+  // Kullanıcı onayı başka yoldan da yanıtlamış olabilir; bekleyen onay her cevapta düşer.
+  onayCevabiTemizle(id) {
+    if (!this.bekleyenOnaylar.has(id)) return;
+    this.bekleyenOnaylar.delete(id);
+    this.oturumListesiGuncelle();
+  }
+
+  // Oturumun anlık durumu: kapandı > onay bekliyor > son 4 sn içinde veri varsa çalışıyor > boşta.
+  durumHesapla(id) {
+    if (this.kapaliOturumlar.has(id)) return 'kapandi';
+    if (this.bekleyenOnaylar.has(id)) return 'onay_bekliyor';
+    const son = this.sonVeriZamani.get(id) || 0;
+    return Date.now() - son < CALISMA_ESIGI_MS ? 'calisiyor' : 'bosta';
+  }
+
+  /** Listeyi masaüstünün verdiği temel alanlar + kumandanın gördüğü canlı durumla birleştirir. */
+  oturumListesiHazirla() {
+    const temel = this.oturumListesiAl() || [];
+    return temel.map((o) => {
+      const bilgi = this.oturumBilgisiAl(o.id) || {};
+      const onay = this.bekleyenOnaylar.get(o.id) || null;
+      const sayilar = this.oturumSayilariAl(bilgi.dizin, bilgi.devam) || {};
+      const alt = sayilar.altAjanlar || { calisan: 0, toplam: 0 };
+      const evren = sayilar.evrenIsleri || { calisan: 0, toplam: 0 };
+      return {
+        id: o.id,
+        baslik: o.baslik || bilgi.proje || `Oturum #${o.id}`,
+        model: bilgi.modelId || o.model || '',
+        modelAd: bilgi.modelAd || '',
+        dizin: bilgi.dizin || '',
+        proje: bilgi.proje || '',
+        durum: this.durumHesapla(o.id),
+        sonSatir: this.sonSatirlar.get(o.id) || '',
+        onay: onay ? { metin: onay.metin || onay.soru || '', secenekler: onay.secenekler || [] } : null,
+        devam: bilgi.devam || null,
+        altAjanlar: { calisan: alt.calisan || 0, toplam: alt.toplam || 0 },
+        evrenIsleri: { calisan: evren.calisan || 0, toplam: evren.toplam || 0 },
+      };
+    });
+  }
+
   oturumListesiGuncelle() {
-    const oturumlar = this.oturumListesiAl();
     this.tumuneYayinla({
       tip: 'oturum_listesi',
-      oturumlar,
+      oturumlar: this.oturumListesiHazirla(),
       aktifId: this.aktifOturumId
     });
   }
 
   oturumKapandi(id, kod) {
     this.oturumTamponlari.delete(id);
+    this.bekleyenOnaylar.delete(id);
+    this.kapaliOturumlar.add(id);
+    this.sohbetIzlemeyiDurdur(id);
     if (this.aktifOturumId === id) {
       this.aktifOturumId = null;
     }
@@ -477,6 +592,99 @@ class RemoteSunucu {
       kod
     });
     this.oturumListesiGuncelle();
+  }
+
+  // ---------- gerçek sohbet: Claude kaydını izle, abone istemcilere yalnız yenileri gönder ----------
+
+  sohbetAbone(ws, id) {
+    let kume = this.sohbetAboneleri.get(id);
+    if (!kume) { kume = new Set(); this.sohbetAboneleri.set(id, kume); }
+    kume.add(ws);
+
+    const izleyici = this.sohbetIzleyicisi(id);
+    if (izleyici.girisler) {
+      // İlk abonelik zaten okundu: aynı geçmiş hemen gönderilir.
+      this.wsGonder(ws, { tip: 'sohbet', id, girisler: izleyici.girisler, ilk: true });
+    } else {
+      if (!izleyici.bekleyenler) izleyici.bekleyenler = new Set();
+      izleyici.bekleyenler.add(ws);
+    }
+    this.sohbetIzlemeyiBaslat(id);
+  }
+
+  sohbetAbonelikBirak(ws) {
+    for (const kume of this.sohbetAboneleri.values()) kume.delete(ws);
+  }
+
+  sohbetIzleyicisi(id) {
+    let iz = this.sohbetIzleyiciler.get(id);
+    if (!iz) {
+      iz = { girisler: null, bekleyenler: null, okuyucu: new sohbet.ArtimliOkuyucu(), dosya: null, zamanlayici: null, izleyici: null, deneme: 0, basladi: false };
+      this.sohbetIzleyiciler.set(id, iz);
+    }
+    return iz;
+  }
+
+  sohbetIzlemeyiBaslat(id) {
+    const iz = this.sohbetIzleyicisi(id);
+    if (iz.basladi) return;
+    iz.basladi = true;
+    const bilgi = this.oturumBilgisiAl(id) || {};
+
+    const tara = () => {
+      if (this.kapaliOturumlar.has(id)) return;
+      if (!iz.dosya) {
+        iz.dosya = sohbet.oturumDosyasiBul({
+          dizin: bilgi.dizin,
+          devam: bilgi.devam,
+          baslangicMs: bilgi.baslangic,
+          kokDizin: this.claudeKoku,
+        });
+        if (!iz.dosya) {
+          // Kayıt dosyası henüz oluşmadı: kısa aralıklarla yeniden denenir.
+          if (iz.deneme++ < 120) iz.zamanlayici = setTimeout(() => { iz.zamanlayici = null; tara(); }, 1000);
+          return;
+        }
+      }
+      // İlk okuma: son 50 giriş (dosyanın sonundan geriye).
+      if (!iz.girisler) {
+        iz.girisler = iz.okuyucu.sifirla(iz.dosya);
+        const bekle = iz.bekleyenler || new Set();
+        iz.bekleyenler = null;
+        for (const ws of bekle) this.wsGonder(ws, { tip: 'sohbet', id, girisler: iz.girisler, ilk: true });
+      }
+      // Artımlı okuma: dosya büyüdükçe yalnız yeni satırlar.
+      const yenileri = () => {
+        const yeni = iz.okuyucu.oku(iz.dosya);
+        if (yeni.length) {
+          iz.girisler = iz.girisler.concat(yeni).slice(-500);
+          this.sohbeteYayinla(id, yeni, false);
+        }
+      };
+      try {
+        iz.izleyici = fs.watch(iz.dosya, { persistent: false }, () => yenileri());
+      } catch { /* fs.watch desteklenmezse aşağıdaki zamanlayıcı yeter */ }
+      iz.zamanlayici = setInterval(yenileri, 1500);
+      if (iz.zamanlayici.unref) iz.zamanlayici.unref();
+    };
+    tara();
+  }
+
+  sohbeteYayinla(id, girisler, ilk) {
+    const kume = this.sohbetAboneleri.get(id);
+    if (!kume || !kume.size || !girisler.length) return;
+    // İlk paket zaten her istemciye tek tek gönderildi; burada yalnız yeni girişler yayınlanır.
+    if (ilk) return;
+    for (const ws of kume) this.wsGonder(ws, { tip: 'sohbet', id, girisler });
+  }
+
+  sohbetIzlemeyiDurdur(id) {
+    const iz = this.sohbetIzleyiciler.get(id);
+    if (!iz) return;
+    if (iz.zamanlayici) clearInterval(iz.zamanlayici);
+    if (iz.izleyici) { try { iz.izleyici.close(); } catch {} }
+    this.sohbetIzleyiciler.delete(id);
+    this.sohbetAboneleri.delete(id);
   }
 
   wsGonder(ws, veri) {

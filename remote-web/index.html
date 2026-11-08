@@ -7,6 +7,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>EVREN Kumanda</title>
   <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/svg+xml" href="ikon.svg">
+  <link rel="apple-touch-icon" href="ikon.svg">
   <meta name="theme-color" content="#07090b">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -17,7 +19,20 @@
     <!-- Üst Başlık ve Bağlantı Çubuğu -->
     <header class="kumanda-ust">
       <div class="logo-alan">
-        <span class="logo-isaret"></span>
+        <svg class="logo-isaret" viewBox="0 0 24 24" fill="none" width="22" height="22" aria-hidden="true">
+          <defs>
+            <linearGradient id="navHilal" x1="12" y1="3" x2="16" y2="21" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stop-color="#FFFFFF"/>
+              <stop offset="100%" stop-color="#CBD2D9"/>
+            </linearGradient>
+            <linearGradient id="navYildiz" x1="18" y1="3" x2="16" y2="9.5" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stop-color="#FF3346"/>
+              <stop offset="100%" stop-color="#BA0815"/>
+            </linearGradient>
+          </defs>
+          <path d="M19.88 11.57A9 9 0 1 1 12.43 4.12A7.65 7.65 0 1 0 19.88 11.57Z" fill="url(#navHilal)"/>
+          <path d="M15.4 8.6L16.52 6.4L14.77 4.66L17.21 5.04L18.33 2.84L18.72 5.28L21.16 5.67L18.96 6.79L19.34 9.23L17.6 7.48Z" fill="url(#navYildiz)"/>
+        </svg>
         <span class="logo-metin">EVREN</span>
         <span class="logo-alt">Kumanda</span>
       </div>

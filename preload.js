@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('evren', {
   klasorSec: () => ipcRenderer.invoke('klasor-sec'),
   baslat: (secim) => ipcRenderer.invoke('baslat', secim),
   gecmis: (dizin) => ipcRenderer.invoke('gecmis', dizin),
+  sohbetGecmisi: (id) => ipcRenderer.invoke('sohbet-gecmisi', id),
   yaz: (id, veri) => ipcRenderer.invoke('yaz', id, veri),
   boyut: (id, olcu) => ipcRenderer.invoke('boyut', id, olcu),
   kapatOturum: (id) => ipcRenderer.invoke('kapat-oturum', id),

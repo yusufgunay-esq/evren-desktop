@@ -176,44 +176,96 @@
     mesajGonder({ tip: 'oturum_sec', id });
   }
 
-  function terminaliGuncelle(metin, temizle = false) {
-    if (temizle) {
-      terminalMetin.innerHTML = '';
-    }
-    if (!metin) {
-      terminalMetin.appendChild(bosDurum);
-      return;
-    }
-    if (bosDurum.parentNode === terminalMetin) {
-      terminalMetin.removeChild(bosDurum);
-    }
-    terminaleEkle(metin);
-  }
+  let terminalSatirlar = [];
 
-  // Basit ve hızlı ANSI renklendirme / temizleme
-  function ansiFormatla(ham) {
+  // Kapsamlı ve temiz ANSI / ConPTY kaçış dizisi temizliği
+  function ansiTemizle(ham) {
+    if (!ham) return '';
     return ham
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, ''); // Temiz metin
+      .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '') // OSC başlık vb.
+      .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')        // CSI dizileri
+      .replace(/\x1b[@-_]/g, '')                         // Fe kaçışları
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');   // Görünmez kontrol karakterleri
   }
 
-  function terminaleEkle(veri) {
+  function satirlariYansit() {
     if (bosDurum.parentNode === terminalMetin) {
       terminalMetin.removeChild(bosDurum);
     }
-    const temiz = ansiFormatla(veri);
-    terminalMetin.appendChild(document.createTextNode(temiz));
-
-    // Tampon boyutu çok büyürse baştan temizle
-    while (terminalMetin.childNodes.length > 500) {
-      terminalMetin.removeChild(terminalMetin.firstChild);
-    }
-
+    terminalMetin.textContent = terminalSatirlar.join('\n');
     if (!kullaniciKaydirdi) {
       terminalMetin.scrollTop = terminalMetin.scrollHeight;
     }
+  }
+
+  function terminalTamponaEkle(veri) {
+    const temiz = ansiTemizle(veri);
+    if (!temiz) return;
+
+    // ConPTY \r (satır başı) ve \n (yeni satır) mantığı:
+    // Spinner güncellemeleri (\r ile gelenler) son satırın üzerine yazar.
+    let i = 0;
+    while (i < temiz.length) {
+      const cr = temiz.indexOf('\r', i);
+      const lf = temiz.indexOf('\n', i);
+      let son = -1;
+      let tip = '';
+      if (cr !== -1 && lf !== -1) {
+        if (cr < lf) { son = cr; tip = 'cr'; }
+        else { son = lf; tip = 'lf'; }
+      } else if (cr !== -1) {
+        son = cr; tip = 'cr';
+      } else if (lf !== -1) {
+        son = lf; tip = 'lf';
+      }
+
+      if (son === -1) {
+        const parca = temiz.slice(i);
+        if (terminalSatirlar.length === 0) terminalSatirlar.push('');
+        terminalSatirlar[terminalSatirlar.length - 1] += parca;
+        break;
+      }
+
+      const parca = temiz.slice(i, son);
+      if (terminalSatirlar.length === 0) terminalSatirlar.push('');
+      terminalSatirlar[terminalSatirlar.length - 1] += parca;
+
+      if (tip === 'cr') {
+        if (son + 1 < temiz.length && temiz[son + 1] === '\n') {
+          terminalSatirlar.push('');
+          i = son + 2;
+        } else {
+          terminalSatirlar[terminalSatirlar.length - 1] = '';
+          i = son + 1;
+        }
+      } else {
+        terminalSatirlar.push('');
+        i = son + 1;
+      }
+    }
+
+    if (terminalSatirlar.length > 250) {
+      terminalSatirlar = terminalSatirlar.slice(-250);
+    }
+  }
+
+  function terminaliGuncelle(metin, temizle = false) {
+    if (temizle) {
+      terminalSatirlar = [];
+      terminalMetin.textContent = '';
+    }
+    if (!metin && terminalSatirlar.length === 0) {
+      terminalMetin.innerHTML = '';
+      terminalMetin.appendChild(bosDurum);
+      return;
+    }
+    terminalTamponaEkle(metin);
+    satirlariYansit();
+  }
+
+  function terminaleEkle(veri) {
+    terminalTamponaEkle(veri);
+    satirlariYansit();
   }
 
   terminalMetin.addEventListener('scroll', () => {

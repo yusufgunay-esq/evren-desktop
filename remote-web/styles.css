@@ -62,10 +62,11 @@ html, body {
 }
 
 .logo-isaret {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background-color: var(--vurgu);
+  width: 22px;
+  height: 22px;
+  display: block;
+  flex-shrink: 0;
+  filter: drop-shadow(0 0 6px rgba(227, 10, 23, 0.35));
 }
 
 .logo-metin {

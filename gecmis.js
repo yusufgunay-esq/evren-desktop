@@ -308,4 +308,22 @@ function oturumGecmisi(dizin, secenekler) {
   return tumu.filter((x) => x.baslik).slice(0, 30);
 }
 
-module.exports = { oturumGecmisi, altAjanlariOku, turDevamEdiyor, baslikOku, evrenKayitlariOku, OTURUM_KIMLIK, CANLI_ESIK_MS };
+// Tek oturumun alt ajan / EVREN işi sayıları (uçtan kumanda listesi için hafif yol).
+// Ağır tam liste (oturumGecmisi) okunmaz; yalnız bu oturumun klasörü ve kayıtları taranır.
+function oturumSayilari(dizin, kimlik, secenekler) {
+  const bos = { altAjanlar: { calisan: 0, toplam: 0 }, evrenIsleri: { calisan: 0, toplam: 0 } };
+  if (!dizin || !kimlik || !OTURUM_KIMLIK.test(String(kimlik))) return bos;
+  const klasorAdi = dizin.replace(/[^a-zA-Z0-9]/g, '-');
+  const klasor = path.join(os.homedir(), '.claude', 'projects', klasorAdi);
+  const ajanlar = altAjanlariOku(path.join(klasor, String(kimlik)));
+  const simdi = Date.now();
+  const isler = evrenKayitlariOku(evrenKayitDizini(secenekler))
+    .filter((k) => k.ust === String(kimlik) && evrenKaydiBuProjede(k, klasor, klasorAdi))
+    .map((k) => evrenIsiOku(k, klasor, simdi));
+  return {
+    altAjanlar: { calisan: ajanlar.filter((a) => a.canli).length, toplam: ajanlar.length },
+    evrenIsleri: { calisan: isler.filter((i) => i.canli).length, toplam: isler.length },
+  };
+}
+
+module.exports = { oturumGecmisi, oturumSayilari, altAjanlariOku, turDevamEdiyor, baslikOku, evrenKayitlariOku, OTURUM_KIMLIK, CANLI_ESIK_MS };
