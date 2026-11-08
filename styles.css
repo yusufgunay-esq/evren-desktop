@@ -38,6 +38,7 @@
   --golge: 0 1px 2px rgba(0, 0, 0, 0.35), 0 16px 40px -12px rgba(0, 0, 0, 0.55);
 }
 
+
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg-0); color: var(--text); }
 body {
@@ -57,7 +58,9 @@ button:disabled { cursor: not-allowed; }
 [hidden] { display: none !important; }
 code { font-family: var(--mono); }
 
+
 .ic { width: 15px; height: 15px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+
 
 kbd {
   font: 500 10.5px/1 var(--sans);
@@ -72,9 +75,11 @@ kbd {
   white-space: nowrap;
 }
 
+
 /* ---------- İskelet ---------- */
 .app { height: 100%; display: grid; grid-template-rows: 40px 1fr 26px; }
 .body { display: flex; min-height: 0; }
+
 
 /* ---------- Başlık çubuğu ---------- */
 .titlebar {
@@ -96,6 +101,7 @@ kbd {
 .crumbs i { font-style: normal; color: var(--text-4); }
 .crumbs span { overflow: hidden; text-overflow: ellipsis; }
 .crumbs span:last-child { color: var(--text-2); font-family: var(--mono); font-size: 11.5px; padding: 2px 6px; border-radius: var(--r-s); background: rgba(255, 255, 255, 0.04); }
+
 
 .cmdk {
   -webkit-app-region: no-drag;
@@ -123,6 +129,7 @@ kbd {
 }
 .kumanda-nokta.bagli { background: var(--ok); }
 
+
 /* ---------- Kenar paneli: Saf Minimalist Tasarım ---------- */
 .side {
   width: var(--side-w); flex: none;
@@ -134,6 +141,7 @@ kbd {
 }
 .app.side-kapali .side { width: 0; border-right-color: transparent; }
 .side > * { width: var(--side-w); }
+
 
 /* Kenar paneli üst başlık & eylemler */
 .side-head {
@@ -182,6 +190,7 @@ kbd {
   color: var(--text-3);
 }
 
+
 /* Oturum arama: kolon flex içinde esnemez, sabit 32px kalır */
 .side-ara {
   flex: none;
@@ -212,6 +221,7 @@ kbd {
 }
 .side-ara input::placeholder { color: var(--text-3); }
 
+
 /* Seans Listesi (Çalışıyor / Boşta) */
 .seans-liste {
   flex: 1;
@@ -224,6 +234,7 @@ kbd {
 }
 .seans-liste::-webkit-scrollbar { width: 8px; }
 .seans-liste::-webkit-scrollbar-thumb { background: var(--bg-4); border: 2px solid var(--bg-1); border-radius: 4px; }
+
 
 .seans-grup {
   display: flex;
@@ -279,6 +290,7 @@ kbd {
   gap: 3px;
 }
 
+
 /* İlk boyama iskeleti: kayıtlar okunurken boş liste yerine sakin bir bekleme dokusu */
 .seans-iskelet { display: flex; flex-direction: column; gap: 3px; padding: 2px 0; }
 .seans-iskelet-baslik {
@@ -293,6 +305,7 @@ kbd {
 }
 @keyframes iskelet-parilti { from { background-position: 120% 0; } to { background-position: -60% 0; } }
 @media (prefers-reduced-motion: reduce) { .seans-iskelet-kart { animation: none; } }
+
 
 .seans-kart {
   padding: 8px 10px 8px;
@@ -314,6 +327,7 @@ kbd {
   background: rgba(255, 255, 255, 0.07);
   border-color: rgba(255, 255, 255, 0.15);
 }
+
 
 .seans-satir-ust {
   display: flex;
@@ -353,6 +367,7 @@ kbd {
   border-radius: 99px;
 }
 
+
 .seans-satir-alt {
   display: flex;
   align-items: center;
@@ -372,19 +387,9 @@ kbd {
   text-overflow: ellipsis;
 }
 
-.side-view-ust {
-  padding: 10px 14px 6px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.side-view-baslik {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-3);
-}
+
+/* side-view kodu temizlendi */
+
 
 .sec-a {
   height: 26px; min-width: 26px;
@@ -396,6 +401,7 @@ kbd {
 .sec-a:hover { background: var(--bg-3); color: var(--text); }
 .sec-a.donuyor .ic { animation: don 0.8s linear infinite; }
 @keyframes don { to { transform: rotate(360deg); } }
+
 
 /* Kenar alt durum çubuğu */
 .side-durum {
@@ -433,6 +439,7 @@ kbd {
   background: rgba(255, 255, 255, 0.06);
 }
 
+
 .led { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--text-4); position: relative; }
 .led.iyi { background: var(--ok); box-shadow: 0 0 0 3px rgba(62, 194, 138, 0.15); }
 .led.kotu { background: var(--err); box-shadow: 0 0 0 3px rgba(238, 107, 112, 0.15); }
@@ -440,12 +447,14 @@ kbd {
 .led.canli { background: var(--ok); }
 @keyframes nabiz { from { transform: scale(0.5); opacity: 0.9; } to { transform: scale(1.6); opacity: 0; } }
 
+
 /* ---------- Listeler ---------- */
 .list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 10px 6px; }
 .list::-webkit-scrollbar, .pal-list::-webkit-scrollbar { width: 10px; }
 .list::-webkit-scrollbar-thumb, .pal-list::-webkit-scrollbar-thumb { background: var(--bg-4); border: 3px solid var(--bg-1); border-radius: 6px; }
 .list:focus-visible { outline: none; }
 .list:focus-visible .row.sec-li { box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-bg); }
+
 
 .row {
   position: relative; padding: 9px 11px 10px; border-radius: var(--r); cursor: pointer;
@@ -473,15 +482,18 @@ kbd {
 .row.sec-li .meter i { background: var(--text-2); }
 @keyframes dol { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 
+
 .list.kilitli { opacity: 0.45; pointer-events: none; }
 .bos-satir { padding: 12px; color: var(--text-3); font-size: 12px; border: 1px dashed var(--line-2); border-radius: var(--r); }
 .bos-satir button { color: var(--accent-2); font-weight: 500; }
 .bos-satir button:hover { text-decoration: underline; }
 
+
 .iskelet { padding: 11px; }
 .iskelet b { display: block; height: 9px; border-radius: 4px; background: linear-gradient(90deg, var(--bg-3), var(--bg-4), var(--bg-3)); background-size: 200% 100%; animation: parilti 1.2s linear infinite; }
 .iskelet b + b { margin-top: 7px; width: 55%; height: 7px; }
 @keyframes parilti { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
 
 /* ---------- Düğmeler ---------- */
 .side-foot { flex: none; padding: 12px 10px 12px; border-top: 1px solid var(--line); animation: belir 0.5s var(--ease) 0.22s both; }
@@ -506,8 +518,10 @@ kbd {
 .btn.ghost { background: transparent; box-shadow: inset 0 0 0 1px var(--line-3); color: var(--text-2); }
 .btn.ghost:hover { background: rgba(255, 255, 255, 0.04); color: var(--text); }
 
+
 .icbtn { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r); color: var(--text-3); transition: background 0.15s, color 0.15s; }
 .icbtn:hover { background: var(--bg-3); color: var(--text); }
+
 
 /* ---------- Ana alan ---------- */
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg-0); }
@@ -527,6 +541,7 @@ kbd {
 .fs { width: 24px; text-align: center; color: var(--text-3); font-size: 11.5px; }
 .tool-sep { width: 1px; height: 14px; background: var(--line-2); margin: 0 3px; }
 
+
 .stage { flex: 1; min-height: 0; position: relative; overflow: hidden; display: flex; }
 .terminaller { flex: 1; min-width: 0; height: 100%; position: relative; }
 .terminal { position: absolute; inset: 0; padding: 12px 8px 8px 16px; }
@@ -537,12 +552,15 @@ kbd {
 .terminal .xterm-viewport::-webkit-scrollbar-thumb { background: var(--bg-4); border: 2px solid var(--bg-0); border-radius: 6px; }
 .terminal .xterm-viewport::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
 
+
 /* XTerm v6 scrollbar uyumu */
 .xterm .xterm-scrollable-element > .scrollbar { background: rgba(0, 0, 0, 0.25) !important; }
 .xterm .xterm-scrollable-element > .scrollbar > .slider { background: var(--bg-4) !important; border-radius: 4px !important; }
 .xterm .xterm-scrollable-element > .scrollbar > .slider:hover { background: var(--text-3) !important; }
 
+
 .stage.calisiyor .terminal { animation: belir 0.35s var(--ease) both; }
+
 
 /* ---------- Sağ kenar paneli: Sohbet / Konuşma Geçmişi ---------- */
 .sohbet-panel {
@@ -636,6 +654,7 @@ kbd {
 .sohbet-kopyala:hover { background: var(--bg-3); color: var(--text); }
 .tab-tools .icbtn.aktif { background: var(--accent-bg-2); color: var(--text); border-color: var(--accent-line); }
 
+
 /* ---------- Boş durum: canlı grafik + oturum paneli ---------- */
 .brief { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 20px; container-type: inline-size; background: var(--bg-0); transition: opacity 0.3s var(--ease); overflow-y: auto; }
 .brief > canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
@@ -647,6 +666,7 @@ kbd {
 }
 .brief.gidiyor { opacity: 0; pointer-events: none; }
 .brief.gidiyor .card { transform: scale(0.985) translateY(-6px); }
+
 
 .card {
   position: relative; z-index: 2; width: min(600px, 100%);
@@ -660,6 +680,7 @@ kbd {
 }
 @keyframes kart { from { opacity: 0; transform: translateY(10px) scale(0.99); } to { opacity: 1; transform: none; } }
 
+
 .card-top { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 18px; padding: 0 2px; }
 .card-top > div { flex: 1; min-width: 0; }
 .card-h { margin: 0 0 4px; font: 650 19px/1.25 var(--sans); letter-spacing: -0.018em; color: var(--text); }
@@ -670,12 +691,14 @@ kbd {
 .pill.uyari { color: #f4c27f; background: rgba(238, 160, 68, 0.09); box-shadow: inset 0 0 0 1px rgba(238, 160, 68, 0.3); }
 .pill .led { width: 6px; height: 6px; box-shadow: none; }
 
+
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; margin-bottom: 16px; background: var(--line); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
 .stat { padding: 12px 12px 13px; background: var(--bg-2); min-width: 0; transition: background 0.4s; }
 .stat-k { font-size: 11.5px; color: var(--text-3); font-weight: 500; }
 .stat-v { margin: 6px 0 3px; font: 600 20px/1.1 var(--sans); font-feature-settings: "tnum", "cv11", "ss01"; letter-spacing: -0.02em; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .stat-s { font: 400 10.5px/1.3 var(--mono); color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .stat.guncel { animation: vurgu 0.8s var(--ease); }
+
 
 .spec { margin: 0 0 18px; display: grid; grid-template-columns: 84px 1fr; padding: 0 2px; }
 .spec dt, .spec dd { padding: 9px 0; border-bottom: 1px solid var(--line); }
@@ -687,15 +710,19 @@ kbd {
 .cmd { font-size: 11.5px; font-weight: 400; color: var(--text-2); padding: 2px 7px; border-radius: var(--r-s); background: rgba(255, 255, 255, 0.04); border: 1px solid var(--line); }
 @keyframes vurgu { from { background-color: var(--accent-bg-2); } }
 
+
 .card-act { display: flex; gap: 8px; padding: 0 2px; }
 .card-act .btn span { flex: none; }
+
 
 .hints { list-style: none; margin: 16px 0 0; padding: 14px 2px 0; border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--text-3); font-size: 12px; }
 .hints li { display: flex; align-items: center; gap: 6px; }
 
+
 .warn { display: flex; gap: 10px; align-items: flex-start; margin: 0 0 16px; padding: 10px 12px; border-radius: var(--r); background: rgba(238, 160, 68, 0.08); box-shadow: inset 0 0 0 1px rgba(238, 160, 68, 0.28); color: #f4c78d; font-size: 12.5px; }
 .warn .ic { margin-top: 1px; color: var(--warn); }
 .warn code { color: var(--text); font-size: 11.5px; }
+
 
 /* ---------- Durum çubuğu ---------- */
 .status { display: flex; align-items: stretch; padding: 0 4px; background: var(--bg-1); border-top: 1px solid var(--line); font-size: 11.5px; color: var(--text-3); font-feature-settings: "tnum"; }
@@ -708,6 +735,7 @@ kbd {
 .seg #sModel, .seg #sDal, .seg #sSure { font-family: var(--mono); font-size: 11px; }
 .seg .led { width: 6px; height: 6px; box-shadow: none; }
 #sApi.kotu { color: var(--err); }
+
 
 /* ---------- Komut paleti ---------- */
 .palette { position: fixed; inset: 0; z-index: 50; background: rgba(4, 6, 9, 0.5); display: flex; justify-content: center; align-items: flex-start; padding-top: 84px; animation: sis 0.14s ease-out; }
@@ -733,6 +761,7 @@ kbd {
 .pal-bos { padding: 22px 10px; color: var(--text-3); text-align: center; }
 .pal-foot { display: flex; gap: 16px; padding: 9px 14px; border-top: 1px solid var(--line); background: var(--bg-1); color: var(--text-3); font-size: 11.5px; }
 .pal-foot span { display: flex; align-items: center; gap: 6px; }
+
 
 /* ---------- Operasyon görünümü: oturum kartı + istihbarat sütunu ---------- */
 .ops { position: relative; z-index: 2; display: grid; grid-template-columns: minmax(0, 540px) 340px; gap: 14px; align-items: stretch; }
@@ -767,15 +796,18 @@ kbd {
 .olay.uyari b { color: var(--warn); }
 @keyframes olay { from { opacity: 0; transform: translateX(-6px); background: rgba(255, 255, 255, 0.06); } }
 
+
 @container (max-width: 899px) {
   .ops { grid-template-columns: minmax(0, 560px); }
   .intel { display: none; }
 }
 
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
 @media (max-width: 980px) { :root { --side-w: 256px; } .cmdk span { display: none; } .stats { grid-template-columns: repeat(2, 1fr); } }
+
 
 /* ---------- Proje paneli: ısı haritası, dil çubuğu, son commit ---------- */
 .prj { padding: 12px 12px 11px; display: flex; flex-direction: column; gap: 10px; }
@@ -797,6 +829,7 @@ kbd {
 .son-c { font-size: 11px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-top: 9px; border-top: 1px solid var(--line); }
 .son-c b { color: var(--text); font-weight: 500; }
 .son-c em { font-style: normal; color: var(--text-4); margin: 0 4px; }
+
 
 /* ---------- Terminal karakteri (v0.4): terminal ajanı kullanıcısı için karanlık, tek aralıklı, sıkı ---------- */
 :root {
@@ -831,6 +864,7 @@ kbd {
 .kv { background: var(--bg-2); }
 .row-t { font-weight: 500; }
 
+
 /* ---------- Sekmeler (çoklu oturum) ---------- */
 .tabs { display: flex; align-items: center; gap: 4px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
 .tabs::-webkit-scrollbar { display: none; }
@@ -857,6 +891,7 @@ kbd {
 #yeniSekme { flex: none; }
 .terminaller { position: absolute; inset: 0; }
 
+
 /* ---------- Odak modu: yalnız terminal ---------- */
 .app.odak { grid-template-rows: 40px 1fr 0; }
 .app.odak .side { width: 0; border-right-color: transparent; }
@@ -871,10 +906,12 @@ kbd {
 .odak-ipucu.sondu { animation: ipucu 2.6s var(--ease); }
 @keyframes ipucu { 0%, 70% { opacity: 1; } 100% { opacity: 0.35; } }
 
+
 /* ---------- Durum çubuğu ekleri ---------- */
 #sOturum { font-family: var(--mono); font-size: 11px; }
 .seg.kunye { font-family: var(--mono); font-size: 10.5px; color: var(--text-3); letter-spacing: 0.04em; }
 .side-foot { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px 10px; }
+
 
 /* Model satırı: tek satır (ad + bağlam), altında ince bağlam çizgisi; açıklama ipucunda */
 .row.kompakt { padding: 7px 10px 7px; }
@@ -886,11 +923,13 @@ kbd {
 .sec:nth-child(4), .sec[data-sec="gecmis"] { animation-delay: 0.2s; flex: 2.2 1 0; } /* Oturumlar */
 .row.kompakt .row-s { margin-top: 3px; }
 
+
 /* Uygulama içi anahtar girişi */
 .anahtar-form { display: flex; gap: 8px; margin: -6px 0 16px; }
 .anahtar-form input { flex: 1; min-width: 0; height: 30px; padding: 0 10px; border-radius: var(--r); border: 1px solid var(--line-3); background: var(--bg-1); color: var(--text); font: 400 12px var(--mono); }
 .anahtar-form input:focus { outline: none; border-color: rgba(255, 255, 255, 0.35); }
 .warn a { color: var(--text); text-decoration: underline; text-decoration-color: rgba(255, 255, 255, 0.3); }
+
 
 /* ---------- Günlük Token Kotası Kartı ---------- */
 .kota-panel { padding-bottom: 2px; }
@@ -899,22 +938,25 @@ kbd {
 .kota-kalan-kutu { display: flex; align-items: baseline; gap: 6px; }
 .kota-kalan-sayi { font: 600 22px/1 var(--mono); color: var(--text); letter-spacing: -0.02em; }
 .kota-kalan-etiket { font: 400 12px/1 var(--mono); color: var(--text-3); }
-.kota-detay-kutu { text-align: right; display: flex; flex-direction: column; gap: 3px; }
-.kota-kullanilan { font: 400 11px/1.2 var(--mono); color: var(--text-2); }
-.kota-sifirlanma { font: 400 10.5px/1.2 var(--mono); color: var(--text-3); }
+.kota-detay-kutu { text-align: right; display: flex; flex-direction: column; gap: 3px; white-space: nowrap; word-break: normal; }
+.kota-kullanilan { font: 400 11px/1.2 var(--mono); color: var(--text-2); white-space: nowrap; word-break: normal; }
+.kota-sifirlanma { font: 400 10.5px/1.2 var(--mono); color: var(--text-3); white-space: nowrap; word-break: normal; }
 .kota-bar-ray { height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.06); overflow: hidden; position: relative; }
 .kota-bar-dolgu { height: 100%; border-radius: 2px; background: var(--ok); transition: width 0.4s var(--ease), background 0.3s var(--ease); }
 .kota-bar-dolgu.uyari { background: #eab308; }
 .kota-bar-dolgu.kritik { background: #ef4444; }
 
+
 /* Geçmiş: oturumun hangi uygulamadan geldiği */
 .kaynak { padding: 1px 5px; border-radius: 4px; font-size: 10px; letter-spacing: 0.04em; background: rgba(255, 255, 255, 0.06); color: var(--text-3); }
 .kaynak.evren { color: var(--accent-2); background: var(--accent-bg-2); }
+
 
 /* ---------- Oturumlar ve Alt Ajanlar (Minimalist & Ferah) ---------- */
 .gecmis-row { padding: 8px 10px 8px; }
 .gecmis-row + .gecmis-row { margin-top: 3px; }
 .gecmis-row.sec-li { background: var(--accent-bg); border-color: var(--accent-line); }
+
 
 .tag-ajan {
   margin-left: auto;
@@ -937,6 +979,7 @@ kbd {
   color: var(--text);
   border-color: var(--line-3);
 }
+
 
 .ajan-agac {
   margin-top: 6px;
@@ -977,11 +1020,16 @@ kbd {
   letter-spacing: -0.01em;
 }
 
+
 /* ---------- Mobil Kumanda Modalı ---------- */
 .modal-ortu {
   position: fixed; inset: 0; z-index: 1000;
   background: rgba(3, 4, 6, 0.82);
   display: flex; align-items: center; justify-content: center;
+  transition: opacity 140ms var(--ease);
+}
+.modal-kutu {
+  transition: transform 140ms var(--ease), opacity 140ms var(--ease);
 }
 .modal-kutu.kumanda-kutu {
   width: 440px; max-width: 90vw;
@@ -1027,13 +1075,15 @@ kbd {
 .k-kod { font-size: 11px; color: var(--text); max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .k-deger { font-size: 11.5px; color: var(--text-2); }
 
+
 /* hidden niteliği display:flex'i ezemediği için Kumanda modalı her açılışta görünürdü */
 .modal-ortu[hidden] { display: none; }
+
 
 /* ---------- Oturum arama ---------- */
 .gecmis-ara {
   display: flex; align-items: center; gap: 6px;
-  margin: 0 10px 8px; padding: 0 8px; height: 26px;
+  margin: 0 10px 8px; padding: 0 8px; height: 32px;
   background: var(--bg-2); border: 1px solid var(--line-2); border-radius: var(--r-s);
   transition: border-color 0.15s var(--ease);
 }
@@ -1044,6 +1094,7 @@ kbd {
 }
 .gecmis-ara input::placeholder { color: var(--text-3); }
 .gecmis-ara:focus-within { border-color: var(--line-3); }
+
 
 /* ---------- Alt ajan satırı: tür, model, zaman ---------- */
 .ajan-meta {
@@ -1065,6 +1116,7 @@ kbd {
   color: var(--ok); border-color: rgba(62, 194, 138, 0.45); background: rgba(62, 194, 138, 0.1);
 }
 
+
 /* ---------- EVREN işleri: üst oturumun altında, ayrı etiket ve durum rengi ---------- */
 .tag-evren {
   margin-left: 4px; flex: none;
@@ -1082,6 +1134,7 @@ kbd {
 .ajan.evren-is.kesik .ajan-tanim { color: var(--warn); }
 .ajan.evren-is.hata .ajan-tanim { color: var(--err); }
 
+
 /* ---------- Kumanda: IP seçici ve not ---------- */
 .k-secim {
   flex: 1; max-width: 230px; padding: 3px 6px; outline: none;
@@ -1092,6 +1145,8 @@ kbd {
 .kumanda-detay .btn { margin-top: 2px; }
 .kumanda-not { margin: 0; font-size: 10.5px; line-height: 1.5; color: var(--text-3); text-align: center; }
 .kumanda-not b { color: var(--text-2); font-weight: 500; }
+
+
 
 
 /* ---------- Yeni Oturum Başlat Modalı ---------- */
@@ -1154,6 +1209,7 @@ kbd {
   text-decoration: underline;
 }
 
+
 /* Proje ve Model Izgaraları */
 .oturum-proje-izgara, .oturum-model-izgara {
   display: grid;
@@ -1212,6 +1268,7 @@ kbd {
   text-overflow: ellipsis;
 }
 
+
 .oturum-modal-ayak {
   padding: 12px 20px;
   background: var(--bg-1);
@@ -1232,4 +1289,152 @@ kbd {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+
+/* ---------- Token Harcama Şeridi (Item 5b) ---------- */
+.kota-serit {
+  display: block;
+  width: 100%;
+  height: 12px;
+  margin-top: 4px;
+}
+
+
+/* ---------- Kaynak Etiketleri: CLAUDE vs EVREN (Item 4c) ---------- */
+.kaynak-rozet {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: 600 9.5px/1 var(--mono);
+  letter-spacing: 0.05em;
+  padding: 2px 5px;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
+.kaynak-rozet.claude {
+  color: var(--text-2);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--line-2);
+}
+.kaynak-rozet.claude::before {
+  content: '◇';
+  font-size: 8px;
+  opacity: 0.8;
+}
+.kaynak-rozet.evren {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+}
+.kaynak-rozet.evren::before {
+  content: '●';
+  font-size: 7px;
+  color: var(--ok);
+}
+
+
+/* ---------- Terminal Akım Çizgisi (Item 5c) ---------- */
+.terminal-akim-cizgi {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, var(--ok) 50%, transparent 100%);
+  background-size: 200% 100%;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 10;
+  transition: opacity 160ms var(--ease);
+}
+.terminal-akim-cizgi.aktif {
+  opacity: 0.95;
+  animation: akim-dalga 1.4s linear infinite;
+}
+@keyframes akim-dalga {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+
+/* ---------- Canlı Takımyıldız Paneli (Item 5a) ---------- */
+.takimyildiz-panel {
+  padding-bottom: 8px;
+}
+.takimyildiz-govde {
+  position: relative;
+  width: 100%;
+  height: 110px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--line);
+  border-radius: var(--r-s);
+  overflow: hidden;
+  margin-top: 6px;
+}
+.takimyildiz-tuval {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+.takimyildiz-sakin {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: 400 11px var(--mono);
+  color: var(--text-3);
+  pointer-events: none;
+  text-align: center;
+  padding: 0 10px;
+}
+
+
+/* ---------- İlk Yüklemede Kademeli Belirme (Item 5d) ---------- */
+.seans-kart.belirme {
+  animation: kart-belir 160ms var(--ease) both;
+}
+@keyframes kart-belir {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+
+/* ---------- Burada Devam Et Butonu ---------- */
+.btn-fork {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 11px;
+  gap: 4px;
+}
+
+/* ---------- Sohbet / Oturum İğneleme (Pin) ---------- */
+.seans-igne-btn {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-s);
+  color: var(--text-3);
+  opacity: 0;
+  transition: opacity 140ms var(--ease), color 140ms var(--ease), background 140ms var(--ease);
+  margin-left: auto;
+  cursor: pointer;
+}
+.seans-satir-ust:hover .seans-igne-btn,
+.seans-kart:hover .seans-igne-btn {
+  opacity: 0.7;
+}
+.seans-kart .seans-igne-btn:hover {
+  opacity: 1;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+}
+.seans-igne-btn.aktif {
+  opacity: 1;
+  color: var(--ok);
+}
+#sohbetIgneBtn.aktif {
+  color: var(--ok);
 }
