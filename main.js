@@ -262,7 +262,7 @@ async function oturumBaslat({ modelId, dizin, cols, rows, devam, forkSession, or
     }, 1500);
     if (ara.unref) ara.unref();
   }
-  bu.onData((veri) => ptyTamponla(id, veri));
+  bu.onData((veri) => { bilgi.sonCikti = Date.now(); ptyTamponla(id, veri); });
   bu.onExit(({ exitCode }) => {
     ptyBosalt(id); // son çıktı, çıkış bildiriminden ÖNCE geçsin (sıra korunur)
     ptyTampon.delete(id);
@@ -319,9 +319,23 @@ function kumandaModelleri() {
 }
 
 
+// Bir oturum kapaninca yalniz kabugu degil, tum surec agacini kapat.
+// Aksi halde claude.exe'nin actigi MCP sunuculari (node, python) arkada kalir;
+// her biri ~20-60 MB tutar ve birkac oturumda RAM dolar.
+function agacOldur(pid) {
+  if (!pid) return;
+  if (process.platform === 'win32') {
+    try { execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }); } catch {}
+  } else {
+    try { process.kill(-pid, 'SIGKILL'); } catch {}
+    try { process.kill(pid, 'SIGKILL'); } catch {}
+  }
+}
+
 function kabukKapat(id) {
   const k = kabuklar.get(id);
   if (!k) return;
+  agacOldur(k.pid);
   try { k.kill(); } catch {}
   ptyBosalt(id);
   ptyTampon.delete(id);
@@ -329,6 +343,23 @@ function kabukKapat(id) {
   if (remoteSunucu) remoteSunucu.oturumKapandi(id, 0);
 }
 function tumunuKapat() { for (const id of [...kabuklar.keys()]) kabukKapat(id); }
+
+// Bosta kalan oturumlar kendiliginden kapanir: bitmis ajan arkada MCP yigini tutmasin.
+// Suresi ayarlardan gelir (bostaKapatDk, varsayilan 60 dk; 0 = kapali).
+// Gecmis diskte durur, sekme ayni oturumla --resume edilebilir.
+const bostaKontrol = setInterval(() => {
+  const dk = Number(ayarOku().bostaKapatDk ?? 60);
+  if (!Number.isFinite(dk) || dk <= 0) return;
+  const sinir = dk * 60000;
+  const simdi = Date.now();
+  for (const [id, bilgi] of oturumBilgi) {
+    if (!kabuklar.has(id)) continue;
+    if (simdi - (bilgi.sonCikti || bilgi.baslangic || simdi) < sinir) continue;
+    kabukKapat(id);
+    if (pencere && !pencere.isDestroyed()) pencere.webContents.send('pty:cikis', id, { kod: 0, bosta: true });
+  }
+}, 60000);
+if (bostaKontrol.unref) bostaKontrol.unref();
 
 
 function pencereOlustur() {
@@ -456,10 +487,12 @@ function remoteSunucuBaslat() {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) pencereOlustur(); });
 });
 app.on('window-all-closed', () => { tumunuKapat(); app.quit(); });
+// Uygulama baska bir yoldan kapanirsa da (menuden cikis, oturum sonu) tum surec agaclari kapansin.
+app.on('before-quit', () => { tumunuKapat(); });
 
 
 // ---- Proje özeti: commit ısı haritası, dil dağılımı, son commit (yalnız yerel git; ağ yok) ----
-const { execFile } = require('node:child_process');
+const { execFile, execFileSync } = require('node:child_process');
 const projeOnbellek = new Map(); // yol -> { zaman, veri }
 const git = (dizin, args) => new Promise((coz) => {
   execFile('git', ['-C', dizin, ...args], { timeout: 4000, maxBuffer: 8 * 1024 * 1024, windowsHide: true }, (h, out) => coz(h ? null : String(out)));
