@@ -71,15 +71,26 @@ async function anahtarKaydet(deger) {
 const zamanAsimi = (ms) => (typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined);
 
 
+// Son projeler listesine girecek klasör mü? Var olmalı; geçici (Temp) klasörler listeyi kirletir.
+const GECICI_KLASOR = /[\\/]appdata[\\/]local[\\/]temp([\\/]|$)/i;
+function gecerliKlasor(d) {
+  try {
+    if (!d || !fs.statSync(d).isDirectory()) return false;
+    if (GECICI_KLASOR.test(String(d))) return false;
+    const tmp = os.tmpdir();
+    if (String(d).toLowerCase() === tmp.toLowerCase() || String(d).toLowerCase().startsWith((tmp + path.sep).toLowerCase())) return false;
+    return true;
+  } catch { return false; }
+}
+
+
 // Yerel durum: ağ beklemeden anında döner (ilk boyama hızlı olsun).
 async function yerelDurum() {
   const p = await panelModulu();
   const anahtarVar = !!(await anahtar());
   const ham = ayarOku();
   const modeller = modelOnbellek || p.MODELLER;
-  const sonlar = Array.isArray(ham.sonKlasorler)
-    ? ham.sonKlasorler.filter((d) => { try { return fs.statSync(d).isDirectory(); } catch { return false; } })
-    : [];
+  const sonlar = Array.isArray(ham.sonKlasorler) ? ham.sonKlasorler.filter(gecerliKlasor) : [];
   return {
     anahtarVar, modeller,
     sonModel: typeof ham.sonModel === 'string' ? ham.sonModel : modeller[0] && modeller[0].id,
@@ -252,7 +263,7 @@ function kumandaProjeleri() {
   const p = motor;
   const sonlar = Array.isArray(ayarOku().sonKlasorler) ? ayarOku().sonKlasorler : [];
   return sonlar
-    .filter((d) => { try { return fs.statSync(d).isDirectory(); } catch { return false; } })
+    .filter(gecerliKlasor)
     .map((d) => ({ yol: d, ad: path.basename(d) || d, dal: p.gitDal(d) }));
 }
 
@@ -457,6 +468,16 @@ ipcMain.handle('anahtar-kaydet', async (_e, deger) => anahtarKaydet(deger));
 ipcMain.handle('api', async () => {
   try { return await apiDurum(); }
   catch (e) { return { anahtarVar: true, ok: false, hata: e.message }; }
+});
+
+
+// Son projeler listesinden kaldırır. Diskten hiçbir şey silmez; yalnız liste kaydı düşer.
+ipcMain.handle('proje-sil', async (_e, yol) => {
+  const hedef = String(yol || '');
+  if (!hedef) return { ok: false, projeler: kumandaProjeleri() };
+  const kalan = (ayarOku().sonKlasorler || []).filter((x) => x !== hedef);
+  ayarYaz({ sonKlasorler: kalan });
+  return { ok: true, projeler: kumandaProjeleri() };
 });
 
 

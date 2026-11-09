@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('evren', {
   api: () => ipcRenderer.invoke('api'),
   anahtarKaydet: (deger) => ipcRenderer.invoke('anahtar-kaydet', deger),
   klasorSec: () => ipcRenderer.invoke('klasor-sec'),
+  projeSil: (yol) => ipcRenderer.invoke('proje-sil', yol), // yalnız son projeler listesinden düşürür
   baslat: (secim) => ipcRenderer.invoke('baslat', secim),
   gecmis: (dizin) => ipcRenderer.invoke('gecmis', dizin),
   gecmisBlok: () => ipcRenderer.invoke('gecmis-blok'), // ölçüm: ana süreçte geçmiş taraması için harcanan süre

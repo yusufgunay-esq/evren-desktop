@@ -204,7 +204,10 @@ function gecmisCiz() {
     const belirmeSinif = ilkGecmisYukleme ? ' belirme' : '';
     const gecikmeStil = ilkGecmisYukleme ? ` style="animation-delay: ${Math.min(idx * 25, 200)}ms;"` : '';
     const igneli = ignelenenler.has(g.id);
-    const evrenMi = g.kaynak === 'evren' || g.evren;
+    // Bu uygulamanın açtığı her oturum EVREN arka ucunda koşar. Kaynak, oturum dosyasındaki İLK asistan yanıtının
+    // modelinden okunur; model henüz yazılmadıysa (kullanıcı mesajı gidip yanıt beklenirken) bilinmiyor demektir.
+    // Bilinmeyeni Claude saymak yanlış rozet gösteriyordu: yalnız 'claude' kesin ise kıvılcım, gerisi EVREN.
+    const evrenMi = g.kaynak !== 'claude' || g.evren;
     const kaynakHtml = kaynakIsaret(evrenMi);
     return `
       <div class="seans-kart${secili ? ' sec-li' : ''}${belirmeSinif}"${gecikmeStil} role="option" aria-selected="${secili}" data-id="${esc(g.id)}" data-yol="${esc(g.projeYol)}" title="${esc(g.baslik)}
@@ -598,6 +601,21 @@ async function klasorEkle() {
   S.proje = sec.yol;
   projeleriCiz(); ozetYaz(); projeOzetYukle();
   return true;
+}
+// Son projeler listesinden kaldırır (disk silinmez). Seçili proje kaldırıldıysa sıradakine geçer.
+async function projeListedenSil(yol) {
+  if (!yol) return;
+  try {
+    const r = await window.evren.projeSil(yol);
+    if (!r || !r.ok) return;
+    S.projeler = r.projeler || [];
+    if (S.proje === yol) { S.proje = ''; projeSec(S.projeler[0] ? S.projeler[0].yol : ''); }
+    if (modalSecilenProje === yol) modalSecilenProje = S.proje || (S.projeler[0] ? S.projeler[0].yol : '');
+    projeleriCiz(); yeniOturumModalGuncelle(); ozetYaz();
+    olay('PROJE', 'Listeden kaldırıldı · ' + (yol.split(/[\\/]/).filter(Boolean).pop() || yol));
+  } catch (e) {
+    olay('PROJE', 'Kaldırılamadı · ' + String(e.message || e).slice(0, 60), 'kotu');
+  }
 }
 // ---------- terminal (her oturumun kendi xterm örneği) ----------
 const TEMA = {
@@ -1112,6 +1130,7 @@ function paletOgeleri() {
     { ad: 'Yeni oturum başlat', ic: 'play', alt: S.aktif == null ? 'Enter' : '', yap: basla, pasif: !S.anahtarVar || !S.yuklendi },
     ...(ao && ao.canli ? [
       { ad: 'Bu oturumu sonlandır', ic: 'stop', yap: durdur },
+      { ad: 'Ara durum raporu iste (/rapor)', ic: 'term', yap: () => { window.evren.yaz(ao.pid, '/rapor\r'); } },
       { ad: 'Yeni sohbet özeti iste (/summarize)', ic: 'chat', yap: () => { window.evren.yaz(ao.pid, '/summarize\r'); } },
     ] : []),
     ...(ao ? [{ ad: 'Sekmeyi kapat', ic: 'clear', alt: 'Ctrl ⇧ W', yap: () => sekmeKapat(ao.id) }] : []),
@@ -1619,24 +1638,29 @@ function yeniOturumModalGuncelle() {
   if (!pIzgara || !mIzgara) return;
   if (!modalSecilenProje && S.projeler.length) modalSecilenProje = S.proje || S.projeler[0].yol;
   if (!modalSecilenModel && S.modeller.length) modalSecilenModel = S.model || S.modeller[0].id;
-  // Proje kartları
-  pIzgara.innerHTML = S.projeler.map((p) => `
-    <button class="oturum-secim-kart${p.yol === modalSecilenProje ? ' aktif' : ''}" type="button" data-proje="${esc(p.yol)}">
+  // Proje kartları (kart div: içinde sil düğmesi olabilsin; iç içe buton geçersizdir)
+  pIzgara.innerHTML = S.projeler.length ? S.projeler.map((p) => `
+    <div class="oturum-secim-kart${p.yol === modalSecilenProje ? ' aktif' : ''}" role="button" tabindex="0" data-proje="${esc(p.yol)}" aria-pressed="${p.yol === modalSecilenProje}">
       <div class="oturum-secim-kart-ust">
-        <span class="oturum-secim-kart-ad">${esc(p.ad)}</span>
+        <span class="oturum-secim-kart-ad" title="${esc(p.ad)}">${esc(p.ad)}</span>
         ${p.dal ? `<span class="tag mono">${esc(p.dal)}</span>` : ''}
       </div>
-      <span class="oturum-secim-kart-alt mono">${esc(kisaYol(p.yol, 28))}</span>
-    </button>
-  `).join('');
-  // Model kartları
+      <div class="oturum-kart-alt-satir">
+        <span class="oturum-secim-kart-alt mono" title="${esc(p.yol)}">${esc(kisaYol(p.yol, 28))}</span>
+        <button class="oturum-kart-sil" type="button" data-sil="${esc(p.yol)}" title="Listeden kaldır (disk silinmez)" aria-label="${esc(p.ad)} projesini listeden kaldır">
+          <svg class="ic"><use href="#i-close" /></svg>
+        </button>
+      </div>
+    </div>
+  `).join('') : `<div class="oturum-bos">Son proje yok. Sağ üstten bir klasör seçin.</div>`;
+  // Model kartları: ad tam satır (uzun adlar kesilmesin), alt satırda not + bağlam rozeti
   mIzgara.innerHTML = S.modeller.map((m) => `
     <button class="oturum-secim-kart${m.id === modalSecilenModel ? ' aktif' : ''}" type="button" data-model="${esc(m.id)}">
-      <div class="oturum-secim-kart-ust">
-        <span class="oturum-secim-kart-ad">${esc(m.ad || m.id)}</span>
+      <span class="oturum-secim-kart-ad" title="${esc(m.ad || m.id)}">${esc(m.ad || m.id)}</span>
+      <div class="oturum-kart-alt-satir">
+        <span class="oturum-secim-kart-alt">${esc(m.not || '')}</span>
         <span class="tag mono">${kisaBaglam(m.baglamSayisi)}</span>
       </div>
-      ${m.not ? `<span class="oturum-secim-kart-alt">${esc(m.not)}</span>` : ''}
     </button>
   `).join('');
   const pObj = S.projeler.find((p) => p.yol === modalSecilenProje);
@@ -1935,8 +1959,20 @@ if ($('modalKlasorEkleBtn')) $('modalKlasorEkleBtn').addEventListener('click', a
 });
 if ($('modalProjeIzgara')) {
   $('modalProjeIzgara').addEventListener('click', (e) => {
+    const sil = e.target.closest('[data-sil]');
+    if (sil) { e.stopPropagation(); projeListedenSil(sil.dataset.sil); return; }
     const k = e.target.closest('.oturum-secim-kart');
     if (!k) return;
+    modalSecilenProje = k.dataset.proje;
+    yeniOturumModalGuncelle();
+  });
+  // Klavye: Enter/Space kartı seçer (div role=button olduğu için elle).
+  $('modalProjeIzgara').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    if (e.target.closest('[data-sil]')) return;
+    const k = e.target.closest('.oturum-secim-kart');
+    if (!k) return;
+    e.preventDefault();
     modalSecilenProje = k.dataset.proje;
     yeniOturumModalGuncelle();
   });
