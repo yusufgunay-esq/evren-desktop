@@ -17,7 +17,7 @@ const ILK_ADET = 50;
 
 // Dizin adı Claude Code'un kodlamasıyla aynı: harf/rakam dışı karakterler tireye döner.
 function projeKlasoru(dizin, kokDizin) {
-  const kok = kokDizin || path.join(os.homedir(), '.claude', 'projects');
+  const kok = kokDizin || process.env.EVREN_PROJE_DIZINI || path.join(os.homedir(), '.claude', 'projects');
   return path.join(kok, String(dizin || '').replace(/[^a-zA-Z0-9]/g, '-'));
 }
 
@@ -222,12 +222,71 @@ class ArtimliOkuyucu {
   }
 }
 
+// Dosyanın sonundaki ham JSON kayıtlarını (eskiden yeniye) döndürür.
+function sonKayitlar(dosya, adet = 160) {
+  let boyut, fd;
+  try { boyut = fs.statSync(dosya).size; fd = fs.openSync(dosya, 'r'); } catch { return []; }
+  try {
+    const n = Math.min(boyut, 512 * 1024);
+    const t = Buffer.alloc(n);
+    fs.readSync(fd, t, 0, n, boyut - n);
+    const satirlar = t.toString('utf8').split('\n');
+    if (boyut > n) satirlar.shift(); // baştaki yarım satır
+    const kayitlar = [];
+    for (const s of satirlar) {
+      const x = s.trim();
+      if (!x) continue;
+      try { kayitlar.push(JSON.parse(x)); } catch {}
+    }
+    return kayitlar.slice(-adet);
+  } finally {
+    try { fs.closeSync(fd); } catch {}
+  }
+}
+
+/**
+ * Oturumun gerçek durumu — kapatma kararı zamanlayıcıya değil, ajanın kendi kaydına dayanır.
+ * 'bitti'      : son tur asistanın metin cevabıyla kapandı, kullanıcıyı bekliyor (kapatılabilir).
+ * 'calisiyor'  : araç çağrısı askıda, kullanıcı istemi yanıtsız ya da araç sonucu bekleniyor.
+ * 'bilinmiyor' : kayıt yok/okunamadı; temkinli davran, kapatma.
+ */
+function oturumDurumu(dosya) {
+  const kayitlar = sonKayitlar(dosya);
+  for (let i = kayitlar.length - 1; i >= 0; i--) {
+    const j = kayitlar[i];
+    if (!j || typeof j !== 'object' || j.isSidechain === true || j.isMeta === true) continue;
+    if (j.type === 'summary') return 'bitti';
+    if (j.type !== 'user' && j.type !== 'assistant') continue;
+    const mesaj = j.message;
+    if (!mesaj) continue;
+    const icerik = mesaj.content;
+    if (j.type === 'assistant') {
+      if (mesaj.model === '<synthetic>') continue;
+      const bloklar = Array.isArray(icerik) ? icerik : [{ type: 'text', text: icerik }];
+      if (bloklar.some((b) => b && b.type === 'tool_use')) return 'calisiyor'; // araç sonucu bekleniyor
+      return 'bitti';
+    }
+    if (typeof icerik === 'string') {
+      if (icerik.startsWith('Caveat:') || icerik.startsWith('[Request interrupted')) continue;
+      return 'calisiyor'; // gerçek kullanıcı istemi, ajanın cevabı yok
+    }
+    if (Array.isArray(icerik)) {
+      const sonBlok = icerik[icerik.length - 1];
+      if (sonBlok && sonBlok.type === 'tool_result') return 'calisiyor';
+      if (icerik.some((b) => b && b.type === 'text')) return 'calisiyor';
+    }
+  }
+  return 'bilinmiyor';
+}
+
 module.exports = {
   projeKlasoru,
   dosyaYolu,
   oturumDosyasiBul,
   girisleriCoz,
   sonGirisler,
+  sonKayitlar,
+  oturumDurumu,
   ArtimliOkuyucu,
   ozetle,
   ILK_ADET,

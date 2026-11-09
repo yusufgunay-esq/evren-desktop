@@ -32,6 +32,9 @@ const EKRAN_OTURUM = argv.includes('--ekran-oturum'); // test: iki oturum açar
 const EKRAN_ORK = argv.includes('--ekran-ork-oturum'); // test: orkestratör oturumu aç
 const EKRAN_SEF = argv.includes('--ekran-sef'); // test: kenar panelde Şef kartı
 const EKRAN_PROJE = argv.includes('--ekran-proje') ? argv[argv.indexOf('--ekran-proje') + 1] : null; // test: açılışta proje seç
+// Ekran görüntüsünü bir DOM öğesine kırp (README görselleri için): EVREN_EKRAN_SEL, EVREN_EKRAN_BOSLUK.
+const EKRAN_SEL = process.env.EVREN_EKRAN_SEL || '';
+const EKRAN_BOSLUK = Math.max(0, Number(process.env.EVREN_EKRAN_BOSLUK || 0) || 0);
 // Yalnız test/doğrulama için: claude yerine verilen komutu açar (ör. cmd.exe); API kredisi harcanmaz.
 const TEST_KOMUT = process.env.EVREN_TEST_KOMUT || '';
 
@@ -345,19 +348,77 @@ function kabukKapat(id) {
 function tumunuKapat() { for (const id of [...kabuklar.keys()]) kabukKapat(id); }
 
 // Bosta kalan oturumlar kendiliginden kapanir: bitmis ajan arkada MCP yigini tutmasin.
+// Karari zamanlayici tek basina vermez; ajanin kendi kaydina (jsonl) ve surec agacina bakilir:
+//   - son tur asistanin metin cevabiyla kapandi mi (arac cagrisi askida degil),
+//   - agacta MCP disinda calisan bir arac/worker var mi,
+//   - kullanici son [bostaKapatDk] dakikada hic yazmadi mi.
 // Suresi ayarlardan gelir (bostaKapatDk, varsayilan 60 dk; 0 = kapali).
 // Gecmis diskte durur, sekme ayni oturumla --resume edilebilir.
+const MCP_COCUK = new Set(['node', 'python', 'pythonw', 'cmd', 'conhost',
+  'duckduckgo-mcp-server', 'codebase-memory-mcp', 'chrome-devtools-mcp', 'uagents']);
+
+function torunHaritasi(done) {
+  const ps = 'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId)/$($_.ParentProcessId)/$($_.Name)" }';
+  execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps],
+    { windowsHide: true, timeout: 10000 }, (hata, cikti) => {
+      if (hata) return done(null);
+      const ebeveyn = new Map();
+      for (const satir of String(cikti).split(/\r?\n/)) {
+        const p = satir.trim().split('/');
+        if (p.length < 3) continue;
+        const [kimlik, par, ad] = p;
+        const k = Number(par);
+        if (!ebeveyn.has(k)) ebeveyn.set(k, []);
+        ebeveyn.get(k).push({ id: Number(kimlik), ad: ad.replace(/\.exe$/i, '').toLowerCase() });
+      }
+      done(ebeveyn);
+    });
+}
+
+function agactaCalismaVar(ebeveyn, kok) {
+  const yigin = [kok], gorulen = new Set();
+  while (yigin.length) {
+    const x = yigin.pop();
+    for (const c of (ebeveyn.get(x) || [])) {
+      if (gorulen.has(c.id)) continue;
+      gorulen.add(c.id);
+      if (!MCP_COCUK.has(c.ad)) return true;   // bash, worker, git…: oturum calisiyor
+      yigin.push(c.id);
+    }
+  }
+  return false;
+}
+
 const bostaKontrol = setInterval(() => {
   const dk = Number(ayarOku().bostaKapatDk ?? 60);
   if (!Number.isFinite(dk) || dk <= 0) return;
   const sinir = dk * 60000;
   const simdi = Date.now();
+  const adaylar = [];
   for (const [id, bilgi] of oturumBilgi) {
     if (!kabuklar.has(id)) continue;
-    if (simdi - (bilgi.sonCikti || bilgi.baslangic || simdi) < sinir) continue;
-    kabukKapat(id);
-    if (pencere && !pencere.isDestroyed()) pencere.webContents.send('pty:cikis', id, { kod: 0, bosta: true });
+    const son = Math.max(bilgi.sonCikti || 0, bilgi.sonGirdi || 0, bilgi.baslangic || 0);
+    if (simdi - son < sinir) continue;
+    let dosya = null;
+    try {
+      dosya = bilgi.devam
+        ? sohbet.dosyaYolu(bilgi.dizin, bilgi.devam)
+        : sohbet.oturumDosyasiBul({ dizin: bilgi.dizin, baslangicMs: bilgi.baslangic });
+    } catch {}
+    if (!dosya || sohbet.oturumDurumu(dosya) !== 'bitti') continue;  // calisiyor/bilinmiyor: dokunma
+    adaylar.push(id);
   }
+  if (!adaylar.length) return;
+  torunHaritasi((ebeveyn) => {
+    if (!ebeveyn) return;   // agac okunamadiysa temkinli davran
+    for (const id of adaylar) {
+      const k = kabuklar.get(id);
+      if (!k || !kabuklar.has(id)) continue;
+      if (agactaCalismaVar(ebeveyn, k.pid)) continue;
+      kabukKapat(id);
+      if (pencere && !pencere.isDestroyed()) pencere.webContents.send('pty:cikis', id, { kod: 0, bosta: true });
+    }
+  });
 }, 60000);
 if (bostaKontrol.unref) bostaKontrol.unref();
 
@@ -427,7 +488,30 @@ function pencereOlustur() {
     pencere.webContents.once('did-finish-load', () => {
       setTimeout(async () => {
         try {
-          const img = await pencere.webContents.capturePage();
+          let kirp = undefined;
+          if (EKRAN_SEL) {
+            const olcu = await pencere.webContents.executeJavaScript(`(() => {
+              // Görsel için arka planı sadeleştir: yarı saydam örtünün arkasındaki metin sızmasın.
+              const ort = document.querySelector('.modal-ortu:not([hidden])');
+              if (ort) { ort.style.setProperty('background', '#07090b', 'important'); ort.style.setProperty('backdrop-filter', 'none', 'important'); }
+              const el = document.querySelector(${JSON.stringify(EKRAN_SEL)});
+              if (!el) return null;
+              const r = el.getBoundingClientRect();
+              return { x: r.x, y: r.y, width: r.width, height: r.height, bg: ort ? getComputedStyle(ort).backgroundColor : 'yok' };
+            })()`);
+            if (EKRAN_SEL) await new Promise((r) => setTimeout(r, 180)); // boyama tamamlansın
+            if (olcu) console.log('[ekran] kirp', JSON.stringify({ x: Math.round(olcu.x), y: Math.round(olcu.y), w: Math.round(olcu.width), h: Math.round(olcu.height), bg: olcu.bg }));
+            if (olcu && olcu.width > 0 && olcu.height > 0) {
+              const b = EKRAN_BOSLUK;
+              kirp = {
+                x: Math.max(0, Math.round(olcu.x - b)),
+                y: Math.max(0, Math.round(olcu.y - b)),
+                width: Math.round(olcu.width + b * 2),
+                height: Math.round(olcu.height + b * 2),
+              };
+            }
+          }
+          const img = await pencere.webContents.capturePage(kirp);
           fs.mkdirSync(path.dirname(path.resolve(EKRAN)), { recursive: true });
           fs.writeFileSync(path.resolve(EKRAN), img.toPNG());
           console.log(`[ekran] ${path.resolve(EKRAN)}`);
@@ -445,6 +529,8 @@ function remoteSunucuBaslat() {
     veriDizini: app.getPath('userData'), // kumanda.json (token, port, IP) burada kalıcı tutulur
     onPtyYaz: (id, veri) => {
       const k = kabuklar.get(id);
+      const b = oturumBilgi.get(id);
+      if (b) b.sonGirdi = Date.now();
       if (k) { try { k.write(veri); } catch {} }
     },
     onYeniOturum: (secim) => oturumBaslat(secim),
@@ -696,7 +782,12 @@ ipcMain.handle('sohbet-gecmisi', async (_e, id) => {
     return { girisler: [] };
   }
 });
-ipcMain.handle('yaz', (_e, id, veri) => { const k = kabuklar.get(id); if (k) { try { k.write(veri); } catch {} } });
+ipcMain.handle('yaz', (_e, id, veri) => {
+  const k = kabuklar.get(id);
+  const b = oturumBilgi.get(id);
+  if (b) b.sonGirdi = Date.now();
+  if (k) { try { k.write(veri); } catch {} }
+});
 ipcMain.handle('boyut', (_e, id, { cols, rows }) => {
   const k = kabuklar.get(id);
   if (!k || !(cols > 0) || !(rows > 0)) return;
