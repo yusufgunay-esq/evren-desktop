@@ -71,12 +71,14 @@ async function anahtarKaydet(deger) {
 const zamanAsimi = (ms) => (typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined);
 
 
-// Son projeler listesine girecek klasör mü? Var olmalı; geçici (Temp) klasörler listeyi kirletir.
+// Son projeler listesine girecek klasör mü? Var olmalı; geçici (Temp) klasörler ve Claude'un
+// oturum arşivi (~/.claude/projects) proje listesini kirletir, listeye girmez.
 const GECICI_KLASOR = /[\\/]appdata[\\/]local[\\/]temp([\\/]|$)/i;
+const CLAUDE_ARSIV = /[\\/]\.claude[\\/]projects[\\/]/i;
 function gecerliKlasor(d) {
   try {
     if (!d || !fs.statSync(d).isDirectory()) return false;
-    if (GECICI_KLASOR.test(String(d))) return false;
+    if (GECICI_KLASOR.test(String(d)) || CLAUDE_ARSIV.test(String(d))) return false;
     const tmp = os.tmpdir();
     if (String(d).toLowerCase() === tmp.toLowerCase() || String(d).toLowerCase().startsWith((tmp + path.sep).toLowerCase())) return false;
     return true;
@@ -326,6 +328,8 @@ function pencereOlustur() {
   if (araIx >= 0 && argv[araIx + 1]) sorgu.ara = argv[araIx + 1];
   if (argv.includes('--ekran-kumanda')) sorgu.kumanda = '1'; // test: Kumanda modalını açık yakala
   if (argv.includes('--ekran-modal')) sorgu.modal = '1';
+  const silIx = argv.indexOf('--ekran-sil');
+  if (silIx >= 0 && argv[silIx + 1]) sorgu.sil = argv[silIx + 1]; // test: modalda şu projeyi listeden kaldır
   const fsIx = argv.indexOf('--ekran-fs');
   if (fsIx >= 0 && argv[fsIx + 1]) sorgu.fs = argv[fsIx + 1];
   if (argv.includes('--ekran-igne')) {

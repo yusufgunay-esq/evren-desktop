@@ -1942,6 +1942,9 @@ yukle().then(() => {
   if (new URLSearchParams(location.search).get('palet')) paletAc();
   if (new URLSearchParams(location.search).get('kumanda')) setTimeout(kumandaModalAc, 250);
   if (new URLSearchParams(location.search).get('modal')) setTimeout(yeniOturumModalAc, 350); // test: modalı açık yakala
+  // test: modal açıldıktan sonra şu projenin sil düğmesine bas (listeden kaldırma akışını doğrular)
+  const silParam = new URLSearchParams(location.search).get('sil');
+  if (silParam) setTimeout(() => { const b = document.querySelector(`[data-sil="${CSS.escape(silParam)}"]`); if (b) b.click(); }, 900);
   const n = Number(new URLSearchParams(location.search).get('oturum') || 0);
   if (n) (async () => { for (let i = 0; i < n; i++) { if (i) projeSec((S.projeler[i] || S.projeler[0]).yol); await basla(); await bekle(700); } const t = aktifTerm(); if (t && new URLSearchParams(location.search).get('yaz')) window.evren.yaz(aktifOturum().pid, 'echo EVREN coklu oturum testi' + String.fromCharCode(13)); if (new URLSearchParams(location.search).get('odak')) odakToggle(true); })();
 });
