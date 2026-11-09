@@ -1176,7 +1176,7 @@ kbd {
 /* ---------- Yeni Oturum Başlat Modalı ---------- */
 .oturum-kutu {
   width: min(720px, calc(100% - 32px));
-  max-height: 86vh;
+  max-height: 92vh;
   display: flex;
   flex-direction: column;
   background: linear-gradient(180deg, #14181e 0%, #0f1317 132px);
@@ -1214,11 +1214,11 @@ kbd {
   color: var(--text-3);
 }
 .oturum-modal-govde {
-  padding: 18px 22px 20px;
+  padding: 16px 22px 4px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 16px;
   scrollbar-width: thin;
   scrollbar-color: var(--bg-4) transparent;
 }
@@ -1229,7 +1229,7 @@ kbd {
 .oturum-modal-bolum {
   display: flex;
   flex-direction: column;
-  gap: 11px;
+  gap: 9px;
 }
 .oturum-bolum-ust {
   display: flex;
@@ -1316,7 +1316,7 @@ kbd {
   flex-direction: row;
   align-items: center;
   gap: 11px;
-  padding: 9px 12px;
+  padding: 7px 12px;
 }
 .proje-monogram {
   flex: none;
@@ -1445,6 +1445,124 @@ kbd {
   border: 1px dashed var(--line-2);
   border-radius: 8px;
 }
+
+/* Çalışma alanı: başlık eylemleri, proje arama ve taşma */
+.oturum-bolum-eylemler { display: flex; align-items: center; gap: 14px; }
+.oturum-proje-ust {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 9px;
+  padding: 0 10px;
+  height: 30px;
+  border: 1px solid var(--line-2);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.018);
+}
+.oturum-proje-ust .ic { width: 12px; height: 12px; color: var(--text-3); flex: none; }
+.oturum-proje-ust input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: 12px/1 var(--sans);
+  outline: none;
+}
+.oturum-proje-ust input::placeholder { color: var(--text-4); }
+.oturum-proje-ust .mono { font-size: 10px; color: var(--text-4); }
+.oturum-proje-izgara.kaydir {
+  max-height: 216px;
+  overflow-y: auto;
+  padding-right: 3px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-3) transparent;
+}
+.oturum-proje-daha-satir { margin-top: 7px; text-align: center; }
+.oturum-kart-duzenle {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin: -3px -2px -3px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+.oturum-kart-duzenle .ic { width: 11px; height: 11px; }
+.oturum-secim-kart:hover .oturum-kart-duzenle,
+.oturum-secim-kart:focus-within .oturum-kart-duzenle { opacity: 1; }
+.oturum-kart-duzenle:hover,
+.oturum-kart-duzenle:focus-visible {
+  outline: none;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+}
+/* Projesiz ve tek seferlik klasör kartları: sakin, ayrı ton */
+.proje-bos-kart .proje-monogram { background: transparent; border-style: dashed; }
+.proje-bos-kart.aktif .proje-monogram { background: var(--text); border-style: solid; }
+.proje-gecici-kart { border-style: dashed; }
+
+/* Proje düzenleme modalı */
+.proje-duzenle-kutu { width: min(520px, calc(100vw - 48px)); }
+.proje-duzenle-govde {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px 22px 20px;
+}
+.proje-alan { display: flex; flex-direction: column; gap: 7px; }
+.proje-alan-ad {
+  font: 500 10.5px/1 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-4);
+}
+.proje-alan input {
+  height: 34px;
+  padding: 0 11px;
+  border: 1px solid var(--line-2);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text);
+  font: 13px/1 var(--sans);
+  outline: none;
+  transition: border-color 0.14s ease, background 0.14s ease;
+}
+.proje-alan input:focus { border-color: var(--line-3); background: rgba(255, 255, 255, 0.04); }
+.proje-klasorler {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border: 1px solid var(--line-2);
+  border-radius: 7px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.012);
+}
+.proje-klasor-satir {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  min-width: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+.proje-klasor-satir:last-child { border-bottom: 0; }
+.proje-klasor-yol { flex: 1; min-width: 0; font-size: 11px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.proje-klasor-bos {
+  padding: 14px 10px;
+  font-size: 11.5px;
+  color: var(--text-3);
+  text-align: center;
+}
+.proje-ipucu { margin: 0; font-size: 11px; color: var(--text-4); }
+.proje-alan > .btn-baglanti { align-self: flex-start; }
 
 
 .oturum-modal-ayak {

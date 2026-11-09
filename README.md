@@ -37,6 +37,7 @@ Amaç, kamu ve savunma sanayii ekosistemindeki geliştiricilere yerli altyapı �
 | **Odak modu** | `Ctrl+Shift+F` ile kenar paneli, sekmeler ve durum çubuğu kaybolur; ekranda yalnız terminal kalır. |
 | **Oturum geçmişi** | Kenar panelindeki *Geçmiş* bölümü, seçili projenin Claude Code kayıtlarını (`~/.claude/projects`) listeler: başlık, zaman, *çalışıyor* / *bitti*. Tıklayınca `claude --resume` ile aynı sohbet yeni sekmede sürer; zaten açık olan sekmeye geçer. |
 | **Tek tık oturum** | Model ve proje seç, `Enter`. Ortam değişkenleri, bağlam penceresi ve çıktı sınırı modele göre otomatik ayarlanır. |
+| **Esnek çalışma alanı** | Proje = ad + bir ya da daha çok klasör; ad ve klasörler düzenlenebilir, ek klasörler oturuma `--add-dir` ile bağlanır. Proje seçmeden (**Projesiz**, `%USERPROFILE%\EVREN`) ya da tek seferlik bir klasörde çalışılabilir. Proje çoğalınca arama ve *Tümünü göster* devreye girer. |
 | **Canlı model kataloğu** | Liste `/v1/models` uç noktasından gelir; her modelin bağlam boyutu ve çıktı sınırı API'nin bildirdiği değerdir. |
 | **Gerçek terminal** | Windows ConPTY + xterm.js; renkler, imleç, kopyala/yapıştır ve yeniden boyutlandırma yerel terminal gibi çalışır. |
 | **Proje özeti** | Seçili deponun son 26 haftalık commit ısı haritası, dil dağılımı, dosya ve değişiklik sayısı, son commit; yalnız yerel git, ağ yok. |
@@ -56,21 +57,19 @@ Amaç, kamu ve savunma sanayii ekosistemindeki geliştiricilere yerli altyapı �
 
 ## Şef (orkestratör)
 
-<p align="center">
-  <img src="docs/ekran-sef-modal.png" alt="Yeni Oturum: Şef rolü ve kod yazma anahtarı" width="720" />
-</p>
-
 Hedefi verirsin; Şef planlar, `İŞ` iş emirlerini yazar ve işi EVREN worker oturumlarına devreder. Kendisi kod yazmaz — *Kod yazma* kapalıyken düzenleme araçları oturumdan kaldırılır; böylece planlama bağlamı küçük kalır ve her yazma bir worker işi olur. Worker modeli İŞ'e göre seçilir: DeepSeek (rutin/geniş), GLM (çetrefilli mantık), Qwen (hafif metin), Gemma / Qwen-VL (görsel).
 
 <p align="center">
-  <img src="docs/ekran-sef-oturum.png" alt="Şef oturumu: ŞEF rozeti ve menekşe tonlu terminal" width="720" />
+  <img src="docs/ekran-sef-oturum.png" alt="Şef oturumu: menekşe tonlu terminalde hedef, İŞ listesi ve worker raporları; solda ŞEF çipli oturum kartı ve İŞ ağacı" width="920" />
+</p>
+
+<p align="center">
+  <img src="docs/ekran-sef-modal.png" alt="Yeni Oturum: Şef rolü ve kod yazma anahtarı" width="460" />
+  &nbsp;&nbsp;&nbsp;
+  <img src="docs/ekran-sef-kart.png" alt="Kenar panel: ŞEF çipi, akan menekşe ray, İŞ NNN ağacı ve çalışan/toplam rozeti" width="330" />
 </p>
 
 Kenar panelde Şef oturumu ince, akan bir menekşe rayla işaretlenir; açtığı işler `İŞ NNN` çipleriyle ağaçta görünür, kartta çalışan/toplam sayısı yazar. Komut paletinden `Şef oturumu (/sef)` ile açılır.
-
-<p align="center">
-  <img src="docs/ekran-sef-kart.png" alt="Kenar panel: ŞEF çipi, akan menekşe ray, İŞ NNN ağacı ve çalışan/toplam rozeti" width="420" />
-</p>
 
 ## Gereksinimler
 
@@ -97,7 +96,7 @@ npm run basla      # ya da EVREN.bat (konsolsuz)
 
 1. **Bağlantı** bölümünde durum yeşilse API erişilebilir.
 2. **Modeller** listesinden işe uygun modeli seç (ör. uzun bağlam için 1M, çetrefilli arayüz işleri için 512K).
-3. **Projeler** listesinden klasörü seç ya da `+ Ekle` ile yenisini ekle.
+3. **Çalışma alanı**: projeyi seç, `Klasörde çalış…` ile tek seferlik bir klasör aç ya da **Projesiz** başla. Kalem simgesiyle projenin adını ve ek klasörlerini düzenle.
 4. `Enter` ya da **Oturumu başlat**.
 
 ### Kısayollar
