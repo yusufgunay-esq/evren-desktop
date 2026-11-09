@@ -39,6 +39,20 @@ const EKRAN_BOSLUK = Math.max(0, Number(process.env.EVREN_EKRAN_BOSLUK || 0) || 
 const TEST_KOMUT = process.env.EVREN_TEST_KOMUT || '';
 
 
+// Tek örnek kilidi: EVREN ikinci kez açılırsa yeni sunucu/port üretilmez; var olan pencere öne gelir.
+// Bu kilit olmadan ikinci örnek 4141'i dolu bulup portu artırıyor, telefondaki eşleşme bayatlıyordu.
+const tekKilit = process.env.EVREN_COKLU === '1' ? true : app.requestSingleInstanceLock();
+if (!tekKilit) app.quit();
+else {
+  app.on('second-instance', () => {
+    if (pencere && !pencere.isDestroyed()) {
+      if (pencere.isMinimized()) pencere.restore();
+      pencere.show();
+      pencere.focus();
+    }
+  });
+}
+
 let pencere = null;
 const kabuklar = new Map(); // oturum kimliği -> pty (çoklu oturum)
 const oturumBilgi = new Map(); // kimlik -> { modelId, modelAd, dizin, proje, devam, baslangic } (kumanda listesi için)
@@ -91,17 +105,84 @@ function gecerliKlasor(d) {
 }
 
 
+// ---- Projeler ----
+// Proje = ad + bir ya da daha çok klasör. Oturum ana klasörde açılır, ek klasörler
+// `--add-dir` ile verilir. Proje olmadan da çalışılır: tek seferlik bir klasörde ya da
+// serbest çalışma alanında (EVREN).
+const SERBEST_DIZIN = path.join(os.homedir(), 'EVREN');
+const PROJE_SINIRI = 200;
+function serbestDizin() {
+  try { fs.mkdirSync(SERBEST_DIZIN, { recursive: true }); } catch {}
+  return SERBEST_DIZIN;
+}
+function projeNesnesi(ham) {
+  if (!ham || typeof ham !== 'object') return null;
+  const yollar = [];
+  for (const y of [ham.yol, ...(Array.isArray(ham.yollar) ? ham.yollar : [])]) {
+    if (typeof y !== 'string' || !y.trim()) continue;
+    const temiz = path.resolve(y.trim());
+    if (!yollar.includes(temiz)) yollar.push(temiz);
+  }
+  if (!yollar.length || !gecerliKlasor(yollar[0])) return null;
+  const ad = String(ham.ad || '').trim().slice(0, 60) || path.basename(yollar[0]) || yollar[0];
+  return { yol: yollar[0], ad, yollar, son: Number(ham.son) || 0 };
+}
+function projeleriOku() {
+  const ham = ayarOku();
+  const kaynak = Array.isArray(ham.projeler)
+    ? ham.projeler
+    // Eski sürüm yalnız klasör listesi tutuyordu; her klasör adıyla bir proje olur.
+    : (Array.isArray(ham.sonKlasorler) ? ham.sonKlasorler : []).map((yol, i) => ({ yol, ad: path.basename(yol) || yol, yollar: [yol], son: -i }));
+  const liste = [];
+  for (const p of kaynak) {
+    const n = projeNesnesi(p);
+    if (n && !liste.some((x) => x.yol === n.yol)) liste.push(n);
+    if (liste.length >= PROJE_SINIRI) break;
+  }
+  return liste;
+}
+function projeleriYaz(liste) {
+  const temiz = (Array.isArray(liste) ? liste : []).map(projeNesnesi).filter(Boolean).slice(0, PROJE_SINIRI);
+  ayarYaz({ projeler: temiz });
+  return temiz;
+}
+function projeListesi() {
+  return projeleriOku()
+    .sort((a, b) => (b.son || 0) - (a.son || 0))
+    .map((x) => ({ yol: x.yol, ad: x.ad, dal: motor.gitDal(x.yol), yollar: x.yollar, ekler: x.yollar.slice(1) }));
+}
+function sonKlasorListesi() {
+  const sonlar = Array.isArray(ayarOku().sonKlasorler) ? ayarOku().sonKlasorler : [];
+  return sonlar.filter(gecerliKlasor).slice(0, 8).map((d) => ({ yol: d, ad: path.basename(d) || d, dal: motor.gitDal(d) }));
+}
+// Sürmeli oturumun jsonl dosyasını kimlikten bulup çalıştığı klasörü okur.
+function devamDizini(kimlik) {
+  const kok = path.join(os.homedir(), '.claude', 'projects');
+  try {
+    for (const d of fs.readdirSync(kok)) {
+      const f = path.join(kok, d, String(kimlik) + '.jsonl');
+      if (fs.existsSync(f)) {
+        const cwd = gecmis.cwdOku(f);
+        if (cwd && gecerliKlasor(cwd)) return cwd;
+      }
+    }
+  } catch {}
+  return '';
+}
+
+
 // Yerel durum: ağ beklemeden anında döner (ilk boyama hızlı olsun).
 async function yerelDurum() {
   const p = await panelModulu();
   const anahtarVar = !!(await anahtar());
   const ham = ayarOku();
   const modeller = modelOnbellek || p.MODELLER;
-  const sonlar = Array.isArray(ham.sonKlasorler) ? ham.sonKlasorler.filter(gecerliKlasor) : [];
   return {
     anahtarVar, modeller,
     sonModel: typeof ham.sonModel === 'string' ? ham.sonModel : modeller[0] && modeller[0].id,
-    projeler: sonlar.map((d) => ({ yol: d, ad: path.basename(d) || d, dal: p.gitDal(d) })),
+    projeler: projeListesi(),
+    sonKlasorler: sonKlasorListesi(),
+    serbestDizin: SERBEST_DIZIN,
   };
 }
 
@@ -178,13 +259,26 @@ function orkestratorBrifi(yazma) {
 }
 
 // بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ — yeni bir Claude Code oturumu (PTY) açar; başlıkta verilen dizinde çalışır, `devam` verilirse eski oturumu sürdürür.
-async function oturumBaslat({ modelId, dizin, cols, rows, devam, forkSession, orkestrator, kodYazma }) {
+async function oturumBaslat({ modelId, dizin, ekDizinler, projeAd, cols, rows, devam, forkSession, orkestrator, kodYazma }) {
   if (devam != null && !gecmis.OTURUM_KIMLIK.test(String(devam))) throw new Error('Geçersiz oturum kimliği.');
   if (kabuklar.size >= 8) throw new Error('En çok 8 oturum açık olabilir; birini kapatın.');
   const p = await panelModulu();
   const anahtarDeger = await anahtar();
   if (!anahtarDeger) throw new Error('EVREN API anahtarı yok. Ana ekrandaki alana anahtarı girin.');
-  if (!dizin || !fs.existsSync(dizin)) throw new Error(`Klasör yok: ${dizin}`);
+  // Klasör verilmediyse: sürmeli oturumun kendi dizini, yoksa serbest çalışma alanı.
+  let hedefDizin = typeof dizin === 'string' ? dizin.trim() : '';
+  if (!hedefDizin && devam) hedefDizin = devamDizini(devam);
+  const serbestMi = !hedefDizin;
+  if (serbestMi) hedefDizin = serbestDizin();
+  else if (!fs.existsSync(hedefDizin)) throw new Error(`Klasör yok: ${hedefDizin}`);
+  // Projenin ek klasörleri: var olan, ana klasörden farklı ve tekrarsız olanlar.
+  const ekler = [];
+  for (const d of (Array.isArray(ekDizinler) ? ekDizinler : [])) {
+    if (typeof d !== 'string' || !d.trim()) continue;
+    const tam = path.resolve(d.trim());
+    if (tam === path.resolve(hedefDizin) || ekler.includes(tam) || !fs.existsSync(tam)) continue;
+    ekler.push(tam);
+  }
 
 
   // Ağ beklenmez: model bilgisi açılışta gelen canlı listeden ya da yedek listeden alınır.
@@ -222,13 +316,13 @@ async function oturumBaslat({ modelId, dizin, cols, rows, devam, forkSession, or
     cols: Number.isFinite(Number(cols)) && Number(cols) > 20 ? Number(cols) : 120,
     rows: Number.isFinite(Number(rows)) && Number(rows) > 5 ? Number(rows) : 30,
   };
-  const secenek = { name: 'xterm-256color', cols: olcu.cols, rows: olcu.rows, cwd: dizin, env, useConpty: true };
+  const secenek = { name: 'xterm-256color', cols: olcu.cols, rows: olcu.rows, cwd: hedefDizin, env, useConpty: true };
   const ork = !!orkestrator;
   const yazma = ork ? kodYazma === true : true;
   let bu;
   if (TEST_KOMUT) bu = pty.spawn(TEST_KOMUT, [], secenek);
   else {
-    const arg = ['--dangerously-skip-permissions', ...(devam ? ['--resume', String(devam)] : []), ...(forkSession ? ['--fork-session'] : [])];
+    const arg = ['--dangerously-skip-permissions', ...(devam ? ['--resume', String(devam)] : []), ...(forkSession ? ['--fork-session'] : []), ...ekler.flatMap((d) => ['--add-dir', d])];
     if (ork) {
       arg.push('--append-system-prompt', orkestratorBrifi(yazma));
       if (!yazma) arg.push('--disallowedTools', 'Edit', 'Write', 'NotebookEdit');
@@ -245,8 +339,9 @@ async function oturumBaslat({ modelId, dizin, cols, rows, devam, forkSession, or
     id,
     modelId: model.id || '',
     modelAd: model.ad || model.id || '',
-    dizin,
-    proje: path.basename(dizin) || dizin,
+    dizin: hedefDizin,
+    ekler,
+    proje: String(projeAd || '').trim() || (serbestMi ? 'EVREN çalışma alanı' : (path.basename(hedefDizin) || hedefDizin)),
     devam: devam ? String(devam) : null,
     orkestrator: ork,
     kodYazma: yazma,
@@ -258,7 +353,7 @@ async function oturumBaslat({ modelId, dizin, cols, rows, devam, forkSession, or
     let deneme = 0;
     const ara = setInterval(() => {
       if (!kabuklar.has(id) || deneme++ > 120) { clearInterval(ara); return; }
-      const dosya = sohbet.oturumDosyasiBul({ dizin, baslangicMs: bilgi.baslangic });
+      const dosya = sohbet.oturumDosyasiBul({ dizin: hedefDizin, baslangicMs: bilgi.baslangic });
       if (!dosya) return;
       bilgi.devam = path.basename(dosya, '.jsonl');
       clearInterval(ara);
@@ -280,8 +375,17 @@ async function oturumBaslat({ modelId, dizin, cols, rows, devam, forkSession, or
     remoteSunucu.aktifOturumId = id;
     remoteSunucu.oturumListesiGuncelle();
   }
-  ayarYaz({ sonModel: model.id, sonKlasorler: [dizin, ...(ayarOku().sonKlasorler || []).filter((x) => x !== dizin)].slice(0, 8) });
-  return { id, model: model.id, modelAd: model.ad || model.id, dizin, proje: bilgi.proje, devam: bilgi.devam, orkestrator: ork, kodYazma: yazma };
+  if (!serbestMi) {
+    // Son klasörler: tek seferlik klasör başlangıçları için; serbest alan listeye girmez.
+    ayarYaz({ sonModel: model.id, sonKlasorler: [hedefDizin, ...(ayarOku().sonKlasorler || []).filter((x) => x !== hedefDizin)].slice(0, 8) });
+    // Bu klasör bir projeye aitse projeyi son kullanılanlara taşı.
+    const projeler = projeleriOku();
+    const ix = projeler.findIndex((x) => x.yol === path.resolve(hedefDizin));
+    if (ix >= 0) { projeler[ix].son = Date.now(); projeleriYaz(projeler); }
+  } else {
+    ayarYaz({ sonModel: model.id });
+  }
+  return { id, model: model.id, modelAd: model.ad || model.id, dizin: hedefDizin, ekler, proje: bilgi.proje, devam: bilgi.devam, orkestrator: ork, kodYazma: yazma };
 }
 
 
@@ -307,13 +411,9 @@ function ptyBosalt(id) {
 }
 
 
-// Kumanda listesi için proje listesi: son kullanılan klasörler (var olanlar), git dalıyla.
+// Kumanda listesi için proje listesi (son kullanılanlar önce), git dalıyla.
 function kumandaProjeleri() {
-  const p = motor;
-  const sonlar = Array.isArray(ayarOku().sonKlasorler) ? ayarOku().sonKlasorler : [];
-  return sonlar
-    .filter(gecerliKlasor)
-    .map((d) => ({ yol: d, ad: path.basename(d) || d, dal: p.gitDal(d) }));
+  return projeListesi();
 }
 
 
@@ -464,6 +564,7 @@ function pencereOlustur() {
   if (araIx >= 0 && argv[araIx + 1]) sorgu.ara = argv[araIx + 1];
   if (argv.includes('--ekran-kumanda')) sorgu.kumanda = '1'; // test: Kumanda modalını açık yakala
   if (argv.includes('--ekran-modal')) sorgu.modal = '1';
+  if (argv.includes('--ekran-proje-duzenle')) sorgu.projeDuzenle = '1'; // test: proje düzenleme modalı
   if (argv.includes('--ekran-rol')) sorgu.rol = '1'; // test: orkestratör rolü seçili modal
   if (EKRAN_SEF) sorgu.sef = '1'; // test: kenar panelde Şef kartı görünümü
   if (EKRAN_ORK) { sorgu.oturum = '1'; sorgu.ork = '1'; } // test: orkestratör oturumu aç
@@ -525,6 +626,7 @@ function pencereOlustur() {
 
 
 app.whenReady().then(() => {
+if (!tekKilit) return; // ikinci örnek: pencere/sunucu açma, mevcut örneğe odaklan
 function remoteSunucuBaslat() {
   remoteSunucu = new RemoteSunucu({
     veriDizini: app.getPath('userData'), // kumanda.json (token, port, IP) burada kalıcı tutulur
@@ -641,24 +743,55 @@ ipcMain.handle('api', async () => {
 });
 
 
-// Son projeler listesinden kaldırır. Diskten hiçbir şey silmez; yalnız liste kaydı düşer.
+// Projeyi listeden kaldırır. Diskten hiçbir şey silmez; yalnız proje kaydı düşer.
 ipcMain.handle('proje-sil', async (_e, yol) => {
-  const hedef = String(yol || '');
-  if (!hedef) return { ok: false, projeler: kumandaProjeleri() };
-  const kalan = (ayarOku().sonKlasorler || []).filter((x) => x !== hedef);
-  ayarYaz({ sonKlasorler: kalan });
-  return { ok: true, projeler: kumandaProjeleri() };
+  const hedef = String(yol || '').trim();
+  if (!hedef) return { ok: false, projeler: projeListesi() };
+  const kalan = projeleriOku().filter((x) => path.resolve(x.yol) !== path.resolve(hedef));
+  projeleriYaz(kalan);
+  return { ok: true, projeler: projeListesi() };
 });
 
 
-ipcMain.handle('klasor-sec', async () => {
+// Proje kaydet / düzenle: ad + bir ya da daha çok klasör. İlk klasör ana klasördür.
+ipcMain.handle('proje-kaydet', async (_e, ham) => {
+  try {
+    const istek = ham && typeof ham === 'object' ? ham : {};
+    const yollar = [];
+    for (const y of (Array.isArray(istek.yollar) ? istek.yollar : [istek.yol])) {
+      if (typeof y !== 'string' || !y.trim()) continue;
+      const tam = path.resolve(y.trim());
+      if (!yollar.includes(tam) && fs.existsSync(tam)) yollar.push(tam);
+    }
+    if (!yollar.length) return { ok: false, hata: 'Geçerli bir klasör seçilmedi.' };
+    const nesne = {
+      yol: yollar[0],
+      ad: String(istek.ad || '').trim().slice(0, 60) || path.basename(yollar[0]) || yollar[0],
+      yollar,
+      son: Date.now(),
+    };
+    const liste = projeleriOku();
+    const eski = String(istek.eskiYol || '').trim();
+    const ix = liste.findIndex((x) => x.yol === path.resolve(eski || nesne.yol));
+    if (ix >= 0) liste[ix] = nesne; else liste.unshift(nesne);
+    projeleriYaz(liste);
+    return { ok: true, projeler: projeListesi() };
+  } catch (e) {
+    return { ok: false, hata: String((e && e.message) || e) };
+  }
+});
+
+
+// Klasör seç: proje kaydı oluşturmaz. `kaydet` false ise son klasörlere de yazmaz.
+ipcMain.handle('klasor-sec', async (_e, kaydet) => {
   const onceki = (ayarOku().sonKlasorler || [])[0] || os.homedir();
-  const r = await dialog.showOpenDialog(pencere, { title: 'Proje klasörü seç', defaultPath: onceki, properties: ['openDirectory', 'createDirectory'] });
+  const r = await dialog.showOpenDialog(pencere, { title: 'Çalışılacak klasörü seç', defaultPath: onceki, properties: ['openDirectory', 'createDirectory'] });
   if (r.canceled || !r.filePaths.length) return null;
   const yol = r.filePaths[0];
-  const p = await panelModulu();
-  ayarYaz({ sonKlasorler: [yol, ...(ayarOku().sonKlasorler || []).filter((x) => x !== yol)].slice(0, 8) });
-  return { yol, ad: path.basename(yol) || yol, dal: p.gitDal(yol) };
+  if (kaydet !== false) {
+    ayarYaz({ sonKlasorler: [yol, ...(ayarOku().sonKlasorler || []).filter((x) => x !== yol)].slice(0, 8) });
+  }
+  return { yol, ad: path.basename(yol) || yol, dal: motor.gitDal(yol) };
 });
 
 

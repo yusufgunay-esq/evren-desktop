@@ -34,6 +34,7 @@
       <symbol id="i-remote" viewBox="0 0 16 16"><rect x="3.5" y="1.5" width="9" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="11.5" r="1" fill="currentColor"/><path d="M6 4h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></symbol>
       <symbol id="i-chat" viewBox="0 0 16 16"><path d="M2.5 3.5h11a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H6.5l-3 2.5V4.5a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" /></symbol>
       <symbol id="i-close" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></symbol>
+      <symbol id="i-edit" viewBox="0 0 16 16"><path d="M3 13h2.5L13 5.5 10.5 3 3 10.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" /><path d="M9.2 4.3 11.7 6.8" fill="none" stroke="currentColor" stroke-width="1.3" /></symbol>
       <symbol id="i-evren" viewBox="0 0 16 16"><path d="M10.9 2.3a6 6 0 1 0 2.8 8.5 5 5 0 0 1-2.8-8.5z" fill="currentColor"/></symbol>
       <symbol id="i-claude" viewBox="0 0 16 16"><path d="M8 2.5v11M3.2 5.2l9.6 5.6M12.8 5.2l-9.6 5.6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
       <symbol id="i-clock" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 4.8V8l2.2 1.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></symbol>
@@ -398,11 +399,22 @@
         <div class="oturum-modal-bolum">
           <div class="oturum-bolum-ust">
             <span class="oturum-bolum-baslik"><b>01</b>Çalışma Alanı</span>
-            <button class="btn-baglanti" id="modalKlasorEkleBtn" type="button">
-              <svg class="ic"><use href="#i-plus" /></svg><span>Başka Klasör Seç…</span>
-            </button>
+            <div class="oturum-bolum-eylemler">
+              <button class="btn-baglanti" id="modalKlasorCalisBtn" type="button">Klasörde çalış…</button>
+              <button class="btn-baglanti" id="modalKlasorEkleBtn" type="button">
+                <svg class="ic"><use href="#i-plus" /></svg><span>Yeni proje…</span>
+              </button>
+            </div>
+          </div>
+          <div class="oturum-proje-ust" id="modalProjeUst" hidden>
+            <svg class="ic" aria-hidden="true"><use href="#i-search" /></svg>
+            <input id="modalProjeAra" type="search" placeholder="Proje ara…" autocomplete="off" spellcheck="false" />
+            <span class="mono" id="modalProjeSay">0</span>
           </div>
           <div class="oturum-proje-izgara" id="modalProjeIzgara"></div>
+          <div class="oturum-proje-daha-satir" id="modalProjeDahaSatir" hidden>
+            <button class="btn-baglanti" id="modalProjeDahaBtn" type="button">Tümünü göster</button>
+          </div>
         </div>
 
 
@@ -452,6 +464,45 @@
           <button class="btn primary" id="yeniOturumBaslatBtn" type="button">
             <svg class="ic"><use href="#i-play" /></svg><span>Oturumu Başlat</span><kbd>Enter</kbd>
           </button>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+
+  <!-- Proje Düzenle: ad ve klasörler -->
+  <div class="modal-ortu" id="projeDuzenleModal" hidden>
+    <div class="modal-kutu oturum-kutu proje-duzenle-kutu" role="dialog" aria-modal="true" aria-labelledby="projeDuzenleBaslik">
+      <header class="modal-baslik oturum-baslik">
+        <div class="oturum-baslik-metin">
+          <span class="oturum-kicker">EVREN · PROJE</span>
+          <h3 id="projeDuzenleBaslik">Projeyi Düzenle</h3>
+          <p class="oturum-alt">Ad ver, birden çok klasör bağla. Ana klasörde çalışılır.</p>
+        </div>
+        <button class="modal-kapat" id="projeDuzenleKapatBtn" type="button" aria-label="Kapat">×</button>
+      </header>
+      <div class="proje-duzenle-govde">
+        <label class="proje-alan">
+          <span class="proje-alan-ad">Proje adı</span>
+          <input id="projeAdGiris" type="text" maxlength="60" placeholder="Proje adı" autocomplete="off" spellcheck="false" />
+        </label>
+        <div class="proje-alan">
+          <span class="proje-alan-ad">Klasörler</span>
+          <div class="proje-klasorler" id="projeKlasorler"></div>
+          <button class="btn-baglanti" id="projeKlasorEkleBtn" type="button">
+            <svg class="ic"><use href="#i-plus" /></svg><span>Klasör ekle</span>
+          </button>
+        </div>
+        <p class="proje-ipucu">Ek klasörler aynı oturuma <span class="mono">--add-dir</span> ile bağlanır.</p>
+      </div>
+      <footer class="oturum-modal-ayak">
+        <div class="oturum-modal-ozet">
+          <span class="oturum-ozet-etiket">Proje</span>
+          <span class="oturum-secili-bilgi" id="projeDuzenleOzet">—</span>
+        </div>
+        <div class="oturum-modal-eylemler">
+          <button class="btn ghost" id="projeDuzenleVazgecBtn" type="button">Vazgeç</button>
+          <button class="btn primary" id="projeDuzenleKaydetBtn" type="button">Kaydet</button>
         </div>
       </footer>
     </div>

@@ -10,8 +10,9 @@ contextBridge.exposeInMainWorld('evren', {
   durum: () => ipcRenderer.invoke('durum'),
   api: () => ipcRenderer.invoke('api'),
   anahtarKaydet: (deger) => ipcRenderer.invoke('anahtar-kaydet', deger),
-  klasorSec: () => ipcRenderer.invoke('klasor-sec'),
-  projeSil: (yol) => ipcRenderer.invoke('proje-sil', yol), // yalnız son projeler listesinden düşürür
+  klasorSec: (kaydet) => ipcRenderer.invoke('klasor-sec', kaydet), // proje kaydı oluşturmaz
+  projeKaydet: (proje) => ipcRenderer.invoke('proje-kaydet', proje),
+  projeSil: (yol) => ipcRenderer.invoke('proje-sil', yol), // yalnız proje listesinden düşürür
   baslat: (secim) => ipcRenderer.invoke('baslat', secim),
   gecmis: (dizin) => ipcRenderer.invoke('gecmis', dizin),
   gecmisBlok: () => ipcRenderer.invoke('gecmis-blok'), // ölçüm: ana süreçte geçmiş taraması için harcanan süre
