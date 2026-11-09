@@ -51,6 +51,13 @@ const S = {
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const kisaYol = (p, n = 34) => (!p ? '' : p.length <= n ? p : p.slice(0, 3) + '…' + p.slice(-(n - 4)));
 const kisaBaglam = (n) => (!n ? '—' : n >= 1e6 ? `${Math.round(n / 1048576)}M` : `${Math.round(n / 1024)}K`);
+// Proje monogramı: "gunay-studio" → GS, "Ahali" → A, "evren-desktop" → ED.
+const monogram = (ad) => {
+  const p = String(ad || '').split(/[\s._-]+/).filter(Boolean);
+  if (!p.length) return '?';
+  const harf = p.length > 1 ? p[0][0] + p[1][0] : p[0][0];
+  return harf.toLocaleUpperCase('tr');
+};
 const seciliModel = () => S.modeller.find((m) => m.id === S.model) || S.modeller[0];
 const seciliProje = () => S.projeler.find((p) => p.yol === S.proje);
 const bekle = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1640,26 +1647,34 @@ function yeniOturumModalGuncelle() {
   if (!modalSecilenModel && S.modeller.length) modalSecilenModel = S.model || S.modeller[0].id;
   // Proje kartları (kart div: içinde sil düğmesi olabilsin; iç içe buton geçersizdir)
   pIzgara.innerHTML = S.projeler.length ? S.projeler.map((p) => `
-    <div class="oturum-secim-kart${p.yol === modalSecilenProje ? ' aktif' : ''}" role="button" tabindex="0" data-proje="${esc(p.yol)}" aria-pressed="${p.yol === modalSecilenProje}">
-      <div class="oturum-secim-kart-ust">
-        <span class="oturum-secim-kart-ad" title="${esc(p.ad)}">${esc(p.ad)}</span>
-        ${p.dal ? `<span class="tag mono">${esc(p.dal)}</span>` : ''}
-      </div>
-      <div class="oturum-kart-alt-satir">
-        <span class="oturum-secim-kart-alt mono" title="${esc(p.yol)}">${esc(kisaYol(p.yol, 28))}</span>
-        <button class="oturum-kart-sil" type="button" data-sil="${esc(p.yol)}" title="Listeden kaldır (disk silinmez)" aria-label="${esc(p.ad)} projesini listeden kaldır">
-          <svg class="ic"><use href="#i-close" /></svg>
-        </button>
+    <div class="oturum-secim-kart proje-kart${p.yol === modalSecilenProje ? ' aktif' : ''}" role="button" tabindex="0" data-proje="${esc(p.yol)}" aria-pressed="${p.yol === modalSecilenProje}">
+      <span class="proje-monogram" aria-hidden="true">${esc(monogram(p.ad))}</span>
+      <div class="oturum-kart-govde">
+        <div class="oturum-secim-kart-ust">
+          <span class="oturum-secim-kart-ad" title="${esc(p.ad)}">${esc(p.ad)}</span>
+          ${p.dal ? `<span class="tag mono">${esc(p.dal)}</span>` : ''}
+        </div>
+        <div class="oturum-kart-alt-satir">
+          <span class="oturum-secim-kart-alt mono" title="${esc(p.yol)}">${esc(kisaYol(p.yol, 30))}</span>
+          <button class="oturum-kart-sil" type="button" data-sil="${esc(p.yol)}" title="Listeden kaldır (disk silinmez)" aria-label="${esc(p.ad)} projesini listeden kaldır">
+            <svg class="ic"><use href="#i-close" /></svg>
+          </button>
+        </div>
       </div>
     </div>
   `).join('') : `<div class="oturum-bos">Son proje yok. Sağ üstten bir klasör seçin.</div>`;
-  // Model kartları: ad tam satır (uzun adlar kesilmesin), alt satırda not + bağlam rozeti
+  // Model kartları: ad tam satır, not, bağlam rozeti ve göreli bağlam çubuğu.
+  const enBuyuk = Math.max(...S.modeller.map((m) => m.baglamSayisi || 0), 1);
   mIzgara.innerHTML = S.modeller.map((m) => `
-    <button class="oturum-secim-kart${m.id === modalSecilenModel ? ' aktif' : ''}" type="button" data-model="${esc(m.id)}">
-      <span class="oturum-secim-kart-ad" title="${esc(m.ad || m.id)}">${esc(m.ad || m.id)}</span>
-      <div class="oturum-kart-alt-satir">
-        <span class="oturum-secim-kart-alt">${esc(m.not || '')}</span>
-        <span class="tag mono">${kisaBaglam(m.baglamSayisi)}</span>
+    <button class="oturum-secim-kart model-kart${m.id === modalSecilenModel ? ' aktif' : ''}" type="button" data-model="${esc(m.id)}" aria-pressed="${m.id === modalSecilenModel}">
+      <div class="oturum-secim-kart-ust">
+        <span class="oturum-secim-kart-ad" title="${esc(m.ad || m.id)}">${esc(m.ad || m.id)}</span>
+        <span class="oturum-kart-secim" aria-hidden="true"></span>
+      </div>
+      <span class="oturum-secim-kart-alt">${esc(m.not || '')}</span>
+      <div class="model-alt">
+        <span class="model-bar" aria-hidden="true"><i style="width:${Math.max(8, Math.round(((m.baglamSayisi || 0) / enBuyuk) * 100))}%"></i></span>
+        <span class="tag mono" title="${esc(kisaBaglam(m.baglamSayisi))} bağlam">${kisaBaglam(m.baglamSayisi)}</span>
       </div>
     </button>
   `).join('');
@@ -1668,7 +1683,7 @@ function yeniOturumModalGuncelle() {
   const pAd = pObj ? pObj.ad : 'Proje seçilmedi';
   const mAd = mObj ? (mObj.ad || mObj.id) : 'Model seçilmedi';
   if ($('modalSeciliBilgi')) {
-    $('modalSeciliBilgi').innerHTML = `Seçili: <b>${esc(pAd)}</b> · ${esc(mAd)}`;
+    $('modalSeciliBilgi').innerHTML = `<span class="oturum-cip">${ikon('folder')}${esc(pAd)}</span><span class="oturum-cip-ok" aria-hidden="true">›</span><span class="oturum-cip">${ikon('cpu')}${esc(mAd)}</span>`;
   }
 }
 // Açık modal varken tuval döngüsü durur; modal kapanınca kaldığı yerden sürer.

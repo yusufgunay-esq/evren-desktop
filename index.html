@@ -383,10 +383,11 @@
 <!-- Yeni Oturum Başlat: Proje ve Model Seçim Modalı -->
   <div class="modal-ortu" id="yeniOturumModal" hidden>
     <div class="modal-kutu oturum-kutu" role="dialog" aria-modal="true" aria-labelledby="yeniOturumBaslik">
-      <header class="modal-baslik">
-        <div class="modal-baslik-sol">
-          <svg class="ic"><use href="#i-play" /></svg>
-          <h3 id="yeniOturumBaslik">Yeni Oturum Başlat</h3>
+      <header class="modal-baslik oturum-baslik">
+        <div class="oturum-baslik-metin">
+          <span class="oturum-kicker">EVREN · OTURUM</span>
+          <h3 id="yeniOturumBaslik">Yeni Oturum</h3>
+          <p class="oturum-alt">Çalışma alanını ve modeli seç, hazır olduğunda başlat.</p>
         </div>
         <button class="modal-kapat" id="yeniOturumKapatBtn" type="button" aria-label="Kapat">×</button>
       </header>
@@ -396,7 +397,7 @@
         <!-- 1. Proje Seçimi -->
         <div class="oturum-modal-bolum">
           <div class="oturum-bolum-ust">
-            <span class="oturum-bolum-baslik">Çalışma Alanı (Proje)</span>
+            <span class="oturum-bolum-baslik"><b>01</b>Çalışma Alanı</span>
             <button class="btn-baglanti" id="modalKlasorEkleBtn" type="button">
               <svg class="ic"><use href="#i-plus" /></svg><span>Başka Klasör Seç…</span>
             </button>
@@ -408,7 +409,7 @@
         <!-- 2. Model Seçimi -->
         <div class="oturum-modal-bolum">
           <div class="oturum-bolum-ust">
-            <span class="oturum-bolum-baslik">Yapay Zekâ Modeli</span>
+            <span class="oturum-bolum-baslik"><b>02</b>Model</span>
             <span class="oturum-bolum-ipucu">EVREN platformunda işlenir</span>
           </div>
           <div class="oturum-model-izgara" id="modalModelIzgara"></div>
@@ -418,6 +419,7 @@
 
       <footer class="oturum-modal-ayak">
         <div class="oturum-modal-ozet">
+          <span class="oturum-ozet-etiket">Seçili</span>
           <span class="oturum-secili-bilgi" id="modalSeciliBilgi">—</span>
         </div>
         <div class="oturum-modal-eylemler">

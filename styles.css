@@ -1175,24 +1175,50 @@ kbd {
 
 /* ---------- Yeni Oturum Başlat Modalı ---------- */
 .oturum-kutu {
-  width: min(640px, calc(100% - 32px));
-  max-height: 85vh;
+  width: min(720px, calc(100% - 32px));
+  max-height: 86vh;
   display: flex;
   flex-direction: column;
-  background: var(--bg-2);
-  border: 1px solid var(--line-3);
-  border-radius: var(--r-l);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.75), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, #1a1f26 0%, var(--bg-2) 132px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  box-shadow: 0 32px 90px -12px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.1);
   overflow: hidden;
   container-type: inline-size;
   animation: acil 0.16s var(--ease);
 }
+/* Başlık: kicker + başlık + tek satır açıklama */
+.oturum-baslik {
+  align-items: flex-start;
+  padding: 17px 22px 13px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent);
+}
+.oturum-baslik .modal-kapat { margin-top: -2px; }
+.oturum-baslik-metin { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.oturum-kicker {
+  font: 500 9.5px/1 var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--text-4);
+}
+.oturum-baslik h3 {
+  font-size: 16.5px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  margin: 6px 0 0;
+}
+.oturum-alt {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
 .oturum-modal-govde {
-  padding: 16px 20px 20px;
+  padding: 18px 22px 20px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 20px;
   scrollbar-width: thin;
   scrollbar-color: var(--bg-4) transparent;
 }
@@ -1203,19 +1229,28 @@ kbd {
 .oturum-modal-bolum {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 11px;
 }
 .oturum-bolum-ust {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  padding-bottom: 1px;
 }
 .oturum-bolum-baslik {
-  font-size: 11px;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 9px;
+  font-size: 10.5px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-3);
+  letter-spacing: 0.09em;
+  color: var(--text-2);
+}
+.oturum-bolum-baslik b {
+  font: 500 9.5px/1 var(--mono);
+  letter-spacing: 0.02em;
+  color: var(--text-4);
 }
 .oturum-bolum-ipucu {
   font-size: 11px;
@@ -1244,36 +1279,67 @@ kbd {
 .oturum-proje-izgara, .oturum-model-izgara {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 10px;
 }
 .oturum-model-izgara {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 @container (max-width: 560px) {
+  .oturum-proje-izgara { grid-template-columns: minmax(0, 1fr); }
   .oturum-model-izgara { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 .oturum-secim-kart {
   min-width: 0;
-  padding: 10px 12px;
-  border-radius: var(--r);
-  background: rgba(255, 255, 255, 0.03);
+  padding: 11px 13px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
   border: 1px solid var(--line-2);
   cursor: pointer;
-  transition: background 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+  transition: background 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease, transform 0.14s var(--ease);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
   text-align: left;
 }
 .oturum-secim-kart:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.055);
   border-color: var(--line-3);
 }
+.oturum-secim-kart:active { transform: scale(0.995); }
 .oturum-secim-kart.aktif {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.3);
-  box-shadow: inset 2px 0 0 rgba(255, 255, 255, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 2px 8px rgba(0, 0, 0, 0.3);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.055));
+  border-color: rgba(255, 255, 255, 0.32);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 4px 16px rgba(0, 0, 0, 0.35);
 }
+/* Proje kartı: monogram + iki satır metin */
+.proje-kart {
+  flex-direction: row;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 12px;
+}
+.proje-monogram {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  background: var(--bg-3);
+  border: 1px solid var(--line-2);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  font: 600 10.5px/1 var(--mono);
+  letter-spacing: 0.03em;
+  color: var(--text-2);
+  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+}
+.oturum-secim-kart.aktif .proje-monogram {
+  background: var(--text);
+  border-color: var(--text);
+  color: #0b0e12;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.1);
+}
+.oturum-kart-govde { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .oturum-secim-kart-ust {
   display: flex;
   align-items: center;
@@ -1283,8 +1349,9 @@ kbd {
 }
 .oturum-secim-kart-ust .tag { flex: none; }
 .oturum-secim-kart-ad {
-  font-size: 12.5px;
-  font-weight: 550;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
@@ -1317,7 +1384,7 @@ kbd {
   place-items: center;
   width: 20px;
   height: 20px;
-  margin: -3px -4px -3px 0;
+  margin: -3px -5px -3px 0;
   padding: 0;
   border: 0;
   border-radius: 4px;
@@ -1336,6 +1403,39 @@ kbd {
   color: var(--err);
   background: rgba(238, 107, 112, 0.14);
 }
+/* Model kartı: ad, not, göreli bağlam çubuğu */
+.model-kart { padding: 10px 13px; gap: 3px; }
+.oturum-kart-secim {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--line-3);
+  background: transparent;
+  transition: background 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+}
+.oturum-secim-kart.aktif .oturum-kart-secim {
+  background: var(--text);
+  border-color: var(--text);
+  box-shadow: inset 0 0 0 3px var(--bg-2), 0 0 0 3px rgba(255, 255, 255, 0.08);
+}
+.model-alt { display: flex; align-items: center; gap: 9px; margin-top: 2px; }
+.model-bar {
+  flex: 1;
+  min-width: 0;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+.model-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--text-4);
+  transition: background 0.14s ease;
+}
+.oturum-secim-kart.aktif .model-bar i { background: var(--text-2); }
 .oturum-bos {
   grid-column: 1 / -1;
   padding: 18px 12px;
@@ -1343,26 +1443,50 @@ kbd {
   font-size: 11.5px;
   color: var(--text-3);
   border: 1px dashed var(--line-2);
-  border-radius: var(--r);
+  border-radius: 8px;
 }
 
 
 .oturum-modal-ayak {
-  padding: 12px 20px;
-  background: var(--bg-1);
+  padding: 12px 22px;
+  background: rgba(7, 9, 11, 0.32);
   border-top: 1px solid var(--line);
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
+}
+.oturum-modal-ozet { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.oturum-ozet-etiket {
+  font: 500 9.5px/1 var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-4);
 }
 .oturum-secili-bilgi {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   font-size: 11.5px;
   color: var(--text-3);
 }
-.oturum-secili-bilgi b {
-  color: var(--text);
-  font-weight: 550;
+.oturum-cip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 240px;
+  padding: 3px 9px 3px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line-2);
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--text-2);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
 }
+.oturum-cip .ic { width: 11px; height: 11px; color: var(--text-3); flex: none; }
+.oturum-cip-ok { color: var(--text-4); font-size: 12px; line-height: 1; }
 .oturum-modal-eylemler {
   display: flex;
   align-items: center;
