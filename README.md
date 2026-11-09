@@ -116,6 +116,15 @@ npm run basla      # ya da EVREN.bat (konsolsuz)
 
 Kısayollar, ajanın kendi tuşlarıyla (`Ctrl+K`, `Ctrl+B`, `Ctrl+_`) çakışmayacak biçimde seçilmiştir.
 
+## Telefon kumandası (uzaktan)
+
+Aynı Wi-Fi'deki telefon, **Kumanda** panelindeki QR kod okutularak eşleşir. Masaüstü yerel ağda WebSocket açar (`remote-sunucu.js`); belirteç, port ve sunucu kimliği `kumanda.json` içinde kalıcıdır.
+
+- **Windows güvenlik duvarı:** İlk açılışta Electron için ağ erişimi sorulursa **izin ver**. Daha önce "Engelle" seçilmişse telefon hiçbir porta ulaşamaz; *Windows Güvenliği → Güvenlik duvarı ve ağ koruması → Bir uygulamanın güvenlik duvarından geçmesine izin ver* yolundan Electron satırını işaretle.
+- **Port değişirse:** Dolu portta sunucu bir yukarı kayar ve yeni portu kaydeder; telefon birkaç denemeden sonra komşu portları yoklayıp kaydını kendiliğinden düzeltir.
+- **Yeniden bağlanma:** Kopmada üstel geri çekilme (1→30 sn) uygulanır; Wi-Fi geri gelince ya da uygulama öne gelince beklemeden denenir. Masaüstü, pong vermeyen ölü soketleri 20 saniyede temizler.
+- **Kablolu yedek:** USB ile bağlı Android cihazda sunucu `adb reverse` kurar; telefon `localhost:<port>` üzerinden de erişebilir.
+
 ## Mimari
 
 ```mermaid
@@ -130,6 +139,7 @@ flowchart LR
 | Dosya | Görev |
 | --- | --- |
 | `main.js` | Ana süreç: IPC, çoklu pty (ConPTY), API ölçümü, proje özeti, `--ekran` doğrulama modu |
+| `remote-sunucu.js` · `remote-web/` | Telefon kumandası: yerel WebSocket/HTTP köprüsü, QR eşleşme, kalp atışı, oturum ve sohbet akışı |
 | `motor.js` | Model kataloğu, git dalı, ayarlar ve DPAPI anahtar kasası (ağsız) |
 | `preload.js` | Arayüze açılan dar köprü; yalnız gerekli kanallar |
 | `index.html` · `styles.css` · `app.js` | Arayüz, komut paleti, akış grafiği |

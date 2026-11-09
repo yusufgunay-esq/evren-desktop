@@ -18,6 +18,8 @@ const sohbet = require('./sohbet');
 const VARSAYILAN_PORT = 4141;
 const TAMPON_LIMIT = 64 * 1024; // Oturum başına son 64 KB terminal çıktısı
 const CALISMA_ESIGI_MS = 4 * 1000; // son veri bu kadar yeniyse "çalışıyor"
+const KALP_MS = 20 * 1000; // bağlı cihaza ping; pong gelmezse soket ölü sayılır
+const PORT_DENEME = 20; // port doluysa sırayla denenecek komşu port sayısı
 
 // ANSI kaçışları ve \r temizlenir; son boş olmayan satır 160 karaktere kısaltılır.
 function satirTemizle(veri) {
@@ -51,8 +53,12 @@ class RemoteSunucu {
     const kayit = this.kumandaOku();
     // Token her açılışta değişmez: telefondaki kayıtlı bağlantı kırılmasın.
     this.token = kayit.token || crypto.randomBytes(16).toString('hex');
+    // Kimlik de sabittir: telefon port/IP değişse bile aynı masaüstünü tanır.
+    this.kimlik = kayit.kimlik || crypto.randomUUID();
     this.port = opsiyonlar.port || kayit.port || VARSAYILAN_PORT;
     this.seciliIp = kayit.ip || '';
+    this.kalpZamanlayici = null;
+    this.kalpMs = Number(opsiyonlar.kalpMs) > 0 ? Number(opsiyonlar.kalpMs) : KALP_MS;
     this.httpServer = null;
     this.wss = null;
     this.istemciler = new Set();
@@ -129,6 +135,7 @@ class RemoteSunucu {
       const port = Number(j.port);
       return {
         token,
+        kimlik: typeof j.kimlik === 'string' && /^[0-9a-f-]{16,64}$/i.test(j.kimlik) ? j.kimlik : '',
         port: Number.isInteger(port) && port > 0 && port < 65536 ? port : 0,
         ip: typeof j.ip === 'string' ? j.ip : ''
       };
@@ -138,7 +145,7 @@ class RemoteSunucu {
   // kumanda.json yaz; hata sessizce yutulur (kumanda çalışmaya devam eder).
   kumandaYaz() {
     if (!this.kumandaDosyasi) return;
-    const veri = { port: this.port, ip: this.seciliIp || '' };
+    const veri = { kimlik: this.kimlik, port: this.port, ip: this.seciliIp || '' };
     const ss = safeStorageAl();
     if (ss && ss.isEncryptionAvailable()) {
       try { veri.tokenSifreli = ss.encryptString(this.token).toString('base64'); } catch { veri.token = this.token; }
@@ -202,6 +209,7 @@ class RemoteSunucu {
   bilgi() {
     return {
       acik: !!this.httpServer,
+      kimlik: this.kimlik,
       port: this.port,
       token: this.token,
       ip: this.birincilIp(),
@@ -213,32 +221,61 @@ class RemoteSunucu {
     };
   }
 
-  async baslat() {
+  async baslat(deneme = 0) {
     if (this.httpServer) return this.bilgi();
 
     return new Promise((resolve, reject) => {
-      this.httpServer = http.createServer((req, res) => this.httpIstegiKarsila(req, res));
+      const sunucu = http.createServer((req, res) => this.httpIstegiKarsila(req, res));
+      this.httpServer = sunucu;
 
-      this.httpServer.on('error', (err) => {
-        if (err.code === 'EADDRINUSE') {
-          // Port doluysa bir sonrakini dene
-          this.port++;
-          try { this.httpServer.close(); } catch {}
+      sunucu.on('error', (err) => {
+        if (err.code === 'EADDRINUSE' && deneme < PORT_DENEME) {
+          // Port doluysa sıradakini dene; port telefondaki QR ile aynı kalmalı diye loglanır.
           this.httpServer = null;
-          this.baslat().then(resolve).catch(reject);
+          try { sunucu.close(); } catch {}
+          this.port = this.port >= 65535 ? VARSAYILAN_PORT : this.port + 1;
+          console.warn(`[remote] port dolu, sıradaki deneniyor: ${this.port}`);
+          this.baslat(deneme + 1).then(resolve).catch(reject);
+        } else if (err.code === 'EADDRINUSE') {
+          reject(new Error(`${PORT_DENEME} port denendi, hepsi dolu (son: ${this.port})`));
         } else {
           reject(err);
         }
       });
 
-      this.httpServer.listen(this.port, '0.0.0.0', () => {
-        this.wss = new WebSocketServer({ server: this.httpServer });
+      sunucu.listen(this.port, '0.0.0.0', () => {
+        const gercekPort = sunucu.address() && sunucu.address().port;
+        if (gercekPort) this.port = gercekPort; // 0 verilmişse işletim sisteminin seçtiği port
+        this.wss = new WebSocketServer({ server: sunucu });
         this.wss.on('connection', (ws, req) => this.wsBaglantiKarsila(ws, req));
+        this.kalpAtisiniBaslat();
         this.kumandaYaz(); // çalışan portu kalıcılaştır
         this.adbTersYonlendir(); // USB kablo ile bağlı Android cihaz varsa portu otomatik eşle
         resolve(this.bilgi());
       });
     });
+  }
+
+  // Ölü istemcileri ayıklar: ping'e pong gelmezse soket kapatılır.
+  // Aksi hâlde mobil ağ koptuğunda masaüstü ölü bağlantıları "bağlı" saymaya devam eder.
+  kalpAtisiniBaslat() {
+    if (this.kalpZamanlayici) return;
+    this.kalpZamanlayici = setInterval(() => {
+      let temizlendi = false;
+      for (const ws of this.istemciler) {
+        if (ws.isAlive === false) {
+          try { ws.terminate(); } catch {}
+          this.istemciler.delete(ws);
+          this.sohbetAbonelikBirak(ws);
+          temizlendi = true;
+          continue;
+        }
+        ws.isAlive = false;
+        try { ws.ping(); } catch {}
+      }
+      if (temizlendi) this.onDurumDegisti(this.bilgi());
+    }, this.kalpMs);
+    if (this.kalpZamanlayici.unref) this.kalpZamanlayici.unref();
   }
 
   adbTersYonlendir() {
@@ -249,9 +286,10 @@ class RemoteSunucu {
   }
 
   durdur() {
+    if (this.kalpZamanlayici) { clearInterval(this.kalpZamanlayici); this.kalpZamanlayici = null; }
     for (const id of [...this.sohbetIzleyiciler.keys()]) this.sohbetIzlemeyiDurdur(id);
     for (const ws of this.istemciler) {
-      try { ws.close(); } catch {}
+      try { ws.terminate(); } catch {}
     }
     this.istemciler.clear();
     if (this.wss) {
@@ -344,12 +382,17 @@ class RemoteSunucu {
       return;
     }
 
+    ws.isAlive = true;
+    ws.on('pong', () => { ws.isAlive = true; });
     this.istemciler.add(ws);
     this.onDurumDegisti(this.bilgi());
 
     // İlk durum paketi: oturumlar, model/proje listeleri ve cevaplanmamış onaylar.
+    // Kimlik ve port da gider: telefon IP/port değişse bile aynı masaüstünü tanıyıp kaydını düzeltir.
     const ilkPaket = {
       tip: 'baslangic',
+      sunucuKimlik: this.kimlik,
+      port: this.port,
       aktifId: this.aktifOturumId,
       oturumlar: this.oturumListesiHazirla(),
       tampon: this.aktifOturumId ? (this.oturumTamponlari.get(this.aktifOturumId) || '') : '',
