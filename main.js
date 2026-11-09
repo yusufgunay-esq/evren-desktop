@@ -19,7 +19,6 @@ const RemoteSunucu = require('./remote-sunucu');
 // Yerel dosyalar ağdan gelmiyor; önbellek eski CSS/JS servis etmesin.
 app.commandLine.appendSwitch('disable-http-cache');
 
-
 const EVREN_BASE_URL = 'https://evren-llmapi.ssyz.org.tr';
 const ZEMIN = '#07090b';
 
