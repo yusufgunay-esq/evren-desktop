@@ -977,7 +977,8 @@ async function basla(devamId, secenekler) {
   if (!yol && !(await klasorEkle())) return;
   S.basliyor = true;
   try {
-    const orkestrator = !!sec.orkestrator;
+    // Geçmişten sürdürülen oturum da Şef ise rolü korunur (yazma güvenli varsayılan: kapalı).
+    const orkestrator = sec.orkestrator === true || (!!devam && S.sefOturumlar.has(devam));
     const kodYazma = orkestrator ? sec.kodYazma === true : true;
     const o = { id: ++sonYerel, pid: 0, model: m.id, proje: p ? p.ad : ((yol || '').split(/[\\/]/).filter(Boolean).pop() || yol), dal: p ? p.dal : '', yol, canli: true, kod: null, basladi: 0, yeni: false, devam, orkestrator, kodYazma };
     S.oturumlar.push(o);
