@@ -1595,3 +1595,96 @@ kbd {
 #sohbetIgneBtn.aktif {
   color: var(--ok);
 }
+
+/* ---------- Orkestratör rolü (Yeni Oturum) ---------- */
+.rol-kart {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--bg-1);
+  overflow: hidden;
+}
+.rol-satir {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding: 12px 14px;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--line);
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.rol-satir:first-child { border-top: 0; }
+.rol-satir:hover { background: rgba(255, 255, 255, 0.025); color: var(--text); }
+.rol-satir[hidden] { display: none; }
+.rol-metin { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.rol-ad { font-size: 12.5px; font-weight: 600; color: var(--text); }
+.rol-alt { font-size: 11px; color: var(--text-3); line-height: 1.4; }
+.rol-satir[aria-checked="true"] .rol-ad { color: #fff; }
+.rol-satir[aria-checked="true"] { background: rgba(160, 120, 255, 0.055); }
+.anahtar {
+  flex: none;
+  width: 34px;
+  height: 19px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: var(--bg-3);
+  position: relative;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.anahtar i {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--text-3);
+  transition: transform 0.16s ease, background 0.16s ease;
+}
+.rol-satir[aria-checked="true"] .anahtar {
+  background: rgba(160, 120, 255, 0.22);
+  border-color: rgba(190, 150, 255, 0.42);
+}
+.rol-satir[aria-checked="true"] .anahtar i { transform: translateX(15px); background: #e2ccff; }
+.rol-alt-satir { padding-left: 26px; background: rgba(255, 255, 255, 0.012); }
+
+/* Orkestratör sekmesi ve footer çipi */
+.tab-ork {
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  padding: 1px 4px;
+  border: 1px solid rgba(190, 150, 255, 0.3);
+  border-radius: var(--r-s);
+  color: #d9c2ff;
+  background: rgba(160, 120, 255, 0.1);
+}
+.tab.ork .led { box-shadow: 0 0 0 1px rgba(190, 150, 255, 0.32); }
+.tab.ork.aktif::after { background: rgba(208, 178, 255, 0.55); }
+.oturum-cip-ork { border-color: rgba(190, 150, 255, 0.3); background: rgba(160, 120, 255, 0.1); }
+
+/* Orkestratör terminali: hafif menekşe zemin ve üst ışık; okunabilirlik korunur. */
+.terminal-ork::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(198, 160, 255, 0.72), transparent);
+  pointer-events: none;
+  z-index: 2;
+}
+.terminal-ork::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 20px 40px -24px rgba(178, 130, 255, 0.75), inset 1px 0 0 rgba(190, 150, 255, 0.16);
+}

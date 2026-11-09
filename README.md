@@ -33,6 +33,7 @@ Amaç, kamu ve savunma sanayii ekosistemindeki geliştiricilere yerli altyapı �
 | | |
 | --- | --- |
 | **Çoklu oturum** | Her oturum kendi sekmesinde ve kendi terminalinde; farklı proje ve modelle aynı anda çalışın. Arka planda çıktı gelen sekme işaretlenir, biten oturumun çıktısı okunabilir kalır. |
+| **Şef (orkestratör)** | Yeni Oturum'da rol olarak seçilir: hedefi planlar, İŞ iş emirleri yazar ve işi EVREN worker oturumlarına devreder. *Kod yazma* kapalıyken düzenleme araçları oturumdan kaldırılır; sekme `ŞEF` rozeti ve terminal menekşe tonuyla ayrılır. Komut paletinden `Şef oturumu` ile açılır. |
 | **Odak modu** | `Ctrl+Shift+F` ile kenar paneli, sekmeler ve durum çubuğu kaybolur; ekranda yalnız terminal kalır. |
 | **Oturum geçmişi** | Kenar panelindeki *Geçmiş* bölümü, seçili projenin Claude Code kayıtlarını (`~/.claude/projects`) listeler: başlık, zaman, *çalışıyor* / *bitti*. Tıklayınca `claude --resume` ile aynı sohbet yeni sekmede sürer; zaten açık olan sekmeye geçer. |
 | **Tek tık oturum** | Model ve proje seç, `Enter`. Ortam değişkenleri, bağlam penceresi ve çıktı sınırı modele göre otomatik ayarlanır. |

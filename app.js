@@ -633,18 +633,25 @@ const TEMA = {
   brightBlack: '#4a535d', brightRed: '#ff8a8d', brightGreen: '#6fdcab', brightYellow: '#ffd27e',
   brightBlue: '#9cc4ff', brightMagenta: '#dcb8ff', brightCyan: '#8be0ea', brightWhite: '#ffffff',
 };
+// Orkestratör oturumu: aynı okunabilirlik, hafif menekşe zemin ve imleç. Rolü bir bakışta ayırır.
+const TEMA_ORK = {
+  ...TEMA,
+  background: '#0d0a17', foreground: '#e1dcec', cursor: '#e0c2ff', cursorAccent: '#0d0a17',
+  selectionBackground: 'rgba(190,150,255,0.22)',
+  brightBlack: '#544a63', brightMagenta: '#e0c2ff',
+};
 const GENEL_TUS = new Set(['KeyP', 'KeyB', 'KeyT', 'KeyW', 'KeyF', 'KeyH']); // Ctrl+Shift+<tuş>: uygulamaya ait
 async function terminalOlustur(o) {
   try { await document.fonts.ready; await document.fonts.load(`${S.fs}px "IBM Plex Mono"`); } catch {}
   const el = document.createElement('div');
-  el.className = 'terminal';
+  el.className = 'terminal' + (o.orkestrator ? ' terminal-ork' : '');
   el.hidden = true;
   $('terminaller').appendChild(el);
   const t = new TerminalSinif({
     fontFamily: '"IBM Plex Mono", "Cascadia Mono", Consolas, monospace',
     fontSize: S.fs, lineHeight: 1.22, letterSpacing: 0,
     cursorBlink: true, cursorStyle: 'bar', cursorWidth: 2,
-    allowProposedApi: true, scrollback: 20000, smoothScrollDuration: 0, theme: TEMA,
+    allowProposedApi: true, scrollback: 20000, smoothScrollDuration: 0, theme: o.orkestrator ? TEMA_ORK : TEMA,
   });
   t.open(el);
   const f = FitSinif ? new FitSinif() : null;
@@ -865,9 +872,10 @@ function sekmeleriCiz() {
   $('sekmeler').innerHTML =
     `<button class="tab ana${S.aktif == null ? ' aktif' : ''}" data-id="ana" role="tab" title="Yeni oturum ekranı (Ctrl+Shift+T)">${ikon('term')}<span>ana</span></button>` +
     S.oturumlar.map((o, i) => `
-      <button class="tab${o.id === S.aktif ? ' aktif' : ''}${o.canli ? '' : ' bitti'}${o.yeni ? ' yeni' : ''}" data-id="${o.id}" role="tab" title="${esc(o.proje)} · ${esc(o.model)}${o.dal ? ' · ' + esc(o.dal) : ''}">
+      <button class="tab${o.id === S.aktif ? ' aktif' : ''}${o.canli ? '' : ' bitti'}${o.yeni ? ' yeni' : ''}${o.orkestrator ? ' ork' : ''}" data-id="${o.id}" role="tab" title="${esc(o.proje)} · ${esc(o.model)}${o.dal ? ' · ' + esc(o.dal) : ''}${o.orkestrator ? ' · şef · kod yazma ' + (o.kodYazma ? 'açık' : 'kapalı') : ''}">
         <span class="led${o.canli ? ' canli' : o.kod ? ' kotu' : ''}"></span>
         <span class="tab-ad">${esc(o.proje)}</span>
+        ${o.orkestrator ? `<span class="tab-ork mono" title="Şef · kod yazma ${o.kodYazma ? 'açık' : 'kapalı'}">ŞEF</span>` : ''}
         <span class="tab-m">${esc(kisaModel(o.model))}</span>
         <span class="tab-no">${i + 1}</span>
         <span class="tab-x" data-kapat="${o.id}" title="Sekmeyi kapat (Ctrl+Shift+W)">×</span>
@@ -948,7 +956,8 @@ const bekleyenVeri = new Map(); // pid -> [veri] (sekme kaydından önce gelen �
 async function basla(devamId, secenekler) {
   const devam = typeof devamId === 'string' ? devamId : null; // düğme olayı dize değildir
   // EVREN işini sürdürürken işin kendi dizini/modeli kullanılır; normal başlatmada seçili olanlar.
-  const sec = secenekler && typeof secenekler === 'object' && typeof secenekler.dizin === 'string' ? secenekler : {};
+  // Düğme olayı (Event) seçenek sanılmasın; düz nesne ise alanları korunur (orkestratör, kodYazma).
+  const sec = secenekler && typeof secenekler === 'object' && typeof secenekler.preventDefault !== 'function' ? secenekler : {};
   const yol = sec.dizin || S.proje;
   const m = (sec.modelId ? { id: sec.modelId } : null) || seciliModel() || {};
   const p = sec.dizin ? S.projeler.find((x) => x.yol === sec.dizin) : seciliProje();
@@ -957,14 +966,17 @@ async function basla(devamId, secenekler) {
   if (!yol && !(await klasorEkle())) return;
   S.basliyor = true;
   try {
-    const o = { id: ++sonYerel, pid: 0, model: m.id, proje: p ? p.ad : ((yol || '').split(/[\\/]/).filter(Boolean).pop() || yol), dal: p ? p.dal : '', yol, canli: true, kod: null, basladi: 0, yeni: false, devam };
+    const orkestrator = !!sec.orkestrator;
+    const kodYazma = orkestrator ? sec.kodYazma === true : true;
+    const o = { id: ++sonYerel, pid: 0, model: m.id, proje: p ? p.ad : ((yol || '').split(/[\\/]/).filter(Boolean).pop() || yol), dal: p ? p.dal : '', yol, canli: true, kod: null, basladi: 0, yeni: false, devam, orkestrator, kodYazma };
     S.oturumlar.push(o);
     await terminalOlustur(o);
     sekmeSec(o.id);
     await bekle(30);
     if (o.fit) { try { o.fit.fit(); } catch {} }
     o.term.writeln(`\x1b[38;2;74;83;93m  evren \x1b[38;2;108;119;131m› ${m.id} › ${o.proje}\x1b[0m`);
-    const sonuc = await window.evren.baslat({ modelId: m.id, dizin: yol, cols: o.term.cols, rows: o.term.rows, devam, forkSession: !!sec.fork });
+    if (orkestrator) o.term.writeln(`\x1b[38;2;190;150;255m  şef › planlar, İŞ açar, devreder · kod yazma ${kodYazma ? 'açık' : 'kapalı'}\x1b[0m`);
+    const sonuc = await window.evren.baslat({ modelId: m.id, dizin: yol, cols: o.term.cols, rows: o.term.rows, devam, forkSession: !!sec.fork, orkestrator, kodYazma });
     if (!sonuc || sonuc.hata) {
       o.canli = false; o.kod = 'hata';
       o.term.writeln(`\x1b[38;2;236;106;110m  ✗ ${(sonuc && sonuc.hata) || 'başlatılamadı'}\x1b[0m`);
@@ -1138,6 +1150,7 @@ function paletOgeleri() {
   const kilit = false; // çoklu oturum: seçimler her zaman yeni oturum içindir
   const ao = aktifOturum();
   const ey = [
+    { ad: 'Şef oturumu (/sef)', ic: 'branch', alt: 'hedef · plan · İŞ · kod yazmaz', yap: () => yeniOturumModalAc({ orkestrator: true }), pasif: !S.anahtarVar || !S.yuklendi },
     { ad: 'Yeni oturum başlat', ic: 'play', alt: S.aktif == null ? 'Enter' : '', yap: basla, pasif: !S.anahtarVar || !S.yuklendi },
     ...(ao && ao.canli ? [
       { ad: 'Bu oturumu sonlandır', ic: 'stop', yap: durdur },
@@ -1643,6 +1656,21 @@ const Grafik = (() => {
 // ---------- Yeni Oturum Başlat Modalı: Proje ve Model Seçimi ----------
 let modalSecilenProje = '';
 let modalSecilenModel = '';
+let modalOrkestrator = false;
+let modalKodYazma = false;
+
+function rolAnahtarlariniCiz() {
+  const ork = $('modalOrkSwitch'), kod = $('modalKodSwitch'), ipucu = $('modalRolIpucu');
+  if (ork) ork.setAttribute('aria-checked', modalOrkestrator ? 'true' : 'false');
+  if (kod) {
+    kod.hidden = !modalOrkestrator;
+    kod.setAttribute('aria-checked', modalKodYazma ? 'true' : 'false');
+  }
+  if (ipucu) ipucu.textContent = modalOrkestrator
+    ? (modalKodYazma ? 'Şef · yazma açık' : 'Şef · yalnız plan ve İŞ')
+    : 'Ajan doğrudan çalışır';
+}
+
 function yeniOturumModalGuncelle() {
   const pIzgara = $('modalProjeIzgara');
   const mIzgara = $('modalModelIzgara');
@@ -1687,17 +1715,21 @@ function yeniOturumModalGuncelle() {
   const pAd = pObj ? pObj.ad : 'Proje seçilmedi';
   const mAd = mObj ? (mObj.ad || mObj.id) : 'Model seçilmedi';
   if ($('modalSeciliBilgi')) {
-    $('modalSeciliBilgi').innerHTML = `<span class="oturum-cip">${ikon('folder')}${esc(pAd)}</span><span class="oturum-cip-ok" aria-hidden="true">›</span><span class="oturum-cip">${ikon('cpu')}${esc(mAd)}</span>`;
+    $('modalSeciliBilgi').innerHTML = `<span class="oturum-cip">${ikon('folder')}${esc(pAd)}</span><span class="oturum-cip-ok" aria-hidden="true">›</span><span class="oturum-cip">${ikon('cpu')}${esc(mAd)}</span>` +
+      (modalOrkestrator ? `<span class="oturum-cip oturum-cip-ork">${ikon('branch')}şef${modalKodYazma ? ' · yazma açık' : ''}</span>` : '');
   }
+  rolAnahtarlariniCiz();
 }
 // Açık modal varken tuval döngüsü durur; modal kapanınca kaldığı yerden sürer.
 function modalDurumGuncelle() {
   const acik = [...document.querySelectorAll('.modal-ortu')].some((m) => !m.hidden);
   if (acik) Grafik.dur(); else Grafik.basla();
 }
-function yeniOturumModalAc() {
+function yeniOturumModalAc(secenek) {
   modalSecilenProje = S.proje || (S.projeler[0] ? S.projeler[0].yol : '');
   modalSecilenModel = S.model || (S.modeller[0] ? S.modeller[0].id : '');
+  modalOrkestrator = !!(secenek && secenek.orkestrator);
+  modalKodYazma = false;
   yeniOturumModalGuncelle();
   const m = $('yeniOturumModal');
   if (m) m.hidden = false;
@@ -1714,7 +1746,7 @@ function yeniOturumBaslat() {
   yeniOturumModalKapat();
   if (yol && yol !== S.proje) projeSec(yol);
   if (modelId && modelId !== S.model) modelSec(modelId);
-  basla(null, { dizin: yol, modelId });
+  basla(null, { dizin: yol, modelId, orkestrator: modalOrkestrator, kodYazma: modalKodYazma });
 }
 // ---------- olaylar ----------
 listeKlavye('modelList', () => ({ liste: S.modeller.map((m) => m.id), deger: S.model }), modelSec);
@@ -1961,17 +1993,28 @@ yukle().then(() => {
   if (new URLSearchParams(location.search).get('palet')) paletAc();
   if (new URLSearchParams(location.search).get('kumanda')) setTimeout(kumandaModalAc, 250);
   if (new URLSearchParams(location.search).get('modal')) setTimeout(yeniOturumModalAc, 350); // test: modalı açık yakala
+  if (new URLSearchParams(location.search).get('rol')) setTimeout(() => yeniOturumModalAc({ orkestrator: true }), 350); // test: orkestratör rolü seçili modal
   // test: modal açıldıktan sonra şu projenin sil düğmesine bas (listeden kaldırma akışını doğrular)
   const silParam = new URLSearchParams(location.search).get('sil');
   if (silParam) setTimeout(() => { const b = document.querySelector(`[data-sil="${CSS.escape(silParam)}"]`); if (b) b.click(); }, 900);
   const n = Number(new URLSearchParams(location.search).get('oturum') || 0);
-  if (n) (async () => { for (let i = 0; i < n; i++) { if (i) projeSec((S.projeler[i] || S.projeler[0]).yol); await basla(); await bekle(700); } const t = aktifTerm(); if (t && new URLSearchParams(location.search).get('yaz')) window.evren.yaz(aktifOturum().pid, 'echo EVREN coklu oturum testi' + String.fromCharCode(13)); if (new URLSearchParams(location.search).get('odak')) odakToggle(true); })();
+  const orkTest = new URLSearchParams(location.search).get('ork') === '1';
+  if (n) (async () => { for (let i = 0; i < n; i++) { if (i) projeSec((S.projeler[i] || S.projeler[0]).yol); await basla(null, orkTest ? { orkestrator: true, kodYazma: false } : undefined); await bekle(700); } const t = aktifTerm(); if (t && new URLSearchParams(location.search).get('yaz')) window.evren.yaz(aktifOturum().pid, 'echo EVREN coklu oturum testi' + String.fromCharCode(13)); if (new URLSearchParams(location.search).get('odak')) odakToggle(true); })();
 });
 
 // Yeni Oturum Modalı Olayları
 if ($('yeniOturumKapatBtn')) $('yeniOturumKapatBtn').addEventListener('click', yeniOturumModalKapat);
 if ($('yeniOturumVazgecBtn')) $('yeniOturumVazgecBtn').addEventListener('click', yeniOturumModalKapat);
 if ($('yeniOturumBaslatBtn')) $('yeniOturumBaslatBtn').addEventListener('click', yeniOturumBaslat);
+if ($('modalOrkSwitch')) $('modalOrkSwitch').addEventListener('click', () => {
+  modalOrkestrator = !modalOrkestrator;
+  if (!modalOrkestrator) modalKodYazma = false;
+  yeniOturumModalGuncelle();
+});
+if ($('modalKodSwitch')) $('modalKodSwitch').addEventListener('click', () => {
+  modalKodYazma = !modalKodYazma;
+  yeniOturumModalGuncelle();
+});
 if ($('modalKlasorEkleBtn')) $('modalKlasorEkleBtn').addEventListener('click', async () => {
   const sec = await klasorEkle();
   if (sec) {

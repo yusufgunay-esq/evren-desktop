@@ -29,6 +29,7 @@ const argv = process.argv;
 const EKRAN = argv.includes('--ekran') ? argv[argv.indexOf('--ekran') + 1] : null;
 const EKRAN_PALET = argv.includes('--ekran-palet');
 const EKRAN_OTURUM = argv.includes('--ekran-oturum'); // test: iki oturum açar
+const EKRAN_ORK = argv.includes('--ekran-ork-oturum'); // test: orkestratör oturumu aç
 const EKRAN_PROJE = argv.includes('--ekran-proje') ? argv[argv.indexOf('--ekran-proje') + 1] : null; // test: açılışta proje seç
 // Yalnız test/doğrulama için: claude yerine verilen komutu açar (ör. cmd.exe); API kredisi harcanmaz.
 const TEST_KOMUT = process.env.EVREN_TEST_KOMUT || '';
@@ -138,8 +139,41 @@ async function apiDurum() {
 }
 
 
+// Orkestratörün çağıracağı EVREN köprüsü: en yeni kurulu plugin sürümünden bulunur.
+function evrenAjanYolu() {
+  const kok = path.join(os.homedir(), '.claude', 'plugins', 'cache', 'gunay-studio', 'gunay-studio');
+  try {
+    const surumler = fs.readdirSync(kok)
+      .filter((d) => fs.existsSync(path.join(kok, d, 'araclar', 'evren-ajan.mjs')))
+      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+    if (surumler.length) return path.join(kok, surumler[0], 'araclar', 'evren-ajan.mjs');
+  } catch {}
+  return 'evren-ajan.mjs';
+}
+
+// Orkestratör brifi: oturumun sistem istemine eklenir. Rolü ve bağlam disiplinini tanımlar;
+// yazma yasağı ayrıca --disallowedTools ile donanım seviyesinde uygulanır.
+function orkestratorBrifi(yazma) {
+  const ajan = evrenAjanYolu();
+  return [
+    "Sen Şef'sin (orkestratör). Görevin: hedefi planlamak, İŞ iş emirleri yazmak ve işi worker oturumlarına devretmek.",
+    'Kurallar:',
+    '1. Kendi bağlamını küçük tut. Kodu, logu ve test çıktısını doğrudan okuma; worker raporunu oku.',
+    '2. Her iş için kısa bir İŞ brifi yaz: numara + başlık, hedef, kısıtlar, kabul ölçütü, doğrulama komutu.',
+    '3. İşi şu köprüyle başlat: node "' + ajan + '" "<brif>" --klasor "<proje yolu>". Paralel işlerde ayrı worktree kullan.',
+    '4. Worker\'dan yalnız kısa rapor bekle: ne yapıldı, değişen dosyalar, test kanıtı, açık sorular.',
+    '5. Durumu dosyada tut (iş emri + rapor). Oturum bağlamı şişerse devir notu yaz; görev diskte kalsın.',
+    '6. Bitince hedefin karşılanıp karşılanmadığını kanıtla özetle; eksik varsa yeni İŞ aç.',
+    '7. Estetik/arayüz işlerini ayrı bir worker\'a ver ve brifte kararı worker\'a bırak (ne, neden; nasıl değil).',
+    '8. Worker modelini İŞ\'e göre seç (--model): deepseek rutin/geniş iş, glm çetrefilli mantık, qwen hafif metin, gemma/qwen-vl görsel. Flags için: node "' + ajan + '" --help.',
+    yazma
+      ? '9. Yazma yetkin açık: yalnız küçük ve acil düzeltmeyi kendin yap; kapsamlı işi yine worker\'a devret.'
+      : '9. Yazma yetkin kapalı; düzenleme aracın yok. Her yazma İŞ olarak worker\'a gider.',
+  ].join('\n');
+}
+
 // بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ — yeni bir Claude Code oturumu (PTY) açar; başlıkta verilen dizinde çalışır, `devam` verilirse eski oturumu sürdürür.
-async function oturumBaslat({ modelId, dizin, cols, rows, devam, forkSession }) {
+async function oturumBaslat({ modelId, dizin, cols, rows, devam, forkSession, orkestrator, kodYazma }) {
   if (devam != null && !gecmis.OTURUM_KIMLIK.test(String(devam))) throw new Error('Geçersiz oturum kimliği.');
   if (kabuklar.size >= 8) throw new Error('En çok 8 oturum açık olabilir; birini kapatın.');
   const p = await panelModulu();
@@ -184,10 +218,16 @@ async function oturumBaslat({ modelId, dizin, cols, rows, devam, forkSession }) 
     rows: Number.isFinite(Number(rows)) && Number(rows) > 5 ? Number(rows) : 30,
   };
   const secenek = { name: 'xterm-256color', cols: olcu.cols, rows: olcu.rows, cwd: dizin, env, useConpty: true };
+  const ork = !!orkestrator;
+  const yazma = ork ? kodYazma === true : true;
   let bu;
   if (TEST_KOMUT) bu = pty.spawn(TEST_KOMUT, [], secenek);
   else {
     const arg = ['--dangerously-skip-permissions', ...(devam ? ['--resume', String(devam)] : []), ...(forkSession ? ['--fork-session'] : [])];
+    if (ork) {
+      arg.push('--append-system-prompt', orkestratorBrifi(yazma));
+      if (!yazma) arg.push('--disallowedTools', 'Edit', 'Write', 'NotebookEdit');
+    }
     try {
       bu = pty.spawn('claude.exe', arg, secenek);
     } catch {
@@ -203,6 +243,8 @@ async function oturumBaslat({ modelId, dizin, cols, rows, devam, forkSession }) 
     dizin,
     proje: path.basename(dizin) || dizin,
     devam: devam ? String(devam) : null,
+    orkestrator: ork,
+    kodYazma: yazma,
     baslangic: Date.now(),
   };
   oturumBilgi.set(id, bilgi);
@@ -234,7 +276,7 @@ async function oturumBaslat({ modelId, dizin, cols, rows, devam, forkSession }) 
     remoteSunucu.oturumListesiGuncelle();
   }
   ayarYaz({ sonModel: model.id, sonKlasorler: [dizin, ...(ayarOku().sonKlasorler || []).filter((x) => x !== dizin)].slice(0, 8) });
-  return { id, model: model.id, modelAd: model.ad || model.id, dizin, proje: bilgi.proje, devam: bilgi.devam };
+  return { id, model: model.id, modelAd: model.ad || model.id, dizin, proje: bilgi.proje, devam: bilgi.devam, orkestrator: ork, kodYazma: yazma };
 }
 
 
@@ -328,6 +370,8 @@ function pencereOlustur() {
   if (araIx >= 0 && argv[araIx + 1]) sorgu.ara = argv[araIx + 1];
   if (argv.includes('--ekran-kumanda')) sorgu.kumanda = '1'; // test: Kumanda modalını açık yakala
   if (argv.includes('--ekran-modal')) sorgu.modal = '1';
+  if (argv.includes('--ekran-rol')) sorgu.rol = '1'; // test: orkestratör rolü seçili modal
+  if (EKRAN_ORK) { sorgu.oturum = '1'; sorgu.ork = '1'; } // test: orkestratör oturumu aç
   const silIx = argv.indexOf('--ekran-sil');
   if (silIx >= 0 && argv[silIx + 1]) sorgu.sil = argv[silIx + 1]; // test: modalda şu projeyi listeden kaldır
   const fsIx = argv.indexOf('--ekran-fs');
@@ -356,7 +400,7 @@ function pencereOlustur() {
           console.log(`[ekran] ${path.resolve(EKRAN)}`);
         } catch (err) { console.error('[ekran] hata', err); }
         app.quit();
-      }, EKRAN_OTURUM ? (TEST_KOMUT ? 6500 : 14000) : 4200);
+      }, (EKRAN_OTURUM || EKRAN_ORK) ? (TEST_KOMUT ? 6500 : 14000) : 4200);
     });
   }
 }
