@@ -927,10 +927,23 @@ ipcMain.handle('boyut', (_e, id, { cols, rows }) => {
   try { k.resize(cols, rows); } catch {}
 });
 ipcMain.handle('kapat-oturum', (_e, id) => { kabukKapat(id); });
-// Renderer'ın oturum kimliğini (jsonl) öğrenmesi: Şef kartını geçmişte işaretlemek için.
+// Renderer'ın oturum kimliğini (jsonl) öğrenmesi: Şef kartını geçmişte işaretlemek ve
+// sekme adını (ilk kullanıcı mesajı) yazmak için. Ad bulununca önbelleğe alınır, dosya bir daha okunmaz.
+const sekmeAdiOnbellek = new Map(); // devam(kimlik) -> başlık
 ipcMain.handle('oturum-kimlik', (_e, id) => {
   const b = oturumBilgi.get(id);
-  return b ? { devam: b.devam || null, orkestrator: !!b.orkestrator, kodYazma: b.kodYazma !== false } : null;
+  if (!b) return null;
+  let baslik = b.devam ? (sekmeAdiOnbellek.get(b.devam) || null) : null;
+  if (!baslik && b.devam) {
+    try {
+      const dosya = sohbet.dosyaYolu(b.dizin, b.devam);
+      // Claude Desktop'ın verdiği özel ad (custom-title.json) varsa o tercih edilir; yoksa ilk kullanıcı mesajı.
+      baslik = gecmis.ozelBaslikOku(path.join(path.dirname(dosya), b.devam)) || '';
+      if (!baslik && fs.existsSync(dosya)) baslik = (gecmis.baslikOku(dosya, true) || {}).baslik || '';
+      if (baslik) sekmeAdiOnbellek.set(b.devam, baslik);
+    } catch {}
+  }
+  return { devam: b.devam || null, orkestrator: !!b.orkestrator, kodYazma: b.kodYazma !== false, baslik: baslik || null };
 });
 ipcMain.handle('model-guncelle', (_e, { id, modelId }) => {
   const bilgi = oturumBilgi.get(id);
