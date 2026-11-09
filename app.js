@@ -684,6 +684,8 @@ async function terminalOlustur(o) {
   }
   t.onData((veri) => {
     if (o.pid) window.evren.yaz(o.pid, veri);
+    // Uzun süre boş bekleyen oturumda ilk mesaj sonradan yazılabilir: ad aramasını yeniden başlat.
+    if (!o.ad && !o.orkestrator) sekmeAdIzle(o);
     o.hizaDeneme = 0; // kullanıcı çalışıyor: otomatik hizalama sayacı sıfırlanır, yeni durum beklenir
   });
   t.attachCustomKeyEventHandler((e) => {
@@ -874,6 +876,14 @@ function oturumModeliTaraGecikmeli(o) {
   clearTimeout(o._modelTaraTimer);
   o._modelTaraTimer = setTimeout(() => oturumModeliTara(o), 120);
 }
+// Sekme adı: Şef oturumunda proje adı yeterli; normal oturumda ilk kullanıcı mesajından
+// (Claude Desktop/Antigravity'deki gibi) üretilen ad kullanılır. Ad henüz yoksa proje adı görünür.
+function temizSekmeAdi(b) {
+  return String(b || '').replace(/\s+Kural:[\s\S]*$/, '').replace(/\s+/g, ' ').trim();
+}
+function sekmeAdi(o) {
+  return o.orkestrator ? o.proje : (o.ad || o.proje);
+}
 // ---------- sekmeler ----------
 function sekmeleriCiz() {
   const kisaModel = (id) => {
@@ -884,9 +894,9 @@ function sekmeleriCiz() {
   $('sekmeler').innerHTML =
     `<button class="tab ana${S.aktif == null ? ' aktif' : ''}" data-id="ana" role="tab" title="Yeni oturum ekranı (Ctrl+Shift+T)">${ikon('term')}<span>ana</span></button>` +
     S.oturumlar.map((o, i) => `
-      <button class="tab${o.id === S.aktif ? ' aktif' : ''}${o.canli ? '' : ' bitti'}${o.yeni ? ' yeni' : ''}${o.orkestrator ? ' ork' : ''}" data-id="${o.id}" role="tab" title="${esc(o.proje)} · ${esc(o.model)}${o.dal ? ' · ' + esc(o.dal) : ''}${o.orkestrator ? ' · şef · kod yazma ' + (o.kodYazma ? 'açık' : 'kapalı') : ''}">
+      <button class="tab${o.id === S.aktif ? ' aktif' : ''}${o.canli ? '' : ' bitti'}${o.yeni ? ' yeni' : ''}${o.orkestrator ? ' ork' : ''}" data-id="${o.id}" role="tab" title="${esc(sekmeAdi(o))} · ${esc(o.proje)} · ${esc(o.model)}${o.dal ? ' · ' + esc(o.dal) : ''}${o.orkestrator ? ' · şef · kod yazma ' + (o.kodYazma ? 'açık' : 'kapalı') : ''}">
         <span class="led${o.canli ? ' canli' : o.kod ? ' kotu' : ''}"></span>
-        <span class="tab-ad">${esc(o.proje)}</span>
+        <span class="tab-ad">${esc(sekmeAdi(o))}</span>
         ${o.orkestrator ? `<span class="tab-ork mono" title="Şef · kod yazma ${o.kodYazma ? 'açık' : 'kapalı'}">ŞEF</span>` : ''}
         <span class="tab-m">${esc(kisaModel(o.model))}</span>
         <span class="tab-no">${i + 1}</span>
@@ -1010,7 +1020,7 @@ async function basla(devamId, secenekler) {
     for (const v of bekleyenVeri.get(o.pid) || []) o.term.write(v);
     bekleyenVeri.delete(o.pid);
     o.basladi = Date.now();
-    if (o.orkestrator) sefKimligiIzle(o);
+    if (o.orkestrator) sefKimligiIzle(o); else sekmeAdIzle(o);
     olay('OTURUM', `#${S.oturumlar.indexOf(o) + 1} başladı · ${m.id} · ${o.proje}`, 'iyi');
     // Saniyelik güvenlik ağı: hizalama yalnız çıktı olayına bağlı kalmasın (çıktı üretmeyen
     // yeniden çizimlerde de kontrol edilsin).
@@ -1025,6 +1035,26 @@ async function basla(devamId, secenekler) {
   } finally {
     S.basliyor = false;
   }
+}
+// Normal oturumun sekme adını ilk kullanıcı mesajından alır (Claude Desktop/Antigravity davranışı).
+// Ad jsonl'e yazılınca okunur; bulunana ya da oturum kapanana kadar 1.5 sn'de bir sorulur.
+function sekmeAdIzle(o) {
+  if (!o || o.orkestrator || o.ad || o._adIzleTimer) return;
+  let n = 0;
+  const durdur = () => { clearInterval(o._adIzleTimer); o._adIzleTimer = null; };
+  const dene = async () => {
+    if (!o.canli || o.ad || !o.pid || n++ > 60) { durdur(); return; }
+    const b = await window.evren.oturumKimlik(o.pid).catch(() => null);
+    if (!b) return;
+    if (b.devam && !o.devam) { o.devam = b.devam; gecmisCiz(); } // soldaki kart aktif sekme olarak işaretlenir
+    if (b.baslik) {
+      const ad = temizSekmeAdi(b.baslik);
+      if (ad) { o.ad = ad; durdur(); sekmeleriCiz(); }
+    }
+  };
+  o._adIzleTimer = setInterval(dene, 1500);
+  if (o._adIzleTimer.unref) o._adIzleTimer.unref();
+  dene();
 }
 // Şef oturumunun jsonl kimliğini öğrenir; kenar panelde kalıcı olarak işaretler.
 function sefKimligiIzle(o) {
@@ -2009,6 +2039,15 @@ $('sekmeler').addEventListener('click', (e) => {
   if (t) sekmeSec(t.dataset.id === 'ana' ? null : Number(t.dataset.id));
 });
 $('sekmeler').addEventListener('auxclick', (e) => { const t = e.target.closest('.tab'); if (e.button === 1 && t && t.dataset.id !== 'ana') sekmeKapat(Number(t.dataset.id)); });
+// Sekmeler taştığında fare tekerleği dikey hareketi yatay kaydırmaya çevirir (Shift+tekerlek de çalışır).
+$('sekmeler').addEventListener('wheel', (e) => {
+  const kutu = $('sekmeler');
+  if (kutu.scrollWidth <= kutu.clientWidth) return;
+  const d = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+  if (!d) return;
+  e.preventDefault();
+  kutu.scrollLeft += d;
+}, { passive: false });
 $('stage').addEventListener('wheel', (e) => { if (e.ctrlKey) { e.preventDefault(); fsDegis(e.deltaY < 0 ? 1 : -1); } }, { passive: false });
 window.addEventListener('keydown', (e) => {
   if (e.ctrlKey && e.shiftKey && e.code === 'KeyP') { e.preventDefault(); $('palet').hidden ? paletAc() : paletKapat(); return; }

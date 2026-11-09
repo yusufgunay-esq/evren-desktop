@@ -33,7 +33,7 @@ function ozelBaslikOku(seansDizin) {
   } catch { return ''; }
 }
 
-function baslikOku(dosya) {
+function baslikOku(dosya, yalnizBaslik) {
   let fd, baslik = '', kaynak = '';
   try {
     fd = fs.openSync(dosya, 'r');
@@ -41,7 +41,8 @@ function baslikOku(dosya) {
     const kod = new StringDecoder('utf8');
     let konum = 0, kalan = '';
     // Açılış kayıtları büyük olabilir (ilk yanıt yüzlerce KB sonra gelir): parça parça oku, en çok 6 MB.
-    while (konum < 6 * 1024 * 1024 && !(baslik && kaynak)) {
+    // yalnizBaslik: sekme adı için yalnız ilk kullanıcı mesajı yeter; yanıt modelini beklemeden dön.
+    while (konum < 6 * 1024 * 1024 && !(baslik && (yalnizBaslik || kaynak))) {
       const n = fs.readSync(fd, tampon, 0, tampon.length, konum);
       if (n <= 0) break;
       konum += n;
@@ -56,7 +57,7 @@ function baslikOku(dosya) {
         } else if (!kaynak && j.type === 'assistant' && typeof j.message.model === 'string' && j.message.model !== '<synthetic>') {
           kaynak = /^(claude|opus|sonnet|haiku)/i.test(j.message.model) ? 'claude' : 'evren';
         }
-        if (baslik && kaynak) break;
+        if (baslik && (yalnizBaslik || kaynak)) break;
       }
     }
   } catch {} finally { if (fd != null) try { fs.closeSync(fd); } catch {} }
@@ -180,6 +181,11 @@ function altAjanlariOku(seansDizin) {
 // ---------- EVREN işleri (~/.evren/oturumlar/<uuid>.json) ----------
 // evren-ajan.mjs her çalıştırmada bir kayıt yazar: { id, ust, dizin, model, baslik, baslangic, bitis, cikis, devamEden }.
 // Kayıt yolu ortam değişkeni ya da parametreyle değiştirilebilir (test ve taşınabilirlik).
+// Claude Code kayıt kökü; test/demo için EVREN_PROJE_DIZINI ile değiştirilebilir.
+function claudeKokDizini() {
+  return process.env.EVREN_PROJE_DIZINI || path.join(os.homedir(), '.claude', 'projects');
+}
+
 function evrenKayitDizini(secenekler) {
   const verilen = secenekler && typeof secenekler.kayitDizini === 'string' && secenekler.kayitDizini;
   return verilen || process.env.EVREN_KAYIT_DIZINI || path.join(os.homedir(), '.evren', 'oturumlar');
@@ -243,7 +249,7 @@ function evrenIsiOku(kayit, klasor, simdi) {
 function oturumGecmisi(dizin, secenekler) {
   if (!dizin || typeof dizin !== 'string') return [];
   const klasorAdi = dizin.replace(/[^a-zA-Z0-9]/g, '-');
-  const klasor = path.join(os.homedir(), '.claude', 'projects', klasorAdi);
+  const klasor = path.join(claudeKokDizini(), klasorAdi);
   let adlar;
   try { adlar = fs.readdirSync(klasor); } catch { return []; }
   const simdi = Date.now();
@@ -325,7 +331,7 @@ function oturumSayilari(dizin, kimlik, secenekler) {
   const bos = { altAjanlar: { calisan: 0, toplam: 0 }, evrenIsleri: { calisan: 0, toplam: 0 } };
   if (!dizin || !kimlik || !OTURUM_KIMLIK.test(String(kimlik))) return bos;
   const klasorAdi = dizin.replace(/[^a-zA-Z0-9]/g, '-');
-  const klasor = path.join(os.homedir(), '.claude', 'projects', klasorAdi);
+  const klasor = path.join(claudeKokDizini(), klasorAdi);
   const ajanlar = altAjanlariOku(path.join(klasor, String(kimlik)));
   const simdi = Date.now();
   const isler = evrenKayitlariOku(evrenKayitDizini(secenekler))
@@ -374,7 +380,7 @@ function cwdOku(dosya) {
 }
 
 function tumOturumlariTara(secenekler) {
-  const kokDizin = path.join(os.homedir(), '.claude', 'projects');
+  const kokDizin = claudeKokDizini();
   let klasorler;
   try { klasorler = fs.readdirSync(kokDizin, { withFileTypes: true }); } catch { return []; }
   const simdi = Date.now();
@@ -474,4 +480,4 @@ function tumOturumlariTara(secenekler) {
   return tumu.filter((x) => x.baslik).slice(0, 100);
 }
 
-module.exports = { oturumGecmisi, tumOturumlariTara, cwdOku, tempMi, oturumSayilari, altAjanlariOku, turDevamEdiyor, baslikOku, evrenKayitlariOku, OTURUM_KIMLIK, CANLI_ESIK_MS };
+module.exports = { oturumGecmisi, tumOturumlariTara, cwdOku, tempMi, oturumSayilari, altAjanlariOku, turDevamEdiyor, baslikOku, ozelBaslikOku, evrenKayitlariOku, OTURUM_KIMLIK, CANLI_ESIK_MS };
