@@ -1765,19 +1765,7 @@ function yeniOturumModalGuncelle() {
   const eslesen = S.projeler.filter((p) => !q || `${p.ad} ${p.yol}`.toLocaleLowerCase('tr').includes(q));
   const gorunen = q || modalProjeTumu ? eslesen : eslesen.slice(0, MODAL_PROJE_GORUNEN);
   const kartlar = [];
-  // Projesiz: klasör bağlamadan EVREN çalışma alanında açılır.
   const bosSecili = modalSecim.tip === 'bos';
-  kartlar.push(`
-    <div class="oturum-secim-kart proje-kart proje-bos-kart${bosSecili ? ' aktif' : ''}" role="button" tabindex="0" data-bos="1" aria-pressed="${bosSecili}">
-      <span class="proje-monogram" aria-hidden="true">E</span>
-      <div class="oturum-kart-govde">
-        <div class="oturum-secim-kart-ust">
-          <span class="oturum-secim-kart-ad">Projesiz</span>
-          <span class="tag mono">serbest</span>
-        </div>
-        <span class="oturum-secim-kart-alt mono" title="${esc(S.serbestDizin || 'EVREN')}">${esc(S.serbestDizin ? kisaYol(S.serbestDizin, 28) : 'EVREN çalışma alanı')}</span>
-      </div>
-    </div>`);
   // Tek seferlik klasör seçildiyse listede kendi kartı görünür; proje kaydı oluşturmaz.
   if (modalSecim.tip === 'klasor') {
     kartlar.push(`
@@ -1799,6 +1787,19 @@ function yeniOturumModalGuncelle() {
   }
   kartlar.push(...gorunen.map(projeKartHTML));
   if (q && !eslesen.length) kartlar.push('<div class="oturum-bos">Eşleşen proje yok.</div>');
+  if (!q && eslesen.length > MODAL_PROJE_GORUNEN) {
+    kartlar.push(`<div class="oturum-proje-daha"><button class="btn-baglanti" type="button" data-daha="1">${modalProjeTumu ? 'Daralt' : `Tümünü göster (${eslesen.length})`}</button></div>`);
+  }
+  // Projesiz: proje değil, kaçış yolu. Ayrı satır diliyle en altta durur.
+  kartlar.push(`
+    <div class="oturum-projesiz-kart${bosSecili ? ' aktif' : ''}" role="button" tabindex="0" data-bos="1" aria-pressed="${bosSecili}">
+      <svg class="ic" aria-hidden="true"><use href="#i-evren" /></svg>
+      <span class="oturum-projesiz-metin">
+        <b>Projesiz başla</b>
+        <span class="mono" title="${esc(S.serbestDizin || 'EVREN')}">EVREN çalışma alanı${S.serbestDizin ? ' · ' + esc(kisaYol(S.serbestDizin, 34)) : ''}</span>
+      </span>
+      <span class="oturum-kart-secim" aria-hidden="true"></span>
+    </div>`);
   pIzgara.classList.toggle('kaydir', gorunen.length > MODAL_PROJE_GORUNEN);
   pIzgara.innerHTML = kartlar.length ? kartlar.join('') : `<div class="oturum-bos">Eşleşen proje yok.</div>`;
 
@@ -1808,14 +1809,6 @@ function yeniOturumModalGuncelle() {
     ust.hidden = S.projeler.length <= 4;
     if ($('modalProjeSay')) $('modalProjeSay').textContent = q ? `${eslesen.length}/${S.projeler.length}` : `${S.projeler.length} proje`;
     if ($('modalProjeAra') && $('modalProjeAra').value !== modalProjeAra) $('modalProjeAra').value = modalProjeAra;
-  }
-  const daha = $('modalProjeDahaSatir');
-  if (daha) {
-    const gerekli = !q && eslesen.length > MODAL_PROJE_GORUNEN;
-    daha.hidden = !gerekli;
-    if (gerekli && $('modalProjeDahaBtn')) {
-      $('modalProjeDahaBtn').textContent = modalProjeTumu ? 'Daralt' : `Tümünü göster (${eslesen.length})`;
-    }
   }
   if (!q && eslesen.length <= MODAL_PROJE_GORUNEN) modalProjeTumu = false;
 
@@ -2241,6 +2234,11 @@ if ($('modalProjeIzgara')) {
     yeniOturumModalGuncelle();
   };
   $('modalProjeIzgara').addEventListener('click', (e) => {
+    if (e.target.closest('[data-daha]')) {
+      modalProjeTumu = !modalProjeTumu;
+      yeniOturumModalGuncelle();
+      return;
+    }
     const sil = e.target.closest('[data-sil]');
     if (sil) { e.stopPropagation(); projeListedenSil(sil.dataset.sil); return; }
     if (e.target.closest('[data-gecici-kaydet]')) {
@@ -2255,7 +2253,7 @@ if ($('modalProjeIzgara')) {
       if (p) projeDuzenleAc(p);
       return;
     }
-    secKart(e.target.closest('.oturum-secim-kart'));
+    secKart(e.target.closest('.oturum-secim-kart, .oturum-projesiz-kart'));
   });
   // Çift tık: projeyi düzenle (ad/klasörler).
   $('modalProjeIzgara').addEventListener('dblclick', (e) => {
@@ -2269,7 +2267,7 @@ if ($('modalProjeIzgara')) {
     if (e.key !== 'Enter' && e.key !== ' ') return;
     if (e.target.closest('button')) return;
     e.preventDefault();
-    secKart(e.target.closest('.oturum-secim-kart'));
+    secKart(e.target.closest('.oturum-secim-kart, .oturum-projesiz-kart'));
   });
 }
 if ($('modalProjeAra')) {
@@ -2279,11 +2277,6 @@ if ($('modalProjeAra')) {
     yeniOturumModalGuncelle();
   });
 }
-if ($('modalProjeDahaBtn')) $('modalProjeDahaBtn').addEventListener('click', () => {
-  modalProjeTumu = !modalProjeTumu;
-  yeniOturumModalGuncelle();
-});
-
 // Proje düzenleme modalı olayları
 if ($('projeDuzenleKapatBtn')) $('projeDuzenleKapatBtn').addEventListener('click', projeDuzenleKapat);
 if ($('projeDuzenleVazgecBtn')) $('projeDuzenleVazgecBtn').addEventListener('click', projeDuzenleKapat);
