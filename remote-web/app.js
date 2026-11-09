@@ -4,9 +4,16 @@
 (() => {
   let ws = null;
   let baglantiZamanlayici = null;
+  let kalpZamanlayici = null;
+  let sonPong = 0;
+  let deneme = 0;
   let aktifOturumId = null;
   let oturumlar = [];
   let kullaniciKaydirdi = false;
+
+  const KALP_MS = 20000;      // sunucuya ping
+  const SESSIZ_MS = 45000;    // bu kadar süre pong/veri gelmezse bağlantı ölü sayılır
+  const ACILMA_MS = 12000;    // TCP el sıkışması bu sürede bitmezse denemeyi kapat
 
   // Elemanlar
   const baglantiGosterge = document.getElementById('baglanti-gosterge');
@@ -41,19 +48,44 @@
 
   function wsAdresiOlustur() {
     const loc = window.location;
-    // Eğer Capacitor içindeyse veya özel host kayıtlıysa
-    const host = localStorage.getItem('evren_remote_host') || loc.host || 'localhost:4141';
+    // Sayfa masaüstünden servis edildiyse gerçek adres odur (QR her zaman güncel portu taşır).
+    // Kayıtlı host yalnız Capacitor/file kabuğunda, adres yerelden geliyorsa kullanılır.
+    const yerelKabuk = !loc.host || loc.hostname === 'localhost' || loc.hostname === '127.0.0.1';
+    const kayitli = localStorage.getItem('evren_remote_host') || '';
+    const host = yerelKabuk && kayitli ? kayitli : (loc.host || kayitli || 'localhost:4141');
+    if (!yerelKabuk && loc.host) localStorage.setItem('evren_remote_host', loc.host);
     const proto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
     return `${proto}//${host}/ws?token=${token}`;
   }
 
+  function kalpDurdur() {
+    if (kalpZamanlayici) { clearInterval(kalpZamanlayici); kalpZamanlayici = null; }
+  }
+
+  function kalpBaslat() {
+    kalpDurdur();
+    sonPong = Date.now();
+    kalpZamanlayici = setInterval(() => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      if (Date.now() - sonPong > SESSIZ_MS) {
+        // Sunucu sessizleşti: soket yarı açık olabilir, kapatıp yeniden bağlan.
+        try { ws.close(); } catch {}
+        return;
+      }
+      mesajGonder({ tip: 'ping' });
+    }, KALP_MS);
+  }
+
   function baglan() {
+    clearTimeout(baglantiZamanlayici);
+    kalpDurdur();
     if (ws) {
+      ws.onopen = ws.onmessage = ws.onclose = ws.onerror = null;
       try { ws.close(); } catch {}
     }
 
     baglantiGosterge.className = 'baglanti-durum';
-    baglantiMetin.textContent = 'Bağlanıyor...';
+    baglantiMetin.textContent = deneme > 0 ? 'Yeniden bağlanıyor...' : 'Bağlanıyor...';
 
     const wsUrl = wsAdresiOlustur();
     try {
@@ -62,14 +94,26 @@
       yenidenDene();
       return;
     }
+    const bu = ws;
+
+    // El sıkışma takılırsa: "Bağlanıyor..." sonsuza kadar asılı kalmasın.
+    const acilmaZamanAsimi = setTimeout(() => {
+      if (bu === ws && bu.readyState !== WebSocket.OPEN) {
+        try { bu.close(); } catch {}
+      }
+    }, ACILMA_MS);
 
     ws.onopen = () => {
+      clearTimeout(acilmaZamanAsimi);
       baglantiGosterge.className = 'baglanti-durum bagli';
       baglantiMetin.textContent = 'Bağlandı';
+      deneme = 0;
+      kalpBaslat();
       titresim(30);
     };
 
     ws.onmessage = (e) => {
+      sonPong = Date.now();
       try {
         const paket = JSON.parse(e.data);
         paketiIsle(paket);
@@ -77,27 +121,45 @@
     };
 
     ws.onclose = (ev) => {
+      clearTimeout(acilmaZamanAsimi);
+      kalpDurdur();
       baglantiGosterge.className = 'baglanti-durum kopuk';
       if (ev.code === 4001) {
         baglantiMetin.textContent = 'Yetkisiz (Token geçersiz)';
       } else {
-        baglantiMetin.textContent = 'Bağlantı koptu';
         yenidenDene();
       }
     };
 
     ws.onerror = () => {
+      // onclose genelde ardından gelir; yine de durumu kopuk göster.
       baglantiGosterge.className = 'baglanti-durum kopuk';
-      baglantiMetin.textContent = 'Hata';
     };
   }
 
+  // Üstel geri çekilme + jitter: sunucu kapalıyken saniyede bir denemeyi önler.
   function yenidenDene() {
     clearTimeout(baglantiZamanlayici);
-    baglantiZamanlayici = setTimeout(() => {
-      baglan();
-    }, 2500);
+    deneme = Math.min(deneme + 1, 8);
+    const taban = Math.min(30000, 1000 * Math.pow(2, deneme - 1));
+    const bekle = Math.round(taban * (0.8 + Math.random() * 0.4));
+    baglantiGosterge.className = 'baglanti-durum kopuk';
+    baglantiMetin.textContent = `Yeniden bağlanıyor... (${Math.ceil(bekle / 1000)} sn)`;
+    baglantiZamanlayici = setTimeout(baglan, bekle);
   }
+
+  // Ağ geri geldiğinde veya sekme öne gelince beklemeden dene.
+  function hemenDene() {
+    deneme = 0;
+    clearTimeout(baglantiZamanlayici);
+    baglan();
+  }
+  window.addEventListener('online', hemenDene);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) hemenDene();
+    else mesajGonder({ tip: 'ping' });
+  });
 
   function paketiIsle(paket) {
     switch (paket.tip) {

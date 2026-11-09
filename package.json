@@ -5,7 +5,8 @@
   "description": "EVREN Desktop: EVREN API üzerinde kodlama ajanı için operasyon konsolu (Windows)",
   "main": "main.js",
   "scripts": {
-    "basla": "electron ."
+    "basla": "electron .",
+    "test": "node --test test/remote-sunucu.test.js"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",

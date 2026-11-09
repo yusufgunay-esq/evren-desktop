@@ -38,6 +38,8 @@ const EKRAN_BOSLUK = Math.max(0, Number(process.env.EVREN_EKRAN_BOSLUK || 0) || 
 const TEST_KOMUT = process.env.EVREN_TEST_KOMUT || '';
 
 
+let pencere = null;
+
 // Tek örnek kilidi: EVREN ikinci kez açılırsa yeni sunucu/port üretilmez; var olan pencere öne gelir.
 // Bu kilit olmadan ikinci örnek 4141'i dolu bulup portu artırıyor, telefondaki eşleşme bayatlıyordu.
 const tekKilit = process.env.EVREN_COKLU === '1' ? true : app.requestSingleInstanceLock();
@@ -51,8 +53,6 @@ else {
     }
   });
 }
-
-let pencere = null;
 const kabuklar = new Map(); // oturum kimliği -> pty (çoklu oturum)
 const oturumBilgi = new Map(); // kimlik -> { modelId, modelAd, dizin, proje, devam, baslangic } (kumanda listesi için)
 let sonKimlik = 0;
