@@ -68,6 +68,10 @@ Hedefi verirsin; Şef planlar, `İŞ` iş emirlerini yazar ve işi EVREN worker 
 
 Kenar panelde Şef oturumu ince, akan bir menekşe rayla işaretlenir; açtığı işler `İŞ NNN` çipleriyle ağaçta görünür, kartta çalışan/toplam sayısı yazar. Komut paletinden `Şef oturumu (/sef)` ile açılır.
 
+<p align="center">
+  <img src="docs/ekran-sef-kart.png" alt="Kenar panel: ŞEF çipi, akan menekşe ray, İŞ NNN ağacı ve çalışan/toplam rozeti" width="420" />
+</p>
+
 ## Gereksinimler
 
 - Windows 10 (1809+) veya Windows 11
