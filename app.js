@@ -663,7 +663,10 @@ async function terminalOlustur(o) {
       el.dataset.webgl = '0';
     }
   }
-  t.onData((veri) => { if (o.pid) window.evren.yaz(o.pid, veri); });
+  t.onData((veri) => {
+    if (o.pid) window.evren.yaz(o.pid, veri);
+    o.hizaDeneme = 0; // kullanıcı çalışıyor: otomatik hizalama sayacı sıfırlanır, yeni durum beklenir
+  });
   t.attachCustomKeyEventHandler((e) => {
     if (e.type !== 'keydown') return true;
     if (e.ctrlKey && e.code === 'KeyC') {
@@ -744,13 +747,18 @@ function sigdir() {
     if (o.pid && o.term.cols && o.term.rows) window.evren.boyut(o.pid, { cols: o.term.cols, rows: o.term.rows });
   });
 }
-// "/" menüsü açılıp kapanınca satır içi arayüz ekranın ortasında kalabiliyor (altta boş satırlar).
-// Çıktı durulunca görünür alanın altında boş satır varsa pty'ye bir satırlık boyut dürtmesi gönderilir;
-// araç yeniden boyutlanma bildirimiyle kendini baştan çizer. Aynı boş durum için yalnız bir kez denenir.
-const HIZA_BOS_ESIK = 4;
+// "/" menüsü açılıp kapanınca satır içi arayüz ekranın ortasında kalabiliyor: girdi bloğunun altında
+// boş satırlar kalır (imleç en altta olsa bile). Çıktı durulunca bu durum görülürse pty'ye Ctrl+L
+// gönderilir; kullanıcının elle yaptığı düzeltmenin aynısıdır, araç görünümü silip alt alta yeniden
+// çizer. Yazılan metin korunur (ölçüldü). Menü açıkken altında boş satır olmadığı için tetiklenmez.
+// Aynı hizasızlık için en çok iki kez denenir; hiza düzelince ya da kullanıcı yazınca sayaç sıfırlanır.
+const HIZA_BOS_ESIK = 3;
+const HIZA_EN_COK = 2;
 function hizaKontrol(o) {
   if (!o || !o.term || !o.pid || o.id !== S.aktif) return;
   const b = o.term.buffer.active, rows = o.term.rows;
+  // Alt tampon (vim/less) ve kullanıcının geçmişe kaydırdığı görünüm olduğu gibi bırakılır.
+  // baseY = 0 ise içerik bir ekranı doldurmamıştır; Ctrl+L onu aşağı taşıyamaz, başlangıç ekranı bozulmaz.
   if (b.type !== 'normal' || b.baseY <= 0 || b.viewportY !== b.baseY) { o.hizaDeneme = 0; return; }
   let son = -1;
   for (let y = rows - 1; y >= 0; y--) {
@@ -759,20 +767,14 @@ function hizaKontrol(o) {
   }
   const bos = son >= 0 ? rows - 1 - son : 0;
   if (bos < HIZA_BOS_ESIK) { o.hizaDeneme = 0; return; }
-  // Kademeli onarım: 1) boyut dürtmesi, 2) Ctrl+L (elle yapılan düzeltmenin aynısı), sonra bırak.
   const deneme = o.hizaDeneme || 0;
-  if (deneme >= 2) return;
+  if (deneme >= HIZA_EN_COK) return;
   o.hizaDeneme = deneme + 1;
-  if (deneme === 0) {
-    const cols = o.term.cols;
-    window.evren.boyut(o.pid, { cols, rows: rows - 1 });
-    setTimeout(() => { if (o.pid) window.evren.boyut(o.pid, { cols, rows }); }, 80);
-  } else {
-    window.evren.yaz(o.pid, '\x0c');
-  }
+  o.hizaOnarim = (o.hizaOnarim || 0) + 1; // tanılama: kaç kez otomatik onarım yapıldı
+  window.evren.yaz(o.pid, '\x0c');
   // Onarım çıktı üretmese de sonucu bir kez daha denetle.
   clearTimeout(o.hizaZaman);
-  o.hizaZaman = setTimeout(() => hizaKontrol(o), 900);
+  o.hizaZaman = setTimeout(() => hizaKontrol(o), 1100);
 }
 function fsDegis(d) {
   S.fs = Math.min(18, Math.max(11, S.fs + d));
@@ -904,7 +906,7 @@ function sekmeSec(id) {
   if (o) oturumModeliTara(o);
   sekmeleriCiz();
   gecmisCiz();
-  if (o && o.term) { sigdir(); setTimeout(() => o.term.focus(), 0); }
+  if (o && o.term) { sigdir(); setTimeout(() => o.term.focus(), 0); setTimeout(() => hizaKontrol(o), 400); }
   if (S.sohbetAcik) sohbetYukle();
 }
 function sekmeGez(yon) {
@@ -975,7 +977,9 @@ async function basla(devamId, secenekler) {
     bekleyenVeri.delete(o.pid);
     o.basladi = Date.now();
     olay('OTURUM', `#${S.oturumlar.indexOf(o) + 1} başladı · ${m.id} · ${o.proje}`, 'iyi');
-    o.sayac = setInterval(() => { if (o.id === S.aktif) { sureYaz(); oturumModeliTara(o); } }, 1000);
+    // Saniyelik güvenlik ağı: hizalama yalnız çıktı olayına bağlı kalmasın (çıktı üretmeyen
+    // yeniden çizimlerde de kontrol edilsin).
+    o.sayac = setInterval(() => { if (o.id === S.aktif) { sureYaz(); oturumModeliTara(o); hizaKontrol(o); } }, 1000);
     sekmeleriCiz();
     sigdir();
     o.term.focus();
