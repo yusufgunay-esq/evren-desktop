@@ -173,6 +173,7 @@ function orkestratorBrifi(yazma) {
     yazma
       ? '9. Yazma yetkin açık: yalnız küçük ve acil düzeltmeyi kendin yap; kapsamlı işi yine worker\'a devret.'
       : '9. Yazma yetkin kapalı; düzenleme aracın yok. Her yazma İŞ olarak worker\'a gider.',
+    '10. İş bitince çalışan worker süreçlerini kapat (arkada ajan bırakma) ve projeye kısa devir notu düş: <proje>/_claude/DEVIR.md, en çok 6 satır (yapıldı, doğrulama, sıradaki, açık).',
   ].join('\n');
 }
 
