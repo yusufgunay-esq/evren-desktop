@@ -45,6 +45,7 @@ const S = {
   fs: Math.min(18, Math.max(11, Number(new URLSearchParams(location.search).get('fs') || sakla.oku('fs', 13)) || 13)),
   sohbetAcik: sakla.oku('sohbetPanelAcik', false), sohbetFiltre: 'hepsi',
   grupKapali: sakla.oku('grupKapali', {}), // { calisiyor: true, bosta: true } — gruplar ayrı ayrı katlanır
+  sefOturumlar: new Set(sakla.oku('sefOturumlar', [])), // Şef olarak açılmış oturum kimlikleri (kalıcı)
 };
 
 // ---------- yardımcılar ----------
@@ -199,6 +200,7 @@ function gecmisCiz() {
   }
   const kartHtml = (g, calisiyor, idx = 0) => {
     const secili = aktifDevam === g.id;
+    const sef = S.sefOturumlar.has(g.id) || S.oturumlar.some((o) => o.orkestrator && o.devam === g.id);
     const tumAjanlar = Array.isArray(g.altAjanlar) ? g.altAjanlar : [];
     const tumIsler = Array.isArray(g.evrenIsleri) ? g.evrenIsleri : [];
     const dalVar = tumAjanlar.length + tumIsler.length > 0;
@@ -217,7 +219,7 @@ function gecmisCiz() {
     const evrenMi = g.kaynak !== 'claude' || g.evren;
     const kaynakHtml = kaynakIsaret(evrenMi);
     return `
-      <div class="seans-kart${secili ? ' sec-li' : ''}${belirmeSinif}"${gecikmeStil} role="option" aria-selected="${secili}" data-id="${esc(g.id)}" data-yol="${esc(g.projeYol)}" title="${esc(g.baslik)}
+      <div class="seans-kart${secili ? ' sec-li' : ''}${sef ? ' sef' : ''}${belirmeSinif}"${gecikmeStil} role="option" aria-selected="${secili}" data-id="${esc(g.id)}" data-yol="${esc(g.projeYol)}" title="${esc(g.baslik)}
 ${esc(g.projeAd)} · ${evrenMi ? 'EVREN' : 'Claude'} · ${esc(goreli(g.ms / 1000))}">
         <div class="seans-satir-ust">
           <span class="seans-baslik">${esc(g.baslik)}</span>
@@ -235,11 +237,12 @@ ${esc(g.projeAd)} · ${evrenMi ? 'EVREN' : 'Claude'} · ${esc(goreli(g.ms / 1000
         </div>
         <div class="seans-satir-alt">
           ${kaynakHtml}
+          ${sef ? '<span class="seans-sef mono">şef</span>' : ''}
           <span class="seans-proje">${esc(g.projeAd)}</span>
           ${dalVar ? `<button class="tag-ajan${calisanToplam ? ' canli' : ''}" data-ajan-toggle="${esc(g.id)}" type="button" title="${tumAjanlar.length + tumIsler.length} alt görev${calisanToplam ? `, ${calisanToplam} çalışıyor` : ''}">${rozetMetin}</button>` : ''}
         </div>
         ${dalVar && ajanAcik ? `
-        <div class="ajan-agac">
+        <div class="ajan-agac${calisanToplam ? ' canli' : ''}">
           ${ajanlar.map((a) => `
             <div class="ajan" title="${esc(a.tanim)}${a.faz ? ' · ' + esc(a.faz) : ''}">
               <div class="ajan-satir">
@@ -254,11 +257,13 @@ ${esc(g.projeAd)} · ${evrenMi ? 'EVREN' : 'Claude'} · ${esc(goreli(g.ms / 1000
               </div>
             </div>
           `).join('')}
-          ${isler.map((e) => `
+          ${isler.map((e) => {
+            const ib = isBasligi(e.baslik);
+            return `
             <div class="ajan evren-is${evrenSinif(e.durum)}" data-evren-id="${esc(e.id)}" data-evren-dizin="${esc(e.dizin || '')}" data-evren-model="${esc(e.model || '')}" role="button" tabindex="0" title="${esc(e.baslik)} · ${esc(e.durum)}${e.dizin ? ' · ' + esc(e.dizin) : ''}">
               <div class="ajan-satir">
                 <span class="ajan-nokta${evrenSinif(e.durum)}"></span>
-                <span class="ajan-tanim">${esc(e.baslik)}</span>
+                <span class="ajan-tanim">${ib ? `<span class="is-no mono">İŞ ${esc(ib.no)}</span> ${esc(ib.ad)}` : esc(e.baslik)}</span>
               </div>
               <div class="ajan-meta">
                 ${kaynakIsaret(true)}
@@ -266,7 +271,7 @@ ${esc(g.projeAd)} · ${evrenMi ? 'EVREN' : 'Claude'} · ${esc(goreli(g.ms / 1000
                 <span class="ajan-zaman mono">${esc(kisaZaman(e.ms))}</span>
               </div>
             </div>
-          `).join('')}
+          `; }).join('')}
         </div>` : ''}
       </div>`;
   };
@@ -950,6 +955,12 @@ function brifGoster() {
   requestAnimationFrame(() => b.classList.remove('gidiyor'));
   Grafik.basla();
 }
+// "İŞ 46: RAKIP BOSLUK..." başlığını numara + ad olarak ayırır; tanınmazsa null.
+function isBasligi(baslik) {
+  const m = String(baslik || '').match(/^\s*(?:İŞ|IS|IŞ|Is)\s*[:·\-–]?\s*(\d+)\s*[:·\-–]?\s*(.*)$/i);
+  return m ? { no: m[1], ad: (m[2] || '').trim() || String(baslik) } : null;
+}
+
 // ---------- oturum ----------
 let sonYerel = 0;
 const bekleyenVeri = new Map(); // pid -> [veri] (sekme kaydından önce gelen çıktı)
@@ -988,6 +999,7 @@ async function basla(devamId, secenekler) {
     for (const v of bekleyenVeri.get(o.pid) || []) o.term.write(v);
     bekleyenVeri.delete(o.pid);
     o.basladi = Date.now();
+    if (o.orkestrator) sefKimligiIzle(o);
     olay('OTURUM', `#${S.oturumlar.indexOf(o) + 1} başladı · ${m.id} · ${o.proje}`, 'iyi');
     // Saniyelik güvenlik ağı: hizalama yalnız çıktı olayına bağlı kalmasın (çıktı üretmeyen
     // yeniden çizimlerde de kontrol edilsin).
@@ -1002,6 +1014,27 @@ async function basla(devamId, secenekler) {
   } finally {
     S.basliyor = false;
   }
+}
+// Şef oturumunun jsonl kimliğini öğrenir; kenar panelde kalıcı olarak işaretler.
+function sefKimligiIzle(o) {
+  const kaydet = (devam) => {
+    if (!devam) return false;
+    o.devam = devam;
+    if (!S.sefOturumlar.has(devam)) {
+      S.sefOturumlar.add(devam);
+      sakla.yaz('sefOturumlar', [...S.sefOturumlar].slice(-300));
+    }
+    gecmisCiz();
+    return true;
+  };
+  if (kaydet(o.devam)) return;
+  let n = 0;
+  const t = setInterval(async () => {
+    if (!o.canli || n++ > 40) { clearInterval(t); return; }
+    const b = await window.evren.oturumKimlik(o.pid).catch(() => null);
+    if (b && kaydet(b.devam)) clearInterval(t);
+  }, 1500);
+  if (t.unref) t.unref();
 }
 function sureYaz() {
   const o = aktifOturum();
@@ -1994,6 +2027,14 @@ yukle().then(() => {
   if (new URLSearchParams(location.search).get('kumanda')) setTimeout(kumandaModalAc, 250);
   if (new URLSearchParams(location.search).get('modal')) setTimeout(yeniOturumModalAc, 350); // test: modalı açık yakala
   if (new URLSearchParams(location.search).get('rol')) setTimeout(() => yeniOturumModalAc({ orkestrator: true }), 350); // test: orkestratör rolü seçili modal
+  // test: kenar panelde bir oturumu Şef gibi işaretle (animasyon/kart görünümünü yakala)
+  if (new URLSearchParams(location.search).get('sef')) {
+    let deneme = 0;
+    const t = setInterval(() => {
+      const g = (S.gecmis || []).find((x) => (x.evrenIsleri || []).length || (x.altAjanlar || []).length);
+      if (g || deneme++ > 20) { clearInterval(t); if (g) { S.sefOturumlar.add(g.id); acikAjanlar.add(g.id); gecmisCiz(); } }
+    }, 500);
+  }
   // test: modal açıldıktan sonra şu projenin sil düğmesine bas (listeden kaldırma akışını doğrular)
   const silParam = new URLSearchParams(location.search).get('sil');
   if (silParam) setTimeout(() => { const b = document.querySelector(`[data-sil="${CSS.escape(silParam)}"]`); if (b) b.click(); }, 900);

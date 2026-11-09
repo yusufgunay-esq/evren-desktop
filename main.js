@@ -30,6 +30,7 @@ const EKRAN = argv.includes('--ekran') ? argv[argv.indexOf('--ekran') + 1] : nul
 const EKRAN_PALET = argv.includes('--ekran-palet');
 const EKRAN_OTURUM = argv.includes('--ekran-oturum'); // test: iki oturum açar
 const EKRAN_ORK = argv.includes('--ekran-ork-oturum'); // test: orkestratör oturumu aç
+const EKRAN_SEF = argv.includes('--ekran-sef'); // test: kenar panelde Şef kartı
 const EKRAN_PROJE = argv.includes('--ekran-proje') ? argv[argv.indexOf('--ekran-proje') + 1] : null; // test: açılışta proje seç
 // Yalnız test/doğrulama için: claude yerine verilen komutu açar (ör. cmd.exe); API kredisi harcanmaz.
 const TEST_KOMUT = process.env.EVREN_TEST_KOMUT || '';
@@ -159,7 +160,7 @@ function orkestratorBrifi(yazma) {
     "Sen Şef'sin (orkestratör). Görevin: hedefi planlamak, İŞ iş emirleri yazmak ve işi worker oturumlarına devretmek.",
     'Kurallar:',
     '1. Kendi bağlamını küçük tut. Kodu, logu ve test çıktısını doğrudan okuma; worker raporunu oku.',
-    '2. Her iş için kısa bir İŞ brifi yaz: numara + başlık, hedef, kısıtlar, kabul ölçütü, doğrulama komutu.',
+    '2. Her iş için kısa bir İŞ brifi yaz. Başlık biçimi: "İŞ 001 · Kısa başlık" (normal yazım). Sonra hedef, kısıtlar, kabul ölçütü, doğrulama komutu.',
     '3. İşi şu köprüyle başlat: node "' + ajan + '" "<brif>" --klasor "<proje yolu>". Paralel işlerde ayrı worktree kullan.',
     '4. Worker\'dan yalnız kısa rapor bekle: ne yapıldı, değişen dosyalar, test kanıtı, açık sorular.',
     '5. Durumu dosyada tut (iş emri + rapor). Oturum bağlamı şişerse devir notu yaz; görev diskte kalsın.',
@@ -371,6 +372,7 @@ function pencereOlustur() {
   if (argv.includes('--ekran-kumanda')) sorgu.kumanda = '1'; // test: Kumanda modalını açık yakala
   if (argv.includes('--ekran-modal')) sorgu.modal = '1';
   if (argv.includes('--ekran-rol')) sorgu.rol = '1'; // test: orkestratör rolü seçili modal
+  if (EKRAN_SEF) sorgu.sef = '1'; // test: kenar panelde Şef kartı görünümü
   if (EKRAN_ORK) { sorgu.oturum = '1'; sorgu.ork = '1'; } // test: orkestratör oturumu aç
   const silIx = argv.indexOf('--ekran-sil');
   if (silIx >= 0 && argv[silIx + 1]) sorgu.sil = argv[silIx + 1]; // test: modalda şu projeyi listeden kaldır
@@ -400,7 +402,7 @@ function pencereOlustur() {
           console.log(`[ekran] ${path.resolve(EKRAN)}`);
         } catch (err) { console.error('[ekran] hata', err); }
         app.quit();
-      }, (EKRAN_OTURUM || EKRAN_ORK) ? (TEST_KOMUT ? 6500 : 14000) : 4200);
+      }, (EKRAN_OTURUM || EKRAN_ORK) ? (TEST_KOMUT ? 6500 : 14000) : (EKRAN_SEF ? 7500 : 4200));
     });
   }
 }
@@ -668,6 +670,11 @@ ipcMain.handle('boyut', (_e, id, { cols, rows }) => {
   try { k.resize(cols, rows); } catch {}
 });
 ipcMain.handle('kapat-oturum', (_e, id) => { kabukKapat(id); });
+// Renderer'ın oturum kimliğini (jsonl) öğrenmesi: Şef kartını geçmişte işaretlemek için.
+ipcMain.handle('oturum-kimlik', (_e, id) => {
+  const b = oturumBilgi.get(id);
+  return b ? { devam: b.devam || null, orkestrator: !!b.orkestrator, kodYazma: b.kodYazma !== false } : null;
+});
 ipcMain.handle('model-guncelle', (_e, { id, modelId }) => {
   const bilgi = oturumBilgi.get(id);
   if (bilgi && modelId) {

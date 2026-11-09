@@ -54,6 +54,20 @@ Amaç, kamu ve savunma sanayii ekosistemindeki geliştiricilere yerli altyapı �
   <img src="docs/ekran-palet.png" alt="Komut paleti: eylemler, modeller ve projeler arasında arama" width="720" />
 </p>
 
+## Şef (orkestratör)
+
+<p align="center">
+  <img src="docs/ekran-sef-modal.png" alt="Yeni Oturum: Şef rolü ve kod yazma anahtarı" width="720" />
+</p>
+
+Hedefi verirsin; Şef planlar, `İŞ` iş emirlerini yazar ve işi EVREN worker oturumlarına devreder. Kendisi kod yazmaz — *Kod yazma* kapalıyken düzenleme araçları oturumdan kaldırılır; böylece planlama bağlamı küçük kalır ve her yazma bir worker işi olur. Worker modeli İŞ'e göre seçilir: DeepSeek (rutin/geniş), GLM (çetrefilli mantık), Qwen (hafif metin), Gemma / Qwen-VL (görsel).
+
+<p align="center">
+  <img src="docs/ekran-sef-oturum.png" alt="Şef oturumu: ŞEF rozeti ve menekşe tonlu terminal" width="720" />
+</p>
+
+Kenar panelde Şef oturumu ince, akan bir menekşe rayla işaretlenir; açtığı işler `İŞ NNN` çipleriyle ağaçta görünür, kartta çalışan/toplam sayısı yazar. Komut paletinden `Şef oturumu (/sef)` ile açılır.
+
 ## Gereksinimler
 
 - Windows 10 (1809+) veya Windows 11

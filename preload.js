@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('evren', {
   yaz: (id, veri) => ipcRenderer.invoke('yaz', id, veri),
   boyut: (id, olcu) => ipcRenderer.invoke('boyut', id, olcu),
   kapatOturum: (id) => ipcRenderer.invoke('kapat-oturum', id),
+  oturumKimlik: (id) => ipcRenderer.invoke('oturum-kimlik', id), // şef oturumunun jsonl kimliği
   projeOzet: (dizin) => ipcRenderer.invoke('proje-ozet', dizin),
   disari: (url) => ipcRenderer.invoke('disari', url),
   veriDinle: (f) => ipcRenderer.on('pty:veri', (_e, id, veri) => f(id, veri)),
