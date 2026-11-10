@@ -25,3 +25,10 @@ Doğrulama: masaüstü `npm test` 12/12 yeşil; telefon `testDebugUnitTest assem
 Sıradaki: `docs/ekran-ana.png`, `ekran-oturum.png`, `ekran-palet.png` güncel arayüzle yenilenecek (kullanıcı erteledi).
 Açık: Etiketin görünme yarısı yalnız birim testiyle kanıtlı; canlı Şef oturumuyla ekran görüntüsü alınmadı.
 Commit: 3ed0d2d (masaüstü) + 9aec334 (telefon)
+
+## 2026-11-10 · Telefonda soru seçenekleri + yeni soru sesi
+Yapıldı: AskUserQuestion girdisi özet metne kırpılmak yerine `arac.sorular` olarak taşınıyor; araç dönüşü `sonuc:true` ile sahte bekleyen soru üretmiyor. Telefon seçenekleri düğme olarak çiziyor, dokunuş ok tuşu taklidiyle gerçek terminal seçimi yapıyor. Soru bildirimi 0.8 sn alçak iki vuruşlu konsol tonu (kanal v4) + iki vuruşlu titreşim.
+Doğrulama: masaüstü `npm test` 16/16; telefon `testDebugUnitTest assembleDebug` 89/89 ve BUILD SUCCESSFUL; APK gerçek cihaza kuruldu.
+Sıradaki: canlı bir soruyla telefonda seçenek dokunuşunu ve sesi bir kez gözle/kulakla doğrula.
+Açık: soru bulunamazsa yeniden deneme zamanlayıcısı artık unref (süreç askıda kalmıyor); kökteki `oturum-karar.js` kullanılmayan kopya, temizlik adayı.
+Commit: 50fd06b + 4a8cd82 (masaüstü) + e117473 (telefon)
