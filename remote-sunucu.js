@@ -588,6 +588,7 @@ class RemoteSunucu {
         sonSatir: this.sonSatirlar.get(o.id) || '',
         onay: onay ? { metin: onay.metin || onay.soru || '', secenekler: onay.secenekler || [] } : null,
         devam: bilgi.devam || null,
+        orkestrator: !!(o.orkestrator || bilgi.orkestrator),
         altAjanlar: { calisan: alt.calisan || 0, toplam: alt.toplam || 0 },
         evrenIsleri: { calisan: evren.calisan || 0, toplam: evren.toplam || 0 },
       };

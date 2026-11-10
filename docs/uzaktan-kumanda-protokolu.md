@@ -41,6 +41,7 @@ bağlanan istemci bildirimi tekrar görür.
     "sonSatir": "• adım 42 derleme sürüyor…",
     "onay": { "metin": "npm test çalıştırılsın mı?", "secenekler": ["Onayla", "Reddet"] },
     "devam": "0f8fad5b-d9cb-469f-a165-70867728950e",
+    "orkestrator": false,
     "altAjanlar": { "calisan": 1, "toplam": 3 },
     "evrenIsleri": { "calisan": 0, "toplam": 2 }
   }]
@@ -50,6 +51,7 @@ bağlanan istemci bildirimi tekrar görür.
 - `durum`: `calisiyor` (son 4 sn içinde çıktı) · `onay_bekliyor` · `bosta` · `kapandi`.
 - `onay`: yoksa `null`; `metin` onay metni, `secenekler` düğme etiketleri.
 - `devam`: oturumun Claude kayıt kimliği (uuid); yeni oturum sürdürmek için kullanılır.
+- `orkestrator`: oturum masaüstünde şef (orkestratör) rolüyle açıldıysa `true`; istemci yalnız bu oturumları "ŞEF" etiketiyle ayırır.
 - `altAjanlar` / `evrenIsleri`: o oturumun alt ajan ve EVREN işi sayıları (çalışan/toplam).
 - Eski istemci için `id` + `baslik` korunur; yeni alanlar yoksa istemci kendi türetir.
 
@@ -86,6 +88,30 @@ yalnız yeni girişler (`ilk` yok, istemci ekler) gönderilir. Araç sonuçları
 ```
 
 `rol`: `kullanici` · `asistan` · `arac`. `arac` yalnız araç girişlerinde vardır.
+
+Soru aracı (`AskUserQuestion`) çağrısında `arac.sorular` yapılandırılmış olarak
+gelir; istemci bunu seçenek düğmeleri olarak çizer. Araç dönüş kayıtlarında
+`arac.sonuc: true` vardır: bunlar bekleyen soru değildir.
+
+```json
+{
+  "rol": "arac",
+  "metin": "Hangi disk temizlensin?",
+  "arac": {
+    "ad": "AskUserQuestion",
+    "ozet": "Hangi disk temizlensin?",
+    "sorular": [{
+      "soru": "Hangi disk temizlensin?",
+      "baslik": "Disk",
+      "cokSecim": false,
+      "secenekler": [
+        { "etiket": "C diski (Önerilen)", "aciklama": "~18 GB açılır" },
+        { "etiket": "D diski", "aciklama": "" }
+      ]
+    }]
+  }
+}
+```
 
 ## İstemciden sunucuya
 

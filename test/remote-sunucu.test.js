@@ -43,6 +43,24 @@ test('baslangic paketi kalıcı kimlik ve gerçek port taşır', async () => {
   sunucu.durdur();
 });
 
+test('oturum listesi şef (orkestratör) bayrağını telefona taşır', () => {
+  const sunucu = new RemoteSunucu({
+    veriDizini: geciciDizin(),
+    port: 0,
+    oturumListesiAl: () => [
+      { id: 1, baslik: 'Şef · oturum #1', orkestrator: true },
+      { id: 2, baslik: 'Normal · oturum #2' },
+    ],
+    oturumBilgisiAl: () => ({}),
+    oturumSayilariAl: () => null,
+  });
+
+  const liste = sunucu.oturumListesiHazirla();
+  assert.strictEqual(liste[0].orkestrator, true);
+  assert.strictEqual(liste[1].orkestrator, false);
+  sunucu.durdur();
+});
+
 test('kimlik yeniden başlatmada korunur, port kumanda.json içine yazılır', async () => {
   const dizin = geciciDizin();
   const bir = new RemoteSunucu({ veriDizini: dizin, port: 0 });
