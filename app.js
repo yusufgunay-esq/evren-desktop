@@ -45,6 +45,7 @@ const S = {
   calisiyor: false, basliyor: false, oturumlar: [], aktif: null,
   fs: Math.min(18, Math.max(11, Number(new URLSearchParams(location.search).get('fs') || sakla.oku('fs', 13)) || 13)),
   sohbetAcik: sakla.oku('sohbetPanelAcik', false), sohbetFiltre: 'hepsi',
+  ciktilar: null, ciktiAnahtar: null, // oturumun ürettiği dosyalar (panel "Çıktılar" sekmesi)
   grupKapali: sakla.oku('grupKapali', {}), // { calisiyor: true, bosta: true } — gruplar ayrı ayrı katlanır
   sefOturumlar: new Set(sakla.oku('sefOturumlar', [])), // Şef olarak açılmış oturum kimlikleri (kalıcı)
 };
@@ -1197,6 +1198,7 @@ function odakToggle(zorla) {
 }
 // ---------- konuşma / sohbet geçmişi paneli ----------
 let sohbetYukleniyor = false;
+let ciktiYukleniyor = false;
 function sohbetToggle(zorla) {
   const panel = $('sohbetPanel');
   if (!panel) return;
@@ -1211,6 +1213,7 @@ function sohbetToggle(zorla) {
 async function sohbetYukle(zorla = false) {
   const panel = $('sohbetPanel');
   if (!panel || panel.hidden) return;
+  if (S.sohbetFiltre === 'cikti') { await ciktiYukle(zorla); return; }
   if (seciliOturumGecmisi) {
     if (sohbetYukleniyor && !zorla) return;
     sohbetYukleniyor = true;
@@ -1250,6 +1253,7 @@ async function sohbetYukle(zorla = false) {
 }
 function sohbetCiz(girisler) {
   const filtre = S.sohbetFiltre || 'hepsi';
+  if (filtre === 'cikti') { ciktiCiz(); return; }
   const filtrelenmis = (girisler || []).filter((g) => {
     if (filtre === 'mesajlar') return g.rol === 'kullanici' || g.rol === 'asistan';
     if (filtre === 'arac') return g.rol === 'arac';
@@ -1298,6 +1302,99 @@ function sohbetCiz(girisler) {
     liste.scrollTop = liste.scrollHeight;
     liste.dataset.kaydirildi = '1';
   }
+}
+// ---------- çıktılar: oturumun ürettiği dosyalar ----------
+// Claude Desktop'ın "Outputs" karşılığı: Write/Edit ile yazılan dosyalar ve Bash'ın ürettiği
+// dosyalar (ekran görüntüsü vb.). Karta tıklamak dosyayı açar, "Klasör" konumunu gösterir.
+function ciktiParametresi() {
+  if (seciliOturumGecmisi) {
+    return {
+      param: { dizin: seciliOturumGecmisi.projeYol, id: seciliOturumGecmisi.id },
+      anahtar: `g:${seciliOturumGecmisi.projeYol}:${seciliOturumGecmisi.id}`,
+    };
+  }
+  const o = aktifOturum();
+  if (!o || o.pid == null) return null;
+  return { param: { id: o.pid }, anahtar: `c:${o.id}:${o.devam || ''}:${o.pid}` };
+}
+async function ciktiYukle(zorla = false) {
+  const panel = $('sohbetPanel');
+  if (!panel || panel.hidden) return;
+  const hedef = ciktiParametresi();
+  if (!hedef) { S.ciktilar = []; S.ciktiAnahtar = null; ciktiCiz(); return; }
+  if (S.ciktiAnahtar !== hedef.anahtar) { S.ciktilar = null; S.ciktiAnahtar = hedef.anahtar; }
+  if (ciktiYukleniyor && !zorla) return;
+  ciktiYukleniyor = true;
+  try {
+    const res = await window.evren.oturumCikti(hedef.param);
+    if (S.ciktiAnahtar === hedef.anahtar) {
+      S.ciktilar = (res && res.ciktilar) || [];
+      ciktiCiz();
+    }
+  } catch (e) {
+    console.error('Çıktılar okunamadı:', e);
+    if (S.ciktiAnahtar === hedef.anahtar) { S.ciktilar = S.ciktilar || []; ciktiCiz(); }
+  } finally {
+    ciktiYukleniyor = false;
+  }
+}
+function ciktiBoyut(n) {
+  n = Number(n) || 0;
+  if (n < 1024) return `${n} B`;
+  if (n < 1048576) return `${Math.round(n / 1024)} KB`;
+  return `${(n / 1048576).toFixed(n < 10485760 ? 1 : 0)} MB`;
+}
+function ciktiSaat(ms) {
+  if (!ms) return '';
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+function ciktiIslemEtiketi(islem) {
+  if (islem === 'olusturuldu') return 'oluşturuldu';
+  if (islem === 'degisti') return 'değişti';
+  return 'üretildi';
+}
+function ciktiCiz() {
+  const liste = $('sohbetListe');
+  if (!liste) return;
+  const veri = S.ciktilar;
+  if (veri == null) {
+    liste.innerHTML = '<div class="sohbet-bos">Çıktılar yükleniyor...</div>';
+    return;
+  }
+  if ($('sohbetSayac')) $('sohbetSayac').textContent = veri.length;
+  if (!veri.length) {
+    liste.innerHTML = '<div class="sohbet-bos">Bu oturumda henüz dosya üretilmedi</div>';
+    return;
+  }
+  liste.innerHTML = veri.map((c) => {
+    const yol = esc(c.yol || '');
+    const ad = esc(c.ad || c.yol || '');
+    const uzanti = (/\.([a-z0-9]{1,5})$/i.exec(c.yol || '') || [null, 'dosya'])[1].toUpperCase();
+    const onizleme = c.onizleme
+      ? `<img class="cikti-resim" src="${esc(c.onizleme)}" alt="">`
+      : `<span class="cikti-simge">${esc(uzanti)}</span>`;
+    const durumSinif = c.islem === 'olusturuldu' ? 'yeni' : c.islem === 'komut' ? 'uretti' : 'degisti';
+    const saat = ciktiSaat(c.ms);
+    return `
+      <div class="cikti-kart" data-yol="${yol}" title="${yol}">
+        <div class="cikti-onizleme${c.onizleme ? ' resim' : ''}">${onizleme}</div>
+        <div class="cikti-bilgi">
+          <div class="cikti-ust">
+            <span class="cikti-ad">${ad}</span>
+            <span class="cikti-durum ${durumSinif}"><i></i>${ciktiIslemEtiketi(c.islem)}</span>
+          </div>
+          <div class="cikti-yol mono">${esc(kisaYol(c.yol || '', 52))}</div>
+          <div class="cikti-alt">
+            <span>${ciktiBoyut(c.boyut)}</span>${saat ? `<span class="nokta">·</span><span>${saat}</span>` : ''}
+          </div>
+        </div>
+        <div class="cikti-eylem">
+          <button class="cikti-dugme" type="button" data-eylem="ac" title="Dosyayı aç"><svg class="ic"><use href="#i-open"/></svg></button>
+          <button class="cikti-dugme" type="button" data-eylem="klasor" title="Dosya konumunu aç"><svg class="ic"><use href="#i-folder"/></svg></button>
+        </div>
+      </div>`;
+  }).join('');
 }
 // ---------- komut paleti ----------
 const P = { ogeler: [], gorunen: [], aktif: 0 };
@@ -2283,9 +2380,18 @@ if ($('sohbetPanel')) {
       for (const b of $('sohbetPanel').querySelectorAll('.sohbet-filtre')) b.classList.remove('aktif');
       f.classList.add('aktif');
       S.sohbetFiltre = f.dataset.filtre;
+      if (S.sohbetFiltre === 'cikti') { ciktiYukle(true); return; }
       const o = aktifOturum();
       const kayit = seciliOturumGecmisi ? seciliOturumGecmisi.girisler : (o && o.sohbetGirisler);
       if (kayit) sohbetCiz(kayit);
+      return;
+    }
+    const ciktiKart = e.target.closest('.cikti-kart');
+    if (ciktiKart) {
+      const yol = ciktiKart.dataset.yol;
+      const dugme = e.target.closest('.cikti-dugme');
+      if (dugme && dugme.dataset.eylem === 'klasor') window.evren.dosyaKlasor(yol);
+      else window.evren.dosyaAc(yol);
       return;
     }
     const aracKart = e.target.closest('.sohbet-kart.arac');
@@ -2317,6 +2423,22 @@ yukle().then(() => {
   if (new URLSearchParams(location.search).get('rol')) setTimeout(() => yeniOturumModalAc({ orkestrator: true }), 350); // test: orkestratör rolü seçili modal
   if (new URLSearchParams(location.search).get('projeDuzenle')) setTimeout(() => { if (S.projeler[0]) projeDuzenleAc(S.projeler[0]); }, 400); // test: proje düzenleme modalı
   // test: kenar panelde bir oturumu Şef gibi işaretle (animasyon/kart görünümünü yakala)
+  if (new URLSearchParams(location.search).get('cikti')) {
+    // Ekran doğrulaması: en yeni oturumun çıktılarını aç (--ekran-cikti).
+    setTimeout(async () => {
+      // Geçmiş listesi arka planda yüklenir; hazır olana dek kısa süre bekle.
+      const basla = Date.now();
+      while ((!S.gecmis || !S.gecmis.length) && Date.now() - basla < 2200) await bekle(100);
+      S.sohbetFiltre = 'cikti';
+      for (const b of document.querySelectorAll('.sohbet-filtre')) b.classList.toggle('aktif', b.dataset.filtre === 'cikti');
+      const secim = new URLSearchParams(location.search).get('cikti');
+      const hedef = secim && secim !== '1' && Array.isArray(S.gecmis)
+        ? (S.gecmis.find((x) => String(x.id).startsWith(secim)) || S.gecmis[0])
+        : (Array.isArray(S.gecmis) ? S.gecmis[0] : null);
+      if (!seciliOturumGecmisi && hedef) await oturumIzle(hedef);
+      else await sohbetToggle(true);
+    }, 500);
+  }
   if (new URLSearchParams(location.search).get('sef')) {
     let deneme = 0;
     const t = setInterval(() => {

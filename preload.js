@@ -34,4 +34,7 @@ contextBridge.exposeInMainWorld('evren', {
   modelGuncelle: (id, modelId) => ipcRenderer.invoke('model-guncelle', { id, modelId }),
   oturumCatalla: (bilgi) => ipcRenderer.invoke('oturum-catalla', bilgi),
   sohbetOturumKaydi: (param) => ipcRenderer.invoke('sohbet-oturum-kaydi', param),
+  oturumCikti: (param) => ipcRenderer.invoke('oturum-cikti', param), // oturumun ürettiği dosyalar
+  dosyaAc: (yol) => ipcRenderer.invoke('dosya-ac', yol), // dosyayı varsayılan uygulamada aç
+  dosyaKlasor: (yol) => ipcRenderer.invoke('dosya-klasor', yol), // dosya konumunu Explorer'da göster
 });

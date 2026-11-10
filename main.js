@@ -4,7 +4,7 @@
  * If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/.
  * Copyright (c) 2026 Yusuf Günay. */
 // EVREN Desktop — ana süreç: IPC, çoklu pty (ConPTY), EVREN API ölçümü. Model/ayar/kasa mantığı motor.js'te.
-const { app, BrowserWindow, ipcMain, dialog, shell, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, screen, nativeImage } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -57,6 +57,8 @@ else {
 const kabuklar = new Map(); // oturum kimliği -> pty (çoklu oturum)
 const oturumBilgi = new Map(); // kimlik -> { modelId, modelAd, dizin, proje, devam, baslangic } (kumanda listesi için)
 const baglamIzleyiciler = new Map(); // kimlik -> sohbet.BaglamIzleyici (bağlam kullanımı + tur sayacı)
+const ciktiIzleyiciler = new Map(); // oturum dosyası -> sohbet.CiktiIzleyici (üretilen dosyalar)
+const onizlemeOnbellek = new Map(); // görsel yolu -> { mtime, veri } (küçük resim)
 let sonKimlik = 0;
 let anahtarOnbellek = null; // kasa okuması (DPAPI) yavaş; süreç boyunca bir kez okunur
 let modelOnbellek = null;   // son canlı /v1/models çözümü
@@ -567,6 +569,8 @@ function pencereOlustur() {
   if (argv.includes('--ekran-kumanda')) sorgu.kumanda = '1'; // test: Kumanda modalını açık yakala
   if (argv.includes('--ekran-modal')) sorgu.modal = '1';
   if (argv.includes('--ekran-proje-duzenle')) sorgu.projeDuzenle = '1'; // test: proje düzenleme modalı
+  const ciktiIx = argv.indexOf('--ekran-cikti');
+  if (ciktiIx >= 0) sorgu.cikti = (argv[ciktiIx + 1] && !argv[ciktiIx + 1].startsWith('--')) ? argv[ciktiIx + 1] : '1'; // test: Çıktılar sekmesi (isteğe bağlı oturum kimliği öneki)
   if (argv.includes('--ekran-rol')) sorgu.rol = '1'; // test: orkestratör rolü seçili modal
   if (EKRAN_SEF) sorgu.sef = '1'; // test: kenar panelde Şef kartı görünümü
   if (EKRAN_ORK) { sorgu.oturum = '1'; sorgu.ork = '1'; } // test: orkestratör oturumu aç
@@ -952,6 +956,67 @@ ipcMain.handle('oturum-baglam', (_e, id) => {
   };
 });
 
+// Çıktılar: oturumun ürettiği/değiştirdiği dosyalar (Write/Edit + Bash'ın ürettiği görseller).
+// `dizin` verilirse geçmiş oturum, yoksa canlı oturum kimliğiyle çözülür.
+function ciktiDosyasi({ id, dizin } = {}) {
+  if (dizin) return sohbet.oturumDosyasiBul({ dizin, devam: id });
+  const b = oturumBilgi.get(id);
+  if (!b) return null;
+  return b.devam
+    ? sohbet.dosyaYolu(b.dizin, b.devam)
+    : sohbet.oturumDosyasiBul({ dizin: b.dizin, baslangicMs: b.baslangic });
+}
+// Görsel çıktılar için küçük resim. Yol+mtime anahtarıyla önbelleklenir; çok büyüyünce sıfırlanır.
+// Windows'ta createThumbnailFromPath kabuk önbelleğine takılabiliyor; doğrudan okuyup ölçekliyoruz.
+async function onizlemeOku(yol, mtime) {
+  const k = onizlemeOnbellek.get(yol);
+  if (k && k.mtime === mtime) return k.veri;
+  try {
+    let img = nativeImage.createFromPath(yol);
+    if (img.isEmpty()) return null;
+    const { width, height } = img.getSize();
+    if (!width || !height) return null;
+    const olcek = Math.min(96 / width, 96 / height, 1);
+    img = img.resize({
+      width: Math.max(1, Math.round(width * olcek)),
+      height: Math.max(1, Math.round(height * olcek)),
+      quality: 'good',
+    });
+    const veri = img.isEmpty() ? null : img.toDataURL();
+    if (onizlemeOnbellek.size > 200) onizlemeOnbellek.clear();
+    onizlemeOnbellek.set(yol, { mtime, veri });
+    return veri;
+  } catch { return null; }
+}
+ipcMain.handle('oturum-cikti', async (_e, param) => {
+  const dosya = ciktiDosyasi(param);
+  if (!dosya || !fs.existsSync(dosya)) return { ciktilar: [] };
+  let iz = ciktiIzleyiciler.get(dosya);
+  if (!iz) { iz = new sohbet.CiktiIzleyici(); ciktiIzleyiciler.set(dosya, iz); }
+  const liste = iz.oku(dosya) || [];
+  let resimSayisi = 0;
+  // Küçük resim yalnız ilk birkaç görsel için ve aşırı büyük dosyalarda atlanır:
+  // ana süreci uzun süre kilitlememek için sınırlı tutulur (sonrası dosya simgesiyle görünür).
+  for (const c of liste) {
+    if (!c.resim || resimSayisi >= 12) continue;
+    if (c.boyut > 3 * 1024 * 1024) { c.onizleme = null; continue; }
+    resimSayisi++;
+    const veri = await onizlemeOku(c.yol, c.degisimMs);
+    if (veri) c.onizleme = veri;
+  }
+  return { ciktilar: liste };
+});
+ipcMain.handle('dosya-ac', async (_e, yol) => {
+  if (typeof yol !== 'string' || !yol) return 'gecersiz';
+  try { if (!fs.statSync(yol).isFile()) return 'bulunamadi'; } catch { return 'bulunamadi'; }
+  return shell.openPath(yol);
+});
+ipcMain.handle('dosya-klasor', (_e, yol) => {
+  if (typeof yol !== 'string' || !yol) return false;
+  try { if (!fs.statSync(yol).isFile()) return false; } catch { return false; }
+  shell.showItemInFolder(yol);
+  return true;
+});
 ipcMain.handle('yaz', (_e, id, veri) => {
   const k = kabuklar.get(id);
   const b = oturumBilgi.get(id);
