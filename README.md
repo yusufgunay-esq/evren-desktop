@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/ekran-ana.png" alt="EVREN Desktop ana ekranı: kenar panelinde bağlantı, model ve proje listeleri; ortada oturum paneli ve model–proje akış grafiği, sağda proje özeti, gecikme grafiği ve olay günlüğü" width="920" />
+  <img src="docs/ekran-ana.png" alt="EVREN Desktop ana ekranı: solda oturum geçmişi, ortada yeni oturum kartı ve model–proje akış grafiği, sağda günlük token kotası ve proje özeti" width="920" />
 </p>
 
 ---
@@ -48,7 +48,7 @@ Amaç, kamu ve savunma sanayii ekosistemindeki geliştiricilere yerli altyapı �
 | **Hızlı ve hafif** | Açılış ağı beklemez; arka plan grafiği 30 kare/sn ile sınırlıdır ve oturum açıkken tamamen durur. |
 
 <p align="center">
-  <img src="docs/ekran-oturum.png" alt="Oturum sekmesi: uygulama içinde açılan Claude Code, yeni klasör için güven sorusuyla" width="720" />
+  <img src="docs/ekran-oturum.png" alt="Oturum sekmesi: Wend segment motorunda H3 aday indeksi ve DTW ölçümü; araç çağrıları, dosya değişikliği ve p99 ölçüm sonucu" width="720" />
 </p>
 
 <p align="center">
