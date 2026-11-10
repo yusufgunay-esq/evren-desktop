@@ -14,6 +14,9 @@ const { StringDecoder } = require('node:string_decoder');
 const OTURUM_KIMLIK = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const OZET_SINIRI = 200;
 const ILK_ADET = 50;
+// Kullanıcıya soru soran araçlar: giriş metni tek satır özet değil, gerçek
+// soru ve seçenekler olarak taşınır. Telefon bunları düğme olarak çizer.
+const SORU_ARACLARI = new Set(['AskUserQuestion', 'AskUserInput', 'Question']);
 
 // Dizin adı Claude Code'un kodlamasıyla aynı: harf/rakam dışı karakterler tireye döner.
 function projeKlasoru(dizin, kokDizin) {
@@ -78,6 +81,39 @@ function ozetle(deger) {
   return metin.length > OZET_SINIRI ? metin.slice(0, OZET_SINIRI - 1) + '…' : metin;
 }
 
+/**
+ * AskUserQuestion girdisini yapılandırılmış sorulara çevirir.
+ * Girdi biçimi: { questions: [{ question, header, multiSelect, options: [{ label, description }] }] }.
+ * Dönen: [{ soru, baslik, cokSecim, secenekler: [{ etiket, aciklama }] }] ya da null.
+ */
+function sorulariCoz(girdi) {
+  if (!girdi || typeof girdi !== 'object' || !Array.isArray(girdi.questions)) return null;
+  const sorular = [];
+  for (const q of girdi.questions) {
+    if (!q || typeof q !== 'object') continue;
+    const secenekler = [];
+    for (const o of Array.isArray(q.options) ? q.options : []) {
+      if (typeof o === 'string') {
+        if (o.trim()) secenekler.push({ etiket: o.trim(), aciklama: '' });
+        continue;
+      }
+      if (!o || typeof o !== 'object') continue;
+      const etiket = String(o.label || o.etiket || '').trim();
+      if (!etiket) continue;
+      secenekler.push({ etiket, aciklama: String(o.description || o.aciklama || '').trim() });
+    }
+    const soruMetni = String(q.question || q.soru || '').trim();
+    if (!soruMetni && !secenekler.length) continue;
+    sorular.push({
+      soru: soruMetni,
+      baslik: String(q.header || q.baslik || '').trim(),
+      cokSecim: q.multiSelect === true,
+      secenekler,
+    });
+  }
+  return sorular.length ? sorular : null;
+}
+
 function zamanMs(j) {
   const t = Date.parse(j && j.timestamp);
   return Number.isFinite(t) ? t : 0;
@@ -115,7 +151,9 @@ function girisleriCoz(j, aracAdlari) {
         const bilgi = aracAdlari && aracAdlari.get(blok.tool_use_id);
         const ad = (bilgi && bilgi.ad) || 'Araç sonucu';
         const ozet = (bilgi && bilgi.ozet) || ozetle(blok.content);
-        girisler.push({ rol: 'arac', metin: ozetle(blok.content), arac: { ad, ozet }, ms });
+        // `sonuc: true` araç çağrısı değil, dönüş kaydıdır: soru aracının
+        // yanıtı da buradan gelir; istemci bunu bekleyen soru sanmamalı.
+        girisler.push({ rol: 'arac', metin: ozetle(blok.content), arac: { ad, ozet, sonuc: true }, ms });
       }
     }
     return girisler;
@@ -132,9 +170,14 @@ function girisleriCoz(j, aracAdlari) {
         if (metin) girisler.push({ rol: 'asistan', metin, ms });
       } else if (blok.type === 'tool_use') {
         const ad = String(blok.name || 'Araç');
-        const ozet = ozetle(blok.input);
+        // Soru aracı: tek satırlık JSON dökümü yerine gerçek soru ve seçenekler
+        // gider. Telefon seçenekleri düğme olarak çizer, dokunuşla yanıtlar.
+        const sorular = SORU_ARACLARI.has(ad) ? sorulariCoz(blok.input) : null;
+        const ozet = (sorular && sorular[0].soru) || ozetle(blok.input);
+        const arac = { ad, ozet };
+        if (sorular) arac.sorular = sorular;
         if (aracAdlari && blok.id) aracAdlari.set(blok.id, { ad, ozet });
-        girisler.push({ rol: 'arac', metin: ozet, arac: { ad, ozet }, ms });
+        girisler.push({ rol: 'arac', metin: ozet, arac, ms });
       }
     }
   }
@@ -370,6 +413,7 @@ module.exports = {
   BaglamIzleyici,
   sonKullanim,
   ozetle,
+  sorulariCoz,
   ILK_ADET,
   OTURUM_KIMLIK,
 };

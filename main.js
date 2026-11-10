@@ -652,6 +652,7 @@ function remoteSunucuBaslat() {
           dizin: b.dizin || '',
           proje: b.proje || '',
           devam: b.devam || null,
+          orkestrator: !!b.orkestrator,
         });
       }
       return list;
