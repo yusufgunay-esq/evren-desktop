@@ -118,6 +118,10 @@ Kısayollar, ajanın kendi tuşlarıyla (`Ctrl+K`, `Ctrl+B`, `Ctrl+_`) çakışm
 
 ## Telefon kumandası (uzaktan)
 
+<p align="center">
+  <img src="docs/ekran-telefon.png" alt="Telefon kumandası: oturumlar listesi, çalışıyor/boşta durumları, model adı ve ajandan gelen soru" width="330" />
+</p>
+
 Aynı Wi-Fi'deki telefon, **Kumanda** panelindeki QR kod okutularak eşleşir. Masaüstü yerel ağda WebSocket açar (`remote-sunucu.js`); belirteç, port ve sunucu kimliği `kumanda.json` içinde kalıcıdır.
 
 - **Windows güvenlik duvarı:** İlk açılışta Electron için ağ erişimi sorulursa **izin ver**. Daha önce "Engelle" seçilmişse telefon hiçbir porta ulaşamaz; *Windows Güvenliği → Güvenlik duvarı ve ağ koruması → Bir uygulamanın güvenlik duvarından geçmesine izin ver* yolundan Electron satırını işaretle.
