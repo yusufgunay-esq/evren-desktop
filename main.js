@@ -32,6 +32,8 @@ const EKRAN_OTURUM = argv.includes('--ekran-oturum'); // test: iki oturum açar
 const EKRAN_ORK = argv.includes('--ekran-ork-oturum'); // test: orkestratör oturumu aç
 const EKRAN_SEF = argv.includes('--ekran-sef'); // test: kenar panelde Şef kartı
 const EKRAN_PROJE = argv.includes('--ekran-proje') ? argv[argv.indexOf('--ekran-proje') + 1] : null; // test: açılışta proje seç
+// Ekran görüntüsü bekleme süresi (ms): canlı API yavaşsa ilk boyama için süre tanır.
+const EKRAN_BEKLE = argv.includes('--ekran-bekle') ? Math.max(0, Number(argv[argv.indexOf('--ekran-bekle') + 1]) || 0) : 0;
 // Ekran görüntüsünü bir DOM öğesine kırp (README görselleri için): EVREN_EKRAN_SEL, EVREN_EKRAN_BOSLUK.
 const EKRAN_SEL = process.env.EVREN_EKRAN_SEL || '';
 const EKRAN_BOSLUK = Math.max(0, Number(process.env.EVREN_EKRAN_BOSLUK || 0) || 0);
@@ -183,6 +185,8 @@ async function yerelDurum() {
   return {
     anahtarVar, modeller, surum: SURUM,
     sonModel: typeof ham.sonModel === 'string' ? ham.sonModel : modeller[0] && modeller[0].id,
+    sonEfor: motor.eforCoz(ham.sonEfor),
+    eforlar: motor.EFORLAR,
     projeler: projeListesi(),
     sonKlasorler: sonKlasorListesi(),
     serbestDizin: SERBEST_DIZIN,
@@ -262,7 +266,8 @@ function orkestratorBrifi(yazma) {
 }
 
 // بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ — yeni bir Claude Code oturumu (PTY) açar; başlıkta verilen dizinde çalışır, `devam` verilirse eski oturumu sürdürür.
-async function oturumBaslat({ modelId, dizin, ekDizinler, projeAd, cols, rows, devam, forkSession, orkestrator, kodYazma }) {
+async function oturumBaslat({ modelId, dizin, ekDizinler, projeAd, cols, rows, devam, forkSession, orkestrator, kodYazma, efor }) {
+  const eforDeger = motor.eforCoz(efor);
   if (devam != null && !gecmis.OTURUM_KIMLIK.test(String(devam))) throw new Error('Geçersiz oturum kimliği.');
   if (kabuklar.size >= 8) throw new Error('En çok 8 oturum açık olabilir; birini kapatın.');
   const p = await panelModulu();
@@ -325,7 +330,7 @@ async function oturumBaslat({ modelId, dizin, ekDizinler, projeAd, cols, rows, d
   let bu;
   if (TEST_KOMUT) bu = pty.spawn(TEST_KOMUT, [], secenek);
   else {
-    const arg = ['--dangerously-skip-permissions', ...(devam ? ['--resume', String(devam)] : []), ...(forkSession ? ['--fork-session'] : []), ...ekler.flatMap((d) => ['--add-dir', d])];
+    const arg = ['--dangerously-skip-permissions', '--effort', eforDeger, ...(devam ? ['--resume', String(devam)] : []), ...(forkSession ? ['--fork-session'] : []), ...ekler.flatMap((d) => ['--add-dir', d])];
     if (ork) {
       arg.push('--append-system-prompt', orkestratorBrifi(yazma));
       if (!yazma) arg.push('--disallowedTools', 'Edit', 'Write', 'NotebookEdit');
@@ -348,6 +353,7 @@ async function oturumBaslat({ modelId, dizin, ekDizinler, projeAd, cols, rows, d
     devam: devam ? String(devam) : null,
     orkestrator: ork,
     kodYazma: yazma,
+    efor: eforDeger,
     baslangic: Date.now(),
   };
   oturumBilgi.set(id, bilgi);
@@ -380,15 +386,15 @@ async function oturumBaslat({ modelId, dizin, ekDizinler, projeAd, cols, rows, d
   }
   if (!serbestMi) {
     // Son klasörler: tek seferlik klasör başlangıçları için; serbest alan listeye girmez.
-    ayarYaz({ sonModel: model.id, sonKlasorler: [hedefDizin, ...(ayarOku().sonKlasorler || []).filter((x) => x !== hedefDizin)].slice(0, 8) });
+    ayarYaz({ sonModel: model.id, sonEfor: eforDeger, sonKlasorler: [hedefDizin, ...(ayarOku().sonKlasorler || []).filter((x) => x !== hedefDizin)].slice(0, 8) });
     // Bu klasör bir projeye aitse projeyi son kullanılanlara taşı.
     const projeler = projeleriOku();
     const ix = projeler.findIndex((x) => x.yol === path.resolve(hedefDizin));
     if (ix >= 0) { projeler[ix].son = Date.now(); projeleriYaz(projeler); }
   } else {
-    ayarYaz({ sonModel: model.id });
+    ayarYaz({ sonModel: model.id, sonEfor: eforDeger });
   }
-  return { id, model: model.id, modelAd: model.ad || model.id, dizin: hedefDizin, ekler, proje: bilgi.proje, devam: bilgi.devam, orkestrator: ork, kodYazma: yazma };
+  return { id, model: model.id, modelAd: model.ad || model.id, dizin: hedefDizin, ekler, proje: bilgi.proje, devam: bilgi.devam, orkestrator: ork, kodYazma: yazma, efor: eforDeger };
 }
 
 
@@ -625,7 +631,7 @@ function pencereOlustur() {
           console.log(`[ekran] ${path.resolve(EKRAN)}`);
         } catch (err) { console.error('[ekran] hata', err); }
         app.quit();
-      }, (EKRAN_OTURUM || EKRAN_ORK) ? (TEST_KOMUT ? 6500 : 14000) : (EKRAN_SEF ? 7500 : 4200));
+      }, EKRAN_BEKLE || (sorgu.cikti ? 9000 : (EKRAN_OTURUM || EKRAN_ORK) ? (TEST_KOMUT ? 6500 : 14000) : (EKRAN_SEF ? 7500 : 4200)));
     });
   }
 }

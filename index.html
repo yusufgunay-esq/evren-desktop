@@ -120,6 +120,9 @@
 
         <!-- Alt Durum Çubuğu: Sessiz, tek satır, minimal -->
         <footer class="side-foot">
+          <button class="btn wide" id="cevapDurdurBtn" type="button" hidden title="Ajanın o anki yanıtını keser; oturum açık kalır (Ctrl+C)">
+            <svg class="ic"><use href="#i-stop" /></svg><span>Yanıtı durdur</span>
+          </button>
           <button class="btn danger wide" id="durdurBtn" type="button" hidden>
             <svg class="ic"><use href="#i-stop" /></svg><span>Oturumu sonlandır</span>
           </button>
@@ -428,10 +431,20 @@
         </div>
 
 
-        <!-- 3. Rol: orkestratör ve yazma yetkisi -->
+        <!-- 3. Efor: düşünme derinliği -->
         <div class="oturum-modal-bolum">
           <div class="oturum-bolum-ust">
-            <span class="oturum-bolum-baslik"><b>03</b>Rol</span>
+            <span class="oturum-bolum-baslik"><b>03</b>Efor</span>
+            <span class="oturum-bolum-ipucu">Düşünme derinliği; yüksek efor daha yavaş ama daha derin</span>
+          </div>
+          <div class="oturum-efor-satir" id="modalEforSec" role="radiogroup" aria-label="Efor seviyesi"></div>
+        </div>
+
+
+        <!-- 4. Rol: orkestratör ve yazma yetkisi -->
+        <div class="oturum-modal-bolum">
+          <div class="oturum-bolum-ust">
+            <span class="oturum-bolum-baslik"><b>04</b>Rol</span>
             <span class="oturum-bolum-ipucu" id="modalRolIpucu">Ajan doğrudan çalışır</span>
           </div>
           <div class="rol-kart">
