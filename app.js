@@ -313,8 +313,26 @@ function grupKatla(dugme) {
   S.grupKapali = { ...S.grupKapali, [anahtar]: !acik };
   sakla.yaz('grupKapali', S.grupKapali);
 }
+// Zaten açık sohbete yönlendirildiğinde paneli kısa bir ışıkla belli eder.
+function sohbetVurgula() {
+  const panel = $('sohbetPanel');
+  if (!panel) return;
+  panel.classList.remove('vurgu');
+  void panel.offsetWidth; // animasyonu yeniden başlat
+  panel.classList.add('vurgu');
+  setTimeout(() => panel.classList.remove('vurgu'), 700);
+  setTimeout(() => sigdir(), 40);
+}
 async function oturumIzle(g) {
   if (!g || !g.id) return;
+  // Aynı sohbet zaten izleniyorsa baştan yükleme: ikinci kopya açılmış gibi görünmesin.
+  if (seciliOturumGecmisi && seciliOturumGecmisi.id === g.id) {
+    const p = $('sohbetPanel');
+    if (p) p.hidden = false;
+    S.sohbetAcik = true;
+    sohbetVurgula();
+    return;
+  }
   seciliOturumGecmisi = g;
   const panel = $('sohbetPanel');
   if (panel) panel.hidden = false;
@@ -1031,6 +1049,14 @@ async function basla(devamId, secenekler) {
   const p = yol ? (S.projeler.find((x) => x.yol === yol) || null) : null;
   const ekDizinler = Array.isArray(sec.ekDizinler) ? sec.ekDizinler : (p && Array.isArray(p.yollar) ? p.yollar.slice(1) : []);
   if (S.basliyor || !S.yuklendi || !S.anahtarVar) return;
+  // Aynı sohbetin ikinci kopyasını açma: canlı eş varsa o sekmeye git, kapanmış
+  // (ölü) sekme varsa yeni sekme açmak yerine o sekmeyi tazele.
+  let oluSekme = -1;
+  if (devam) {
+    const canli = S.oturumlar.find((o) => o.canli && (o.devam === devam || o.id === devam));
+    if (canli) { sekmeSec(canli.id); return; }
+    oluSekme = S.oturumlar.findIndex((o) => o.devam === devam && !o.canli);
+  }
   if (S.oturumlar.filter((o) => o.canli).length >= 8) { olay('OTURUM', 'en çok 8 canlı oturum', 'uyari'); return; }
   S.basliyor = true;
   try {
@@ -1038,7 +1064,17 @@ async function basla(devamId, secenekler) {
     const orkestrator = sec.orkestrator === true || (!!devam && S.sefOturumlar.has(devam));
     const kodYazma = orkestrator ? sec.kodYazma === true : true;
     const o = { id: ++sonYerel, pid: 0, model: m.id, proje: sec.projeAd || (p ? p.ad : (yol ? (yol.split(/[\\/]/).filter(Boolean).pop() || yol) : 'EVREN çalışma alanı')), dal: p ? p.dal : '', yol: yol || S.serbestDizin, ekler: ekDizinler, canli: true, kod: null, basladi: 0, yeni: false, devam, orkestrator, kodYazma };
-    S.oturumlar.push(o);
+    if (oluSekme >= 0 && S.oturumlar[oluSekme]) {
+      const eski = S.oturumlar[oluSekme];
+      clearInterval(eski.sayac);
+      try { eski.term && eski.term.dispose(); } catch {}
+      if (eski.el) eski.el.remove();
+      S.oturumlar.splice(oluSekme, 1);
+      if (S.aktif === eski.id) S.aktif = null;
+      S.oturumlar.splice(oluSekme, 0, o);
+    } else {
+      S.oturumlar.push(o);
+    }
     await terminalOlustur(o);
     sekmeSec(o.id);
     await bekle(30);
@@ -2072,6 +2108,14 @@ $('gecmisList').addEventListener('click', (e) => {
   const var_ = S.oturumlar.find((o) => o.canli && (o.devam === id || o.id === id));
   if (var_) {
     sekmeSec(var_.id);
+    return;
+  }
+  // Bu sohbet üstteki konuşma panelinde zaten açıksa ikinci kez açma; oraya yönlendir.
+  // (Eskiden karta tıklamak aynı sohbeti yeniden başlatıp panelin üstüne ikinci bir görünüm açıyordu.)
+  if (seciliOturumGecmisi && seciliOturumGecmisi.id === id) {
+    const panel = $('sohbetPanel');
+    if (panel.hidden) { panel.hidden = false; S.sohbetAcik = true; sohbetIgneDurumGuncelle(); }
+    sohbetVurgula();
     return;
   }
   // Soldaki karta tıklamak her zaman terminalde açar; konuşma paneli yalnız üstteki konuşma düğmesiyle (Ctrl+Shift+H) açılır.
