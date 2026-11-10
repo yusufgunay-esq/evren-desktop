@@ -18,3 +18,10 @@ Yapıldı: soldaki karta tıklamak, üstte zaten açık sohbeti yeniden başlatm
 Doğrulama: `node --check app.js` temiz, `npm test` 7/7 yeşil.
 Sıradaki: `npm run basla` ile karta tıklama akışını bir kez gözle doğrula.
 Commit: d13638e
+
+## 2026-11-10 · Şef oturumu telefonda ayrı etiket
+Yapıldı: oturum listesine `orkestrator` bayrağı eklendi; telefonda `OturumDurumu.sef` taşınır, liste kartı ve detay üst çubuğunda mono `ŞEF` etiketi çizilir (rozet değil, hairline dil).
+Doğrulama: masaüstü `npm test` 12/12 yeşil; telefon `testDebugUnitTest assembleDebug` BUILD SUCCESSFUL.
+Sıradaki: `docs/ekran-ana.png`, `ekran-oturum.png`, `ekran-palet.png` güncel arayüzle yenilenecek (kullanıcı erteledi).
+Açık: Etiketin görünme yarısı yalnız birim testiyle kanıtlı; canlı Şef oturumuyla ekran görüntüsü alınmadı.
+Commit: 3ed0d2d (masaüstü) + 9aec334 (telefon)
