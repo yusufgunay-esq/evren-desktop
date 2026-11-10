@@ -545,30 +545,11 @@ class RemoteSunucu {
   }
 
   onayTespitiYap(veri) {
-    if (typeof veri !== 'string') return null;
-
-    // Claude Code veya genel CLI onay kalıpları
-    // ANSI kaçış dizilerini temizle
-    const temiz = veri.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
-
-    const kalıplar = [
-      { regex: /(?:allow\s+once|always\s+allow|deny)/i, baslik: 'İşlem İzni', soru: 'Araç çalıştırma izni gerekiyor', secenekler: ['Onayla', 'Reddet'] },
-      { regex: /\[y\/n\]|\(y\/n\)|\[Y\/n\]|\[y\/N\]/i, baslik: 'Onay İsteği', soru: 'Devam etmek istiyor musunuz?', secenekler: ['Evet', 'Hayır'] },
-      { regex: /Do you want to (?:proceed|continue|execute|run)/i, baslik: 'Çalıştırma Onayı', soru: 'Komut çalıştırılsın mı?', secenekler: ['Evet', 'Hayır'] },
-      { regex: /Press enter to continue/i, baslik: 'Devam', soru: 'Devam etmek için dokunun', secenekler: ['Devam'] }
-    ];
-
-    for (const k of kalıplar) {
-      if (k.regex.test(temiz)) {
-        return {
-          tespit: true,
-          baslik: k.baslik,
-          soru: k.soru,
-          metin: temiz.trim().slice(-140),
-          secenekler: k.secenekler
-        };
-      }
-    }
+    // Oturumlar `--dangerously-skip-permissions` ile açılır; ajan araç izni
+    // SORMAZ. Terminal çıktısındaki "bypass permissions", "allow once" gibi
+    // metinleri onay isteği sanmak yanlış pozitif üretiyordu (her oturum
+    // "Onay bekliyor" görünüyordu). Ajan gerçek bir soru sorduğunda yanıt
+    // komut kutusundan yazılır; ayrı onay tespiti yoktur.
     return null;
   }
 
