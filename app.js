@@ -225,6 +225,9 @@ function gecmisCiz() {
 ${esc(g.projeAd)} · ${evrenMi ? 'EVREN' : 'Claude'} · ${esc(goreli(g.ms / 1000))}">
         <div class="seans-satir-ust">
           <span class="seans-baslik">${esc(g.baslik)}</span>
+          <button class="seans-ad-btn" type="button" data-adlandir="${esc(g.id)}" title="Oturumu adlandır">
+            <svg class="ic"><use href="#i-edit" /></svg>
+          </button>
           <button class="seans-igne-btn${igneli ? ' aktif' : ''}" type="button" data-igne="${esc(g.id)}" title="${igneli ? 'İğneyi kaldır' : 'En üste iğnele'}">
             <svg class="ic"><use href="#i-pin" /></svg>
           </button>
@@ -902,7 +905,8 @@ function temizSekmeAdi(b) {
   return String(b || '').replace(/\s+Kural:[\s\S]*$/, '').replace(/\s+/g, ' ').trim();
 }
 function sekmeAdi(o) {
-  return o.orkestrator ? o.proje : (o.ad || o.proje);
+  // Şef de dâhil her oturum önce kendi adını taşır; ad oluşana kadar proje adı görünür.
+  return o.ad || o.proje;
 }
 // ---------- sekmeler ----------
 function sekmeleriCiz() {
@@ -914,7 +918,7 @@ function sekmeleriCiz() {
   $('sekmeler').innerHTML =
     `<button class="tab ana${S.aktif == null ? ' aktif' : ''}" data-id="ana" role="tab" title="Yeni oturum ekranı (Ctrl+Shift+T)">${ikon('term')}<span>ana</span></button>` +
     S.oturumlar.map((o, i) => `
-      <button class="tab${o.id === S.aktif ? ' aktif' : ''}${o.canli ? '' : ' bitti'}${o.yeni ? ' yeni' : ''}${o.orkestrator ? ' ork' : ''}" data-id="${o.id}" role="tab" title="${esc(sekmeAdi(o))} · ${esc(o.proje)} · ${esc(o.model)}${o.efor ? ' · efor ' + esc(o.efor) : ''}${o.dal ? ' · ' + esc(o.dal) : ''}${o.orkestrator ? ' · şef · kod yazma ' + (o.kodYazma ? 'açık' : 'kapalı') : ''}">
+      <button class="tab${o.id === S.aktif ? ' aktif' : ''}${o.canli ? '' : ' bitti'}${o.yeni ? ' yeni' : ''}${o.orkestrator ? ' ork' : ''}" data-id="${o.id}" role="tab" title="${esc(sekmeAdi(o))} · ${esc(o.proje)} · ${esc(o.model)}${o.efor ? ' · efor ' + esc(o.efor) : ''}${o.dal ? ' · ' + esc(o.dal) : ''}${o.orkestrator ? ' · şef · kod yazma ' + (o.kodYazma ? 'açık' : 'kapalı') : ''} · çift tık: adlandır">
         <span class="led${o.canli ? ' canli' : o.kod ? ' kotu' : ''}"></span>
         <span class="tab-ad">${esc(sekmeAdi(o))}</span>
         ${o.orkestrator ? `<span class="tab-ork mono" title="Şef · kod yazma ${o.kodYazma ? 'açık' : 'kapalı'}">ŞEF</span>` : ''}
@@ -1067,7 +1071,7 @@ async function basla(devamId, secenekler) {
     // Geçmişten sürdürülen oturum da Şef ise rolü korunur (yazma güvenli varsayılan: kapalı).
     const orkestrator = sec.orkestrator === true || (!!devam && S.sefOturumlar.has(devam));
     const kodYazma = orkestrator ? sec.kodYazma === true : true;
-    const o = { id: ++sonYerel, pid: 0, model: m.id, efor: sec.efor || S.sonEfor, proje: sec.projeAd || (p ? p.ad : (yol ? (yol.split(/[\\/]/).filter(Boolean).pop() || yol) : 'EVREN çalışma alanı')), dal: p ? p.dal : '', yol: yol || S.serbestDizin, ekler: ekDizinler, canli: true, kod: null, basladi: 0, yeni: false, devam, orkestrator, kodYazma };
+    const o = { id: ++sonYerel, pid: 0, model: m.id, efor: sec.efor || S.sonEfor, _yeni: !devam, proje: sec.projeAd || (p ? p.ad : (yol ? (yol.split(/[\\/]/).filter(Boolean).pop() || yol) : 'EVREN çalışma alanı')), dal: p ? p.dal : '', yol: yol || S.serbestDizin, ekler: ekDizinler, canli: true, kod: null, basladi: 0, yeni: false, devam, orkestrator, kodYazma };
     if (oluSekme >= 0 && S.oturumlar[oluSekme]) {
       const eski = S.oturumlar[oluSekme];
       clearInterval(eski.sayac);
@@ -1099,7 +1103,8 @@ async function basla(devamId, secenekler) {
     for (const v of bekleyenVeri.get(o.pid) || []) o.term.write(v);
     bekleyenVeri.delete(o.pid);
     o.basladi = Date.now();
-    if (o.orkestrator) sefKimligiIzle(o); else sekmeAdIzle(o);
+    if (o.orkestrator) sefKimligiIzle(o);
+    sekmeAdIzle(o); // Şef de dâhil: sekme adı ilk mesajdan (ve mümkünse ajan başlığından) gelir.
     olay('OTURUM', `#${S.oturumlar.indexOf(o) + 1} başladı · ${m.id} · ${o.proje}`, 'iyi');
     // Saniyelik güvenlik ağı: hizalama yalnız çıktı olayına bağlı kalmasın (çıktı üretmeyen
     // yeniden çizimlerde de kontrol edilsin).
@@ -1124,7 +1129,7 @@ async function basla(devamId, secenekler) {
 // Normal oturumun sekme adını ilk kullanıcı mesajından alır (Claude Desktop/Antigravity davranışı).
 // Ad jsonl'e yazılınca okunur; bulunana ya da oturum kapanana kadar 1.5 sn'de bir sorulur.
 function sekmeAdIzle(o) {
-  if (!o || o.orkestrator || o.ad || o._adIzleTimer) return;
+  if (!o || o.ad || o._adIzleTimer) return;
   let n = 0;
   const durdur = () => { clearInterval(o._adIzleTimer); o._adIzleTimer = null; };
   const dene = async () => {
@@ -1134,12 +1139,26 @@ function sekmeAdIzle(o) {
     if (b.devam && !o.devam) { o.devam = b.devam; gecmisCiz(); } // soldaki kart aktif sekme olarak işaretlenir
     if (b.baslik) {
       const ad = temizSekmeAdi(b.baslik);
-      if (ad) { o.ad = ad; durdur(); sekmeleriCiz(); }
+      if (ad) {
+        o.ad = ad; durdur(); sekmeleriCiz();
+        // Yeni açılan oturumda ajan adı: ilk mesajı 2-6 kelimelik başlığa indir.
+        // Sürdürülen eski oturumun adını kendiliğinden değiştirmeyiz.
+        if (o._yeni && !o._ozelAd) aiSekmeAdi(o, b.baslik);
+      }
     }
   };
   o._adIzleTimer = setInterval(dene, 1500);
   if (o._adIzleTimer.unref) o._adIzleTimer.unref();
   dene();
+}
+// İlk kullanıcı mesajından kısa oturum adı üretir; başarısızsa ilk mesajdan türetilen ad kalır.
+async function aiSekmeAdi(o, metin) {
+  if (!o || o._aiAd || o._ozelAd) return;
+  o._aiAd = true;
+  const r = await window.evren.baslikUret(metin).catch(() => null);
+  if (!r || !r.ok || !r.ad || o._ozelAd || !o.canli) return;
+  if (o.devam && o.yol) await oturumAdlandir(o.devam, o.yol, r.ad, { sessiz: true });
+  else { o.ad = r.ad; sekmeleriCiz(); }
 }
 // Şef oturumunun jsonl kimliğini öğrenir; kenar panelde kalıcı olarak işaretler.
 function sefKimligiIzle(o) {
@@ -1926,6 +1945,7 @@ let modalEfor = 'medium';
 let modalOrkestrator = false;
 let modalKodYazma = false;
 let modalProjeAra = '';
+let adlananOturum = null; // { devam, dizin } — yeniden adlandırma modalının hedefi
 let modalProjeTumu = false;
 const MODAL_PROJE_GORUNEN = 3;
 
@@ -2102,6 +2122,65 @@ function yeniOturumModalKapat() {
   if (m) m.hidden = true;
   modalDurumGuncelle();
 }
+// ---------- Oturum adı (yeniden adlandırma) ----------
+// Ad, Claude Code'un custom-title.json dosyasına yazılır: sekme, geçmiş ve Claude Desktop
+// aynı adı görür. Boş ad dosyayı siler, oturum otomatik ada döner.
+async function oturumAdlandir(devam, dizin, ad, secenekler) {
+  const sessiz = !!(secenekler && secenekler.sessiz);
+  const ozel = !!(secenekler && secenekler.ozel);
+  const r = await window.evren.oturumAdlandir({ dizin, devam, ad }).catch((e) => ({ ok: false, hata: e.message }));
+  if (!r || !r.ok) {
+    olay('OTURUM', 'adlandırılamadı · ' + ((r && r.hata) || 'bilinmeyen hata'), 'kotu');
+    return false;
+  }
+  const o = S.oturumlar.find((x) => x.devam === devam || x.id === devam);
+  if (o) {
+    o.ad = r.ad || '';
+    o._ozelAd = ozel && !!r.ad;
+    o._aiAd = false;
+    sekmeleriCiz();
+    if (!r.ad) sekmeAdIzle(o); // özel ad silindi: ilk mesajdan/ajandan yeniden türet
+  }
+  if (!sessiz) olay('OTURUM', r.ad ? `adlandırıldı · ${r.ad}` : 'ad otomatiğe döndü', 'iyi');
+  gecmisYukle();
+  return true;
+}
+function adlandirModalAc(bilgi) {
+  adlananOturum = { devam: bilgi.devam, dizin: bilgi.dizin };
+  const g = $('adlandirGiris');
+  if (g) g.value = bilgi.ad || '';
+  if ($('adlandirOzet')) $('adlandirOzet').textContent = bilgi.ad || 'adsız';
+  const m = $('adlandirModal');
+  if (m) m.hidden = false;
+  modalDurumGuncelle();
+  setTimeout(() => { if (g) { g.focus(); g.select(); } }, 30);
+}
+function adlandirModalKapat() {
+  const m = $('adlandirModal');
+  if (m) m.hidden = true;
+  adlananOturum = null;
+  modalDurumGuncelle();
+}
+async function adlandirKaydet() {
+  const hedef = adlananOturum;
+  if (!hedef) return;
+  const g = $('adlandirGiris');
+  const ad = g ? g.value : '';
+  adlandirModalKapat();
+  await oturumAdlandir(hedef.devam, hedef.dizin, ad, { ozel: true });
+}
+// Canlı sekme: oturum kimliği henüz oluşmadıysa birkaç saniye bekleyip yeniden dener.
+async function sekmeAdlandirAc(o) {
+  if (!o) return;
+  let devam = o.devam;
+  if (!devam && o.pid) {
+    const b = await window.evren.oturumKimlik(o.pid).catch(() => null);
+    devam = b && b.devam;
+    if (devam && !o.devam) o.devam = devam;
+  }
+  if (!devam) { olay('OTURUM', 'oturum kimliği henüz oluşmadı · birkaç saniye sonra dene', 'uyari'); return; }
+  adlandirModalAc({ devam, dizin: o.yol, ad: sekmeAdi(o) });
+}
 function yeniOturumBaslat() {
   const secim = modalSecim || { tip: 'bos' };
   const modelId = modalSecilenModel || S.model;
@@ -2214,6 +2293,13 @@ if ($('gecmisAra')) {
   });
 }
 $('gecmisList').addEventListener('click', (e) => {
+  const adBtn = e.target.closest('[data-adlandir]');
+  if (adBtn) {
+    e.stopPropagation();
+    const g = S.gecmis.find((x) => x.id === adBtn.dataset.adlandir);
+    if (g) adlandirModalAc({ devam: g.id, dizin: g.projeYol, ad: g.baslik });
+    return;
+  }
   const igneBtn = e.target.closest('[data-igne]');
   if (igneBtn) {
     e.stopPropagation();
@@ -2261,6 +2347,14 @@ $('sekmeler').addEventListener('click', (e) => {
   if (t) sekmeSec(t.dataset.id === 'ana' ? null : Number(t.dataset.id));
 });
 $('sekmeler').addEventListener('auxclick', (e) => { const t = e.target.closest('.tab'); if (e.button === 1 && t && t.dataset.id !== 'ana') sekmeKapat(Number(t.dataset.id)); });
+// Sekmeye çift tıklamak adlandırma penceresini açar (Claude/Antigravity'deki gibi).
+$('sekmeler').addEventListener('dblclick', (e) => {
+  const t = e.target.closest('.tab');
+  if (!t || t.dataset.id === 'ana') return;
+  e.preventDefault();
+  const o = S.oturumlar.find((x) => x.id === Number(t.dataset.id));
+  if (o) sekmeAdlandirAc(o);
+});
 // Sekmeler taştığında fare tekerleği dikey hareketi yatay kaydırmaya çevirir (Shift+tekerlek de çalışır).
 $('sekmeler').addEventListener('wheel', (e) => {
   const kutu = $('sekmeler');
@@ -2280,6 +2374,12 @@ window.addEventListener('keydown', (e) => {
   if (e.ctrlKey && e.shiftKey && e.code === 'KeyW') { e.preventDefault(); if (S.aktif != null) sekmeKapat(S.aktif); return; }
   if (e.ctrlKey && e.code === 'Tab') { e.preventDefault(); sekmeGez(e.shiftKey ? -1 : 1); return; }
   if (!$('palet').hidden) return;
+  const adm = $('adlandirModal');
+  if (adm && !adm.hidden) {
+    if (e.key === 'Escape') { e.preventDefault(); adlandirModalKapat(); return; }
+    if (e.key === 'Enter') { e.preventDefault(); adlandirKaydet(); return; }
+    return;
+  }
   const pm = $('projeDuzenleModal');
   if (pm && !pm.hidden) {
     if (e.key === 'Escape') { e.preventDefault(); projeDuzenleKapat(); }
@@ -2458,6 +2558,13 @@ yukle().then(() => {
   if (new URLSearchParams(location.search).get('modal')) setTimeout(yeniOturumModalAc, 350); // test: modalı açık yakala
   if (new URLSearchParams(location.search).get('rol')) setTimeout(() => yeniOturumModalAc({ orkestrator: true }), 350); // test: orkestratör rolü seçili modal
   if (new URLSearchParams(location.search).get('projeDuzenle')) setTimeout(() => { if (S.projeler[0]) projeDuzenleAc(S.projeler[0]); }, 400); // test: proje düzenleme modalı
+  // test: adlandırma modalını geçmişteki bir oturumla aç (--ekran-adlandir)
+  if (new URLSearchParams(location.search).get('adlandir')) setTimeout(async () => {
+    const basla = Date.now();
+    while ((!S.gecmis || !S.gecmis.length) && Date.now() - basla < 5000) await bekle(100);
+    const g = (S.gecmis || [])[0];
+    if (g) adlandirModalAc({ devam: g.id, dizin: g.projeYol, ad: g.baslik });
+  }, 700);
   // test: kenar panelde bir oturumu Şef gibi işaretle (animasyon/kart görünümünü yakala)
   if (new URLSearchParams(location.search).get('cikti')) {
     // Ekran doğrulaması: en yeni oturumun çıktılarını aç (--ekran-cikti).
@@ -2491,6 +2598,10 @@ yukle().then(() => {
 });
 
 // Yeni Oturum Modalı Olayları
+if ($('adlandirKapatBtn')) $('adlandirKapatBtn').addEventListener('click', adlandirModalKapat);
+if ($('adlandirVazgecBtn')) $('adlandirVazgecBtn').addEventListener('click', adlandirModalKapat);
+if ($('adlandirKaydetBtn')) $('adlandirKaydetBtn').addEventListener('click', adlandirKaydet);
+if ($('adlandirModal')) $('adlandirModal').addEventListener('mousedown', (e) => { if (e.target === $('adlandirModal')) adlandirModalKapat(); });
 if ($('yeniOturumKapatBtn')) $('yeniOturumKapatBtn').addEventListener('click', yeniOturumModalKapat);
 if ($('yeniOturumVazgecBtn')) $('yeniOturumVazgecBtn').addEventListener('click', yeniOturumModalKapat);
 if ($('yeniOturumBaslatBtn')) $('yeniOturumBaslatBtn').addEventListener('click', yeniOturumBaslat);

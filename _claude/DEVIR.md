@@ -50,3 +50,9 @@ Yapıldı: kenar panele "Yanıtı durdur" düğmesi eklendi (Ctrl+C yazar; oturu
 Doğrulama: npm test 19/19 yeşil (test/efor.test.js: 3 test); node --check app.js main.js motor.js temiz; ekran kanıtı _ekran/efor-modal.png (Orta seçili) ve _ekran/durdur-btn.png (iki düğme birlikte).
 Sıradaki: canlı DeepSeek oturumunda eforun API'ye geçtiğini ve Ctrl+C'nin kuyrukta bekleyen mesajı geri aldığını bir kez gözle doğrula.
 Commit: fa57c95
+
+## 2026-11-11 · Oturum adlandırma
+Yapıldı: sekmeye çift tıklama ve geçmiş kartındaki kalem, adlandırma modalını açıyor; ad Claude Code'un `custom-title.json` dosyasına yazılıyor (sekme, geçmiş, Claude Desktop ve telefon aynı adı görür). Boş ad dosyayı silip otomatik ada döndürüyor. Yeni oturumların adı ilk kullanıcı mesajından qwen3.8-flash-next ile 2-6 kelimeye indiriliyor (düşünme kapalı, ~10 token); elle verilen ad AI adını ezer.
+Doğrulama: `npm test` 23/23 yeşil (test/oturum-ad.test.js: 4 test); `node --check` app/main/gecmis/preload temiz; ekran kanıtı `_ekran/adlandir-modal.png`.
+Sıradaki: canlı oturumda çift tık → ad → telefon listesinde aynı adı bir kez gözle doğrula.
+Açık: `app.js`/`styles.css` içindeki eski yerel Çıktılar rafinasyonu yine commit dışında bırakıldı.

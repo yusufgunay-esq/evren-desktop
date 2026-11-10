@@ -1843,6 +1843,39 @@ kbd {
   opacity: 1;
   color: var(--ok);
 }
+/* Oturum adlandırma kalemi: iğnenin solunda, aynı görünürlük kuralıyla. */
+.seans-ad-btn {
+  position: absolute; right: 20px; top: 50%; translate: 0 -50%;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-s);
+  color: var(--text-3);
+  opacity: 0;
+  transition: opacity 140ms var(--ease), color 140ms var(--ease), background 140ms var(--ease);
+  cursor: pointer;
+}
+.seans-satir-ust:hover .seans-ad-btn,
+.seans-kart:hover .seans-ad-btn { opacity: 0.7; }
+.seans-kart .seans-ad-btn:hover {
+  opacity: 1;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+}
+/* Adlandırma modalı: iki alanlık dar kutu. */
+.ad-kutu { width: min(440px, calc(100vw - 48px)); }
+.ad-govde { padding: 18px 22px 6px; display: grid; gap: 10px; }
+/* Alt çubukta uzun oturum adı düğmeleri itmesin: etiket sabit, ad tek satırda kırpılır. */
+.ad-kutu .oturum-ozet-etiket { flex: none; white-space: nowrap; }
+.ad-kutu .oturum-secili-bilgi {
+  display: block;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 #sohbetIgneBtn.aktif {
   color: var(--ok);
 }
