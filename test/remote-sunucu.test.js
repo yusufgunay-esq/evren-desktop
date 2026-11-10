@@ -114,3 +114,68 @@ test('pong vermeyen ölü istemci kalp atışında düşürülür', async () => 
   try { ws.terminate(); } catch {}
   sunucu.durdur();
 });
+
+test('telefon soru aracının seçeneklerini sohbet paketinde alır', async () => {
+  const kok = geciciDizin();
+  const projeDizini = path.join(kok, 'projects', 'D--Projelerim-ornek');
+  const kimlik = '11111111-2222-4333-8444-555555555555';
+  fs.mkdirSync(projeDizini, { recursive: true });
+  fs.writeFileSync(path.join(projeDizini, kimlik + '.jsonl'), [
+    {
+      type: 'assistant',
+      timestamp: new Date().toISOString(),
+      message: {
+        content: [{
+          type: 'tool_use',
+          id: 'soru-1',
+          name: 'AskUserQuestion',
+          input: {
+            questions: [{
+              question: 'Hangi disk temizlensin?',
+              header: 'Disk',
+              multiSelect: false,
+              options: [
+                { label: 'C diski', description: '~18 GB açılır' },
+                { label: 'D diski', description: '' },
+              ],
+            }],
+          },
+        }],
+      },
+    },
+  ].map(JSON.stringify).join('\n') + '\n');
+
+  const sunucu = new RemoteSunucu({
+    veriDizini: geciciDizin(),
+    port: 0,
+    claudeKoku: path.join(kok, 'projects'),
+    oturumListesiAl: () => [{ id: 1, baslik: 'örnek' }],
+    oturumBilgisiAl: () => ({ dizin: 'D:\\Projelerim\\ornek', devam: kimlik, baslangic: Date.now() - 1000 }),
+    oturumSayilariAl: () => null,
+  });
+  await sunucu.baslat();
+  const { port, token } = sunucu.bilgi();
+
+  const { ws, paket } = await ilkMesaj(`ws://127.0.0.1:${port}/?token=${token}`);
+  const sohbetPaketi = new Promise((coz, red) => {
+    const zaman = setTimeout(() => red(new Error('sohbet paketi gelmedi')), 4000);
+    ws.on('message', (ham) => {
+      const p = JSON.parse(ham.toString('utf8'));
+      if (p.tip === 'sohbet') { clearTimeout(zaman); coz(p); }
+    });
+  });
+  ws.send(JSON.stringify({ tip: 'sohbet_iste', id: 1 }));
+
+  try {
+    assert.strictEqual(paket.tip, 'baslangic');
+    const sohbet = await sohbetPaketi;
+    const giris = sohbet.girisler[0];
+    assert.strictEqual(giris.arac.ad, 'AskUserQuestion');
+    assert.strictEqual(giris.metin, 'Hangi disk temizlensin?');
+    assert.strictEqual(giris.arac.sorular[0].secenekler[0].etiket, 'C diski');
+    assert.strictEqual(giris.arac.sorular[0].secenekler[0].aciklama, '~18 GB açılır');
+  } finally {
+    ws.close();
+    sunucu.durdur();
+  }
+});

@@ -667,7 +667,11 @@ class RemoteSunucu {
         });
         if (!iz.dosya) {
           // Kayıt dosyası henüz oluşmadı: kısa aralıklarla yeniden denenir.
-          if (iz.deneme++ < 120) iz.zamanlayici = setTimeout(() => { iz.zamanlayici = null; tara(); }, 1000);
+          if (iz.deneme++ < 120) {
+            iz.zamanlayici = setTimeout(() => { iz.zamanlayici = null; tara(); }, 1000);
+            // Süreç sırf bu bekleme yüzünden açık kalmasın.
+            if (iz.zamanlayici.unref) iz.zamanlayici.unref();
+          }
           return;
         }
       }

@@ -401,6 +401,150 @@ class BaglamIzleyici {
   }
 }
 
+// ---- Çıktılar: oturumda üretilen/değiştirilen dosyalar ----
+// Claude Desktop'ın "Outputs" mantığı: oturumun kendi kaydından toplanır, dosyaya gidilebilir.
+// Kaynaklar: Write/Edit/MultiEdit/NotebookEdit araçları ve Bash komutunda geçen üretim yolları
+// (ekran görüntüsü, dışa aktarma vb.). Var olmayan yollar listeye girmez.
+const YAZAN_ARACLAR = new Set(['write', 'edit', 'multiedit', 'notebookedit']);
+const GORSEL_UZANTI = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
+const CIKTI_UZANTI = /\.(png|jpe?g|gif|webp|bmp|svg|pdf|csv|xlsx|docx|zip|mp4|webm|mov)$/i;
+const CIKTI_SINIRI = 300;
+
+function mutlakYol(ham, cwd) {
+  let p = String(ham || '').trim();
+  if (!p || /^[a-z][a-z0-9+.-]*:\/\//i.test(p)) return null; // URL'ler dosya değil
+  if ((p.startsWith('"') && p.endsWith('"')) || (p.startsWith("'") && p.endsWith("'"))) p = p.slice(1, -1);
+  if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) p = path.join(os.homedir(), p.slice(1));
+  try {
+    return path.normalize(path.isAbsolute(p) ? p : path.resolve(cwd || process.cwd(), p));
+  } catch { return null; }
+}
+
+// Bash komutundan olası çıktı yolları: tırnaklı ifadeler ve kelime parçaları.
+function komutYollari(komut) {
+  const adaylar = [];
+  if (typeof komut !== 'string') return adaylar;
+  const desen = /"([^"\n]{1,500})"|'([^'\n]{1,500})'|([^\s"'`<>|]+)/g;
+  let m;
+  while ((m = desen.exec(komut))) {
+    let t = (m[1] || m[2] || m[3] || '').trim();
+    if (!t) continue;
+    const esit = t.indexOf('=');
+    if (t.startsWith('-') && esit > 0) t = t.slice(esit + 1); // --ekran=x.png
+    t = t.replace(/^[\[({]+|[)\]}.,;:]+$/g, '');
+    if (CIKTI_UZANTI.test(t)) adaylar.push(t);
+  }
+  return adaylar;
+}
+
+/**
+ * Oturum kaydını artımlı tarayıp üretilen dosyaları biriktirir.
+ * İlk çağrı dosyayı baştan okur, sonrası yalnız yeni baytları okur.
+ * `liste()` dosyaları diskte doğrular (silinmiş olanlar düşer).
+ */
+class CiktiIzleyici {
+  constructor() {
+    this.dosya = null;
+    this.konum = 0;
+    this.kalan = '';
+    this.kod = new StringDecoder('utf8');
+    this.harita = new Map();
+  }
+
+  _sifirla() {
+    this.konum = 0;
+    this.kalan = '';
+    this.kod = new StringDecoder('utf8');
+    this.harita = new Map();
+  }
+
+  oku(dosya) {
+    let st;
+    try { st = fs.statSync(dosya); } catch { return []; }
+    if (dosya !== this.dosya || st.size < this.konum) { this.dosya = dosya; this._sifirla(); }
+    if (st.size > this.konum) {
+      let fd;
+      try { fd = fs.openSync(dosya, 'r'); } catch { return this.liste(); }
+      try {
+        for (let konum = this.konum; konum < st.size;) {
+          const n = Math.min(2 * 1024 * 1024, st.size - konum);
+          const t = Buffer.alloc(n);
+          fs.readSync(fd, t, 0, n, konum);
+          konum += n;
+          this.konum = konum;
+          const metin = this.kalan + this.kod.write(t);
+          const satirlar = metin.split('\n');
+          this.kalan = satirlar.pop(); // yarım satır sonraki okumada tamamlanır
+          for (const satir of satirlar) {
+            if (!satir.trim()) continue;
+            let j; try { j = JSON.parse(satir); } catch { continue; }
+            this._kaydet(j);
+          }
+        }
+      } finally { try { fs.closeSync(fd); } catch {} }
+    }
+    return this.liste();
+  }
+
+  _kaydet(j) {
+    if (!j || typeof j !== 'object' || j.isMeta === true || j.isSidechain === true) return;
+    const mesaj = j.message;
+    if (!mesaj || !Array.isArray(mesaj.content)) return;
+    const cwd = typeof j.cwd === 'string' ? j.cwd : null;
+    const ms = zamanMs(j);
+    for (const blok of mesaj.content) {
+      if (!blok || blok.type !== 'tool_use') continue;
+      const ad = String(blok.name || '').toLowerCase();
+      const girdi = blok.input || {};
+      if (YAZAN_ARACLAR.has(ad)) {
+        const ham = girdi.file_path || girdi.notebook_path || girdi.path;
+        const yol = mutlakYol(ham, cwd);
+        if (yol) this._ekle(yol, ad === 'write' ? 'olusturuldu' : 'degisti', ms);
+      } else if (ad === 'bash') {
+        for (const ham of komutYollari(girdi.command)) {
+          const yol = mutlakYol(ham, cwd);
+          if (yol) this._ekle(yol, 'komut', ms);
+        }
+      }
+    }
+  }
+
+  _ekle(yol, islem, ms) {
+    const anahtar = process.platform === 'win32' ? yol.toLowerCase() : yol;
+    const eski = this.harita.get(anahtar);
+    if (eski) {
+      // Yazma/editleme, Bash tahmininden üstündür; zaman daima en yenisi.
+      if (islem !== 'komut') eski.islem = islem;
+      eski.ms = Math.max(eski.ms || 0, ms || 0);
+      return;
+    }
+    this.harita.set(anahtar, { yol, islem, ms: ms || 0 });
+  }
+
+  liste() {
+    const ciktilar = [];
+    for (const v of this.harita.values()) {
+      let s;
+      try { s = fs.statSync(v.yol); } catch { continue; }
+      if (!s.isFile()) continue;
+      // Bash tahminleri yalnız komut anında/hemen sonrasında değişmiş dosya için geçerli;
+      // böylece komutta okunan eski bir girdi görseli çıktı sanılmaz.
+      if (v.islem === 'komut' && s.mtimeMs < (v.ms || 0) - 120000) continue;
+      ciktilar.push({
+        yol: v.yol,
+        ad: path.basename(v.yol),
+        islem: v.islem,
+        ms: v.ms,
+        boyut: s.size,
+        degisimMs: s.mtimeMs,
+        resim: GORSEL_UZANTI.test(v.yol),
+      });
+    }
+    ciktilar.sort((a, b) => (b.ms || 0) - (a.ms || 0));
+    return ciktilar.slice(0, CIKTI_SINIRI);
+  }
+}
+
 module.exports = {
   projeKlasoru,
   dosyaYolu,
@@ -411,8 +555,11 @@ module.exports = {
   oturumDurumu,
   ArtimliOkuyucu,
   BaglamIzleyici,
+  CiktiIzleyici,
   sonKullanim,
   ozetle,
+  mutlakYol,
+  komutYollari,
   sorulariCoz,
   ILK_ADET,
   OTURUM_KIMLIK,
