@@ -110,9 +110,12 @@ function girisleriCoz(j, aracAdlari) {
         const metin = String(blok.text || '').trim();
         if (metin) girisler.push({ rol: 'kullanici', metin, ms });
       } else if (blok.type === 'tool_result') {
-        const ad = (aracAdlari && aracAdlari.get(blok.tool_use_id)) || 'Araç sonucu';
-        const ozet = ozetle(blok.content);
-        girisler.push({ rol: 'arac', metin: ozet, arac: { ad, ozet }, ms });
+        // Özet, aracın ADI ve GİRDİSİdir (dosya yolu, komut); sonucun ilk satırı
+        // başlık olarak anlamsız kalıyordu (ör. dosya içeriğinin 1. satırı).
+        const bilgi = aracAdlari && aracAdlari.get(blok.tool_use_id);
+        const ad = (bilgi && bilgi.ad) || 'Araç sonucu';
+        const ozet = (bilgi && bilgi.ozet) || ozetle(blok.content);
+        girisler.push({ rol: 'arac', metin: ozetle(blok.content), arac: { ad, ozet }, ms });
       }
     }
     return girisler;
@@ -129,8 +132,8 @@ function girisleriCoz(j, aracAdlari) {
         if (metin) girisler.push({ rol: 'asistan', metin, ms });
       } else if (blok.type === 'tool_use') {
         const ad = String(blok.name || 'Araç');
-        if (aracAdlari && blok.id) aracAdlari.set(blok.id, ad);
         const ozet = ozetle(blok.input);
+        if (aracAdlari && blok.id) aracAdlari.set(blok.id, { ad, ozet });
         girisler.push({ rol: 'arac', metin: ozet, arac: { ad, ozet }, ms });
       }
     }
@@ -279,6 +282,82 @@ function oturumDurumu(dosya) {
   return 'bilinmiyor';
 }
 
+// ---- Bağlam kullanımı ve sohbet sayacı ----
+// Son asistan yanıtının usage alanı gerçek bağlamı verir: input + cache_creation + cache_read + output.
+// Dosyanın yalnız sonu taranır; sayaç artımlıdır, büyük kayıtlar (60 MB+) baştan okunmaz.
+const KULLANIM_IMZA = '"cache_read_input_tokens"';
+
+function sonKullanim(dosya) {
+  let boyut, fd;
+  try { boyut = fs.statSync(dosya).size; fd = fs.openSync(dosya, 'r'); } catch { return null; }
+  try {
+    const n = Math.min(boyut, 256 * 1024);
+    const t = Buffer.alloc(n);
+    fs.readSync(fd, t, 0, n, boyut - n);
+    const satirlar = t.toString('utf8').split('\n');
+    if (boyut > n) satirlar.shift(); // baştaki yarım satır
+    for (let i = satirlar.length - 1; i >= 0; i--) {
+      const s = satirlar[i].trim();
+      if (!s) continue;
+      let j; try { j = JSON.parse(s); } catch { continue; }
+      const u = j && j.type === 'assistant' && j.message && j.message.usage;
+      if (!u || typeof u !== 'object') continue;
+      const token = (Number(u.input_tokens) || 0) + (Number(u.cache_creation_input_tokens) || 0) +
+        (Number(u.cache_read_input_tokens) || 0) + (Number(u.output_tokens) || 0);
+      return {
+        token: token || null,
+        cikti: Number(u.output_tokens) || 0,
+        model: typeof j.message.model === 'string' ? j.message.model : null,
+      };
+    }
+    return null;
+  } finally { try { fs.closeSync(fd); } catch {} }
+}
+
+class BaglamIzleyici {
+  constructor() { this.dosya = null; this.konum = 0; this.yanit = 0; this.kalan = ''; this.son = null; }
+
+  // Yeni baytlarda asistan yanıtı imzasını sayar (JSON ayrıştırmadan, 1:1 latin1 bayt eşlemesi).
+  _say(parca) {
+    const metin = this.kalan + parca.toString('latin1');
+    let i = 0, n = 0;
+    while ((i = metin.indexOf(KULLANIM_IMZA, i)) >= 0) { n++; i += KULLANIM_IMZA.length; }
+    this.kalan = metin.slice(-(KULLANIM_IMZA.length - 1)); // blok sınırında bölünen imza
+    return n;
+  }
+
+  oku(dosya) {
+    if (!dosya) return this.son;
+    let st;
+    try { st = fs.statSync(dosya); } catch { return this.son; }
+    if (dosya !== this.dosya || st.size < this.konum) {
+      this.dosya = dosya; this.konum = 0; this.yanit = 0; this.kalan = '';
+    }
+    if (st.size > this.konum) {
+      let fd;
+      try { fd = fs.openSync(dosya, 'r'); } catch { return this.son; }
+      try {
+        for (let konum = this.konum; konum < st.size;) {
+          const n = Math.min(1024 * 1024, st.size - konum);
+          const t = Buffer.alloc(n);
+          fs.readSync(fd, t, 0, n, konum);
+          this.yanit += this._say(t);
+          konum += n;
+          this.konum = konum;
+        }
+      } finally { try { fs.closeSync(fd); } catch {} }
+    }
+    const k = sonKullanim(dosya);
+    this.son = {
+      token: k ? k.token : null,
+      cikti: k ? k.cikti : null,
+      model: k ? k.model : null,
+      yanit: this.yanit || null,
+    };
+    return this.son;
+  }
+}
+
 module.exports = {
   projeKlasoru,
   dosyaYolu,
@@ -288,6 +367,8 @@ module.exports = {
   sonKayitlar,
   oturumDurumu,
   ArtimliOkuyucu,
+  BaglamIzleyici,
+  sonKullanim,
   ozetle,
   ILK_ADET,
   OTURUM_KIMLIK,

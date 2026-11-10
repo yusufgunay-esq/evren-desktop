@@ -748,9 +748,10 @@ kbd {
 .seg.flex + .seg::before, .seg.flex::before { display: none; }
 .seg .ic { width: 12px; height: 12px; }
 .seg .k { color: var(--text-3); }
-.seg #sModel, .seg #sDal, .seg #sSure { font-family: var(--mono); font-size: 11px; }
+.seg #sModel, .seg #sDal, .seg #sSure, .seg #sBaglam, .seg #sSohbet { font-family: var(--mono); font-size: 11px; }
 .seg .led { width: 6px; height: 6px; box-shadow: none; }
 #sApi.kotu { color: var(--err); }
+#sBaglamSeg.dolu { color: var(--warn); }
 
 
 /* ---------- Komut paleti ---------- */
@@ -950,8 +951,10 @@ kbd {
 
 /* ---------- Durum çubuğu ekleri ---------- */
 #sOturum { font-family: var(--mono); font-size: 11px; }
-.seg.kunye { font-family: var(--mono); font-size: 10.5px; color: var(--text-3); letter-spacing: 0.04em; }
+.seg.kunye { font-family: var(--mono); font-size: 10.5px; color: var(--text-3); letter-spacing: 0.04em; cursor: pointer; }
+.seg.kunye:hover, .seg.kunye:focus-visible { color: var(--text); outline: none; }
 @media (max-width: 1100px) { .seg.kunye { display: none; } }
+@media (max-width: 980px) { #sBaglamSeg, #sSohbetSeg { display: none; } }
 .side-foot { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px 10px; }
 
 

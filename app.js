@@ -452,9 +452,6 @@ function ozetYaz() {
   $('bYol').textContent = p ? kisaYol(p.yol, 46) : kisaYol(S.serbestDizin || '', 46);
   hucre('bDal', p && p.dal ? p.dal : '—');
   $('bDalS').textContent = p ? (p.dal ? 'git deposu' : 'git deposu değil') : 'serbest çalışma alanı';
-  $('sModel').textContent = m.id || '—';
-  $('sBaglam').textContent = kisaBaglam(m.baglamSayisi);
-  $('sDal').textContent = p && p.dal ? p.dal : '—';
   const hazir = S.yuklendi && S.anahtarVar && !!m.id;
   $('baslaBtn').disabled = !hazir;
   $('baslaBtn2').disabled = !hazir;
@@ -462,7 +459,7 @@ function ozetYaz() {
   $('anahtarForm').hidden = S.anahtarVar || !S.yuklendi;
   if (!S.anahtarVar && !S.anahtarHata) $('uyariMetin').innerHTML = 'EVREN API anahtarı yok. Anahtarı <a href="#" data-dis="https://evren.ssyz.org.tr">evren.ssyz.org.tr</a> üzerinden (e-Devlet ile giriş) alıp aşağıya yapıştırın. Anahtar bu Windows hesabına bağlı olarak DPAPI ile şifrelenir.';
   else if (S.yuklendi && !p) { $('uyari').hidden = false; $('uyariMetin').textContent = 'Proje seçilmedi. Başlatınca klasör sorulur.'; }
-  cipYaz();
+  cipYaz(); // sekme çizimi durum çubuğunu da tazeler (durumYaz)
 }
 
 function tokenFormatla(n) {
@@ -556,6 +553,8 @@ async function yukle() {
   try {
     const d = await window.evren.durum();
     S.anahtarVar = !!d.anahtarVar;
+    S.surum = d.surum || '';
+    if ($('kunyeSurum')) $('kunyeSurum').textContent = S.surum ? `v${S.surum}` : '';
     S.modeller = d.modeller || [];
     S.projeler = d.projeler || [];
     S.sonKlasorler = d.sonKlasorler || [];
@@ -574,7 +573,7 @@ async function yukle() {
   } catch (e) { console.error('durum', e); }
   S.yuklendi = true;
   modelleriCiz(); projeleriCiz(); ozetYaz(); baglantiYaz();
-  olay('SİSTEM', 'EVREN Desktop 0.4 hazır');
+  olay('SİSTEM', `EVREN Desktop ${S.surum || ''} hazır`.replace('  ', ' '));
   olay('KASA', S.anahtarVar ? 'DPAPI anahtarı yüklendi' : 'anahtar bulunamadı', S.anahtarVar ? '' : 'uyari');
   olay('PROJE', `${S.projeler.length} proje · ${S.projeler.filter((p) => p.dal).length} git deposu`);
   Grafik.basla();
@@ -915,11 +914,51 @@ function durumYaz() {
   $('stage').classList.toggle('calisiyor', !!o);
   const m = seciliModel() || {}, p = seciliProje();
   $('sModel').textContent = o ? o.model : (m.id || '—');
+  $('sModelSeg').title = o ? 'Aktif oturumun modeli' : 'Seçili varsayılan model · oturum yok';
   $('sDal').textContent = o ? (o.dal || '—') : (p && p.dal ? p.dal : '—');
   if (o) { $('crProje').textContent = o.proje; $('crDal').textContent = o.dal || '—'; }
   else { $('crProje').textContent = p ? p.ad : '—'; $('crDal').textContent = p && p.dal ? p.dal : '—'; }
   $('sOturum').textContent = `${S.oturumlar.filter((x) => x.canli).length}/${S.oturumlar.length} oturum`;
   sureYaz();
+  baglamYaz();
+}
+// Alt çubukta bağlam: oturum varsa kayıttan gerçek kullanım (token / pencere · %),
+// yoksa yalnız seçili modelin penceresi. Yanıt sırası karışırsa eski yanıt yazılmaz.
+let baglamIster = 0;
+async function baglamYaz() {
+  const o = aktifOturum();
+  // Model, bağlam ve tur sayacı sohbetten sohbete değişir; oturum yokken alt çubukta
+  // sabit "1M" gibi yanıltıcı bir varsayılan göstermek yerine üçü de gizlenir.
+  const gorunur = !!o;
+  for (const id of ['sModelSeg', 'sBaglamSeg', 'sSohbetSeg']) $(id).hidden = !gorunur;
+  if (!o) return;
+  const ister = ++baglamIster;
+  let d = null;
+  try { d = await window.evren.oturumBaglam(o.pid); } catch {}
+  if (ister !== baglamIster || aktifOturum() !== o) return;
+  const modelId = (d && d.model) || o.model || '—';
+  const katalog = S.modeller.find((x) => x.id === modelId) || S.modeller.find((x) => modelId.endsWith('/' + x.id)) || {};
+  const pn = (d && d.pencere) || katalog.baglamSayisi || 0;
+  $('sModel').textContent = modelId;
+  const token = d ? d.token : null;
+  if (token != null) {
+    const yuzde = pn ? Math.min(999, (token / pn) * 100) : null;
+    $('sBaglam').textContent = pn
+      ? `${tokenFormatla(token)} / ${kisaBaglam(pn)} · %${yuzde < 10 ? yuzde.toFixed(1) : Math.round(yuzde)}`
+      : tokenFormatla(token);
+    $('sBaglamSeg').title = pn
+      ? `Son yanıt: ${token.toLocaleString('tr-TR')} token · pencere ${pn.toLocaleString('tr-TR')} · %${yuzde.toFixed(1)}`
+      : `Son yanıt: ${token.toLocaleString('tr-TR')} token · pencere bilinmiyor`;
+    $('sBaglamSeg').classList.toggle('dolu', pn ? token / pn >= 0.85 : false);
+  } else {
+    $('sBaglam').textContent = pn ? kisaBaglam(pn) : '—';
+    $('sBaglamSeg').classList.remove('dolu');
+    $('sBaglamSeg').title = 'Kayıt henüz yok · ilk yanıttan sonra gerçek kullanım görünür';
+  }
+  $('sSohbet').textContent = d && d.yanit ? `${d.yanit}` : '—';
+  $('sSohbetSeg').title = d && d.yanit
+    ? `Bu oturumda ${d.yanit} asistan turu`
+    : 'Tur sayacı kayıt yazılınca başlar';
 }
 function sekmeSec(id) {
   const izlemedeydi = !!seciliOturumGecmisi;
@@ -1024,7 +1063,13 @@ async function basla(devamId, secenekler) {
     olay('OTURUM', `#${S.oturumlar.indexOf(o) + 1} başladı · ${m.id} · ${o.proje}`, 'iyi');
     // Saniyelik güvenlik ağı: hizalama yalnız çıktı olayına bağlı kalmasın (çıktı üretmeyen
     // yeniden çizimlerde de kontrol edilsin).
-    o.sayac = setInterval(() => { if (o.id === S.aktif) { sureYaz(); oturumModeliTara(o); hizaKontrol(o); } }, 1000);
+    // Bağlam/tur sayacı 5 sn'de bir tazelenir: kayıt dosyasının yalnız yeni baytları okunur.
+    o.sayac = setInterval(() => {
+      if (o.id !== S.aktif) return;
+      sureYaz(); oturumModeliTara(o); hizaKontrol(o);
+      o.baglamTik = (o.baglamTik || 0) + 1;
+      if (o.baglamTik % 5 === 0) baglamYaz();
+    }, 1000);
     sekmeleriCiz();
     sigdir();
     o.term.focus();
@@ -2167,6 +2212,12 @@ if (window.evren && window.evren.remoteDinle) {
 if ($('sohbetBtn')) $('sohbetBtn').addEventListener('click', () => sohbetToggle());
 if ($('sohbetKapatBtn')) $('sohbetKapatBtn').addEventListener('click', () => sohbetToggle(false));
 if ($('sohbetYenileBtn')) $('sohbetYenileBtn').addEventListener('click', () => sohbetYukle(true));
+// Künye: tıklanınca kaynak depo tarayıcıda açılır (sürüm ve lisans aynı satırda).
+if ($('kunye')) {
+  const depoAc = () => window.evren.disari('https://github.com/yusufgunay-esq/evren-desktop');
+  $('kunye').addEventListener('click', depoAc);
+  $('kunye').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); depoAc(); } });
+}
 if ($('sohbetForkBtn')) $('sohbetForkBtn').addEventListener('click', () => {
   const g = seciliOturumGecmisi;
   if (g && g.id) basla(g.id, g.projeYol ? { dizin: g.projeYol, fork: true } : { dizin: S.proje, fork: true });

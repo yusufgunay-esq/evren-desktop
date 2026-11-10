@@ -14,6 +14,7 @@ const motor = require('./motor');
 const gecmis = require('./gecmis');
 const sohbet = require('./sohbet');
 const RemoteSunucu = require('./remote-sunucu');
+const SURUM = require('./package.json').version;
 
 
 // Yerel dosyalar ağdan gelmiyor; önbellek eski CSS/JS servis etmesin.
@@ -55,6 +56,7 @@ else {
 }
 const kabuklar = new Map(); // oturum kimliği -> pty (çoklu oturum)
 const oturumBilgi = new Map(); // kimlik -> { modelId, modelAd, dizin, proje, devam, baslangic } (kumanda listesi için)
+const baglamIzleyiciler = new Map(); // kimlik -> sohbet.BaglamIzleyici (bağlam kullanımı + tur sayacı)
 let sonKimlik = 0;
 let anahtarOnbellek = null; // kasa okuması (DPAPI) yavaş; süreç boyunca bir kez okunur
 let modelOnbellek = null;   // son canlı /v1/models çözümü
@@ -177,7 +179,7 @@ async function yerelDurum() {
   const ham = ayarOku();
   const modeller = modelOnbellek || p.MODELLER;
   return {
-    anahtarVar, modeller,
+    anahtarVar, modeller, surum: SURUM,
     sonModel: typeof ham.sonModel === 'string' ? ham.sonModel : modeller[0] && modeller[0].id,
     projeler: projeListesi(),
     sonKlasorler: sonKlasorListesi(),
@@ -443,6 +445,7 @@ function kabukKapat(id) {
   ptyBosalt(id);
   ptyTampon.delete(id);
   kabuklar.delete(id);
+  baglamIzleyiciler.delete(id);
   if (remoteSunucu) remoteSunucu.oturumKapandi(id, 0);
 }
 function tumunuKapat() { for (const id of [...kabuklar.keys()]) kabukKapat(id); }
@@ -915,6 +918,39 @@ ipcMain.handle('sohbet-gecmisi', async (_e, id) => {
     return { girisler: [] };
   }
 });
+// Durum çubuğu: aktif oturumun gerçek bağlam kullanımı (son yanıtın token'ları / model penceresi)
+// ve o oturumdaki asistan turu sayısı. Kayıt dosyası yoksa yalnız model penceresi döner.
+ipcMain.handle('oturum-baglam', (_e, id) => {
+  const b = oturumBilgi.get(id);
+  if (!b) return null;
+  const dosya = b.devam
+    ? sohbet.dosyaYolu(b.dizin, b.devam)
+    : sohbet.oturumDosyasiBul({ dizin: b.dizin, baslangicMs: b.baslangic });
+  let d = null;
+  if (dosya && fs.existsSync(dosya)) {
+    let iz = baglamIzleyiciler.get(id);
+    if (!iz) { iz = new sohbet.BaglamIzleyici(); baglamIzleyiciler.set(id, iz); }
+    try { d = iz.oku(dosya); } catch { d = null; }
+  }
+  // Kayıttaki model kimliği sağlayıcı önekli olabilir (deepseek/deepseek-v4.1-flash);
+  // katalogdaki kimlikle eşleştirilir ki pencere (bağlam sınırı) doğru bulunsun.
+  const hamModel = (d && d.model) || b.modelId;
+  const liste = modelOnbellek || motor.MODELLER;
+  const m = liste.find((x) => x.id === hamModel)
+    || liste.find((x) => hamModel.endsWith('/' + x.id) || x.id.endsWith('/' + hamModel))
+    || liste.find((x) => x.id === b.modelId) || null;
+  const modelId = (m && m.id) || hamModel;
+  return {
+    token: d ? d.token : null,
+    cikti: d ? d.cikti : null,
+    yanit: d ? d.yanit : null,
+    model: modelId,
+    ad: (m && m.ad) || b.modelAd || modelId,
+    pencere: (m && m.baglamSayisi) || null,
+    kayitVar: !!d,
+  };
+});
+
 ipcMain.handle('yaz', (_e, id, veri) => {
   const k = kabuklar.get(id);
   const b = oturumBilgi.get(id);
