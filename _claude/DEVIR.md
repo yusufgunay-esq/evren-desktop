@@ -32,3 +32,21 @@ Doğrulama: masaüstü `npm test` 16/16; telefon `testDebugUnitTest assembleDebu
 Sıradaki: canlı bir soruyla telefonda seçenek dokunuşunu ve sesi bir kez gözle/kulakla doğrula.
 Açık: soru bulunamazsa yeniden deneme zamanlayıcısı artık unref (süreç askıda kalmıyor); kökteki `oturum-karar.js` kullanılmayan kopya, temizlik adayı.
 Commit: 50fd06b + 4a8cd82 (masaüstü) + e117473 (telefon)
+
+## 2026-11-10 · Çıktılar (Outputs) bölümü
+Yapıldı: sohbet paneline "Çıktılar" sekmesi eklendi. Oturum kaydındaki Write/Edit ve Bash komutlarının ürettiği dosyalar (ekran görüntüleri dahil) artımlı taranıp kart olarak listeleniyor; görsellerde küçük resim, dosya adı, mono yol, durum etiketi, boyut/saat; kartı tıklamak dosyayı açar, klasör düğmesi Explorer'da konumunu gösterir. Tasarım dili styles.css başlığında ve bileşen bloğunda belgelendi (marka adı kullanılmadan).
+Doğrulama: `node --check` temiz; `npm test` 16/16 yeşil (yeni test/sohbet-cikti.test.js: 3 test); gerçek oturumlarda 12 ms'de doğru çıktı listesi; ekran kanıtı `_ekran/cikti-gorsel.png`.
+Sıradaki: canlı bir oturumda kart tıklama ve "Klasör" eylemini bir kez gözle doğrula.
+Commit: 4a8cd82 (paralel oturum ilk sürümü commit+push etti, 06:03); son estetik rafinasyon ve bu not yerelde, kullanıcı GitHub'a eklemeyi istemedi.
+
+## 2026-11-10 · README ekran görüntüleri
+Yapıldı: `docs/ekran-ana.png`, `ekran-oturum.png`, `ekran-palet.png` güncel arayüzle yenilendi; görsellerde Wend, Divit, Leucine, Folly Golf, Asterion, Keystone, Halcyon, mizan-panel, evren-desktop, ulak-api işleri görünüyor (demo veri `_demo/demo-veri.js`).
+Doğrulama: üç görsel `electron . --ekran ... --ekran-bekle 9000` ile alındı; `npm test` 16/16 yeşil.
+Sıradaki: Şef ekran görüntüleri (`ekran-sef-*.png`) hâlâ 9 Kasım arayüzünde; istenirse aynı yöntemle yenilenir.
+Açık: `main.js` içindeki `--ekran-bekle` bayrağı ve bu not, paralel oturumun Çıktılar değişiklikleriyle aynı dosyalarda olduğu için yerelde bırakıldı; GitHub'a yalnız docs görselleri ve README alt metinleri gitti.
+
+## 2026-11-10 · Yanıtı durdur + oturum başında efor
+Yapıldı: kenar panele "Yanıtı durdur" düğmesi eklendi (Ctrl+C yazar; oturum, sekme ve --resume kimliği yaşar, "Oturumu sonlandır"dan ayrı). Yeni Oturum modalına 03 Efor bölümü geldi (low/medium/high/xhigh/max, claude --effort); seçim ayar.json'daki sonEfor'a yazılıp sonraki oturumun varsayılanı oluyor.
+Doğrulama: npm test 19/19 yeşil (test/efor.test.js: 3 test); node --check app.js main.js motor.js temiz; ekran kanıtı _ekran/efor-modal.png (Orta seçili) ve _ekran/durdur-btn.png (iki düğme birlikte).
+Sıradaki: canlı DeepSeek oturumunda eforun API'ye geçtiğini ve Ctrl+C'nin kuyrukta bekleyen mesajı geri aldığını bir kez gözle doğrula.
+Commit: fa57c95
