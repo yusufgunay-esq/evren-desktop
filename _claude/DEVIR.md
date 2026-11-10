@@ -12,3 +12,9 @@ Yapıldı: alt çubukta model + gerçek bağlam kullanımı (`82.6K / 1M · %7.9
 Doğrulama: `npm test` 7/7 yeşil; ikinci Electron örneğinde 1240 px'te taşma yok.
 Sıradaki: yok · Açık: `remote-sunucu.js` onay tespiti değişikliği ayrı iş olarak commit bekliyor.
 Commit: bb300bf
+
+## 2026-11-10 · açık sohbetin ikinci kez açılması
+Yapıldı: soldaki karta tıklamak, üstte zaten açık sohbeti yeniden başlatmıyor; mevcut panele yönlendirip kısa vurgu veriyor. Canlı eş varsa sekmesine gidiliyor, kapanmış sekme yerinde tazeleniyor (ikinci sekme yok).
+Doğrulama: `node --check app.js` temiz, `npm test` 7/7 yeşil.
+Sıradaki: `npm run basla` ile karta tıklama akışını bir kez gözle doğrula.
+Commit: d13638e
