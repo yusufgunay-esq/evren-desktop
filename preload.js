@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('evren', {
   gecmis: (dizin) => ipcRenderer.invoke('gecmis', dizin),
   gecmisBlok: () => ipcRenderer.invoke('gecmis-blok'), // ölçüm: ana süreçte geçmiş taraması için harcanan süre
   sohbetGecmisi: (id) => ipcRenderer.invoke('sohbet-gecmisi', id),
+  oturumBaglam: (id) => ipcRenderer.invoke('oturum-baglam', id), // gerçek bağlam kullanımı + tur sayacı
   yaz: (id, veri) => ipcRenderer.invoke('yaz', id, veri),
   boyut: (id, olcu) => ipcRenderer.invoke('boyut', id, olcu),
   kapatOturum: (id) => ipcRenderer.invoke('kapat-oturum', id),
