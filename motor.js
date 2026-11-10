@@ -28,6 +28,19 @@ const MODEL_BILGISI = {
 };
 const MODEL_SIRASI = Object.keys(MODEL_BILGISI);
 
+// ---- Efor (düşünme derinliği) ----
+// Claude Code'un --effort bayrağıyla birebir aynı beş seviye. Oturum başında seçilir;
+// kayıtlı son seçim yeni oturumun varsayılanı olur.
+const EFORLAR = [
+  { id: 'low', ad: 'Düşük', not: 'Hızlı yanıt, az düşünme' },
+  { id: 'medium', ad: 'Orta', not: 'Dengeli varsayılan' },
+  { id: 'high', ad: 'Yüksek', not: 'Daha derin düşünme' },
+  { id: 'xhigh', ad: 'Çok yüksek', not: 'Zor işler için çok derin' },
+  { id: 'max', ad: 'Azami', not: 'En derin düşünme, en yavaş' },
+];
+const EFOR_VARSAYILAN = 'medium';
+const eforCoz = (deger) => (EFORLAR.some((e) => e.id === deger) ? deger : EFOR_VARSAYILAN);
+
 const baglamMetni = (n) => (!n || !Number.isFinite(n) ? '—' : n >= 1048576 ? `${Math.round(n / 1048576)}M bağlam` : `${Math.round(n / 1024)}K bağlam`);
 
 // API'ye ulaşılamazsa gösterilen yedek liste (son doğrulanmış bağlam değerleri).
@@ -113,4 +126,4 @@ async function anahtarYaz(anahtar) {
   return ANAHTAR_DOSYASI;
 }
 
-module.exports = { MODELLER, modelleriCoz, baglamMetni, gitDal, ayarOku, ayarYaz, anahtarOku, anahtarYaz, VERI_DIZINI };
+module.exports = { MODELLER, modelleriCoz, EFORLAR, EFOR_VARSAYILAN, eforCoz, baglamMetni, gitDal, ayarOku, ayarYaz, anahtarOku, anahtarYaz, VERI_DIZINI };
