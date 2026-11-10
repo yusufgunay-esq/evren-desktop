@@ -522,6 +522,38 @@
   </div>
 
 
+  <!-- Oturum Adlandır: sekme çift tıklama ya da geçmiş kartındaki kalem -->
+  <div class="modal-ortu" id="adlandirModal" hidden>
+    <div class="modal-kutu oturum-kutu ad-kutu" role="dialog" aria-modal="true" aria-labelledby="adlandirBaslik">
+      <header class="modal-baslik oturum-baslik">
+        <div class="oturum-baslik-metin">
+          <span class="oturum-kicker">EVREN · OTURUM</span>
+          <h3 id="adlandirBaslik">Oturumu Adlandır</h3>
+          <p class="oturum-alt">Ad sekmeye, geçmişe ve Claude Desktop'a aynı yazılır.</p>
+        </div>
+        <button class="modal-kapat" id="adlandirKapatBtn" type="button" aria-label="Kapat">×</button>
+      </header>
+      <div class="ad-govde">
+        <label class="proje-alan">
+          <span class="proje-alan-ad">Oturum adı</span>
+          <input id="adlandirGiris" type="text" maxlength="80" placeholder="Örn. Telefon kumandası" autocomplete="off" spellcheck="false" />
+        </label>
+        <p class="proje-ipucu">Boş bırakırsan oturum ilk mesajdan üretilen ada döner.</p>
+      </div>
+      <footer class="oturum-modal-ayak">
+        <div class="oturum-modal-ozet">
+          <span class="oturum-ozet-etiket">Şu anki ad</span>
+          <span class="oturum-secili-bilgi" id="adlandirOzet">—</span>
+        </div>
+        <div class="oturum-modal-eylemler">
+          <button class="btn ghost" id="adlandirVazgecBtn" type="button">Vazgeç</button>
+          <button class="btn primary" id="adlandirKaydetBtn" type="button">Kaydet<kbd>Enter</kbd></button>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+
   <script src="node_modules/@xterm/xterm/lib/xterm.js"></script>
   <script src="node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
   <script src="node_modules/@xterm/addon-webgl/lib/addon-webgl.js"></script>

@@ -575,6 +575,7 @@ function pencereOlustur() {
   if (argv.includes('--ekran-kumanda')) sorgu.kumanda = '1'; // test: Kumanda modalını açık yakala
   if (argv.includes('--ekran-modal')) sorgu.modal = '1';
   if (argv.includes('--ekran-proje-duzenle')) sorgu.projeDuzenle = '1'; // test: proje düzenleme modalı
+  if (argv.includes('--ekran-adlandir')) sorgu.adlandir = '1'; // test: oturum adlandırma modalı
   const ciktiIx = argv.indexOf('--ekran-cikti');
   if (ciktiIx >= 0) sorgu.cikti = (argv[ciktiIx + 1] && !argv[ciktiIx + 1].startsWith('--')) ? argv[ciktiIx + 1] : '1'; // test: Çıktılar sekmesi (isteğe bağlı oturum kimliği öneki)
   if (argv.includes('--ekran-rol')) sorgu.rol = '1'; // test: orkestratör rolü seçili modal
@@ -1052,6 +1053,59 @@ ipcMain.handle('oturum-kimlik', (_e, id) => {
     } catch {}
   }
   return { devam: b.devam || null, orkestrator: !!b.orkestrator, kodYazma: b.kodYazma !== false, baslik: baslik || null };
+});
+// Oturumu yeniden adlandırır: Claude Code'un kendi custom-title.json dosyasına yazar
+// (masaüstü `/rename` ile aynı biçim). Böylece ad hem sekmede hem geçmişte hem
+// Claude Desktop'ta kalıcı olur. Boş ad dosyayı siler, otomatik ada döner.
+ipcMain.handle('oturum-adlandir', (_e, { dizin, devam, ad } = {}) => {
+  const id = String(devam || '');
+  if (!gecmis.OTURUM_KIMLIK.test(id)) return { ok: false, hata: 'oturum kimliği yok' };
+  if (typeof dizin !== 'string' || !dizin.trim()) return { ok: false, hata: 'proje klasörü yok' };
+  try {
+    const dosya = sohbet.dosyaYolu(dizin.trim(), id);
+    const seansDizin = path.join(path.dirname(dosya), id);
+    const yeni = gecmis.ozelBaslikYaz(seansDizin, ad);
+    sekmeAdiOnbellek.delete(id);
+    gecmis.baslikOnbellekTemizle(id);
+    if (remoteSunucu) remoteSunucu.oturumListesiGuncelle();
+    return { ok: true, ad: yeni };
+  } catch (e) { return { ok: false, hata: e.message }; }
+});
+// Yeni oturumun sekme adı: ilk kullanıcı mesajından 2-6 kelimelik başlık üretir.
+// Aynı EVREN ucuna gider; düşünme kapalı ve çıktı ~10 token, maliyeti yok denecek kadar az.
+// Başarısız olursa renderer ilk mesajdan türetilen adı kullanmaya devam eder.
+ipcMain.handle('baslik-uret', async (_e, metin) => {
+  const kaynak = String(metin || '').replace(/\s+/g, ' ').trim().slice(0, 1600);
+  if (kaynak.length < 8) return { ok: false };
+  try {
+    const k = await anahtar();
+    if (!k) return { ok: false };
+    const istek = {
+      model: 'qwen3.8-flash-next',
+      max_tokens: 48,
+      thinking: { type: 'disabled' },
+      messages: [{
+        role: 'user',
+        content: 'Aşağıdaki ilk mesaj için 2-6 kelimelik, mesajın dilinde bir oturum başlığı yaz. Yalnız başlığı yaz; tırnak, nokta, açıklama ve etiket kullanma.\n\nMesaj: ' + kaynak,
+      }],
+    };
+    const r = await fetch(`${EVREN_BASE_URL}/v1/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'X-API-Key': k },
+      body: JSON.stringify(istek),
+      signal: zamanAsimi(12000),
+    });
+    if (!r.ok) return { ok: false };
+    const j = await r.json().catch(() => null);
+    const parca = j && Array.isArray(j.content) ? j.content.find((c) => c && c.type === 'text' && c.text) : null;
+    const ad = String((parca && parca.text) || '')
+      .replace(/["'“”‘’`]/g, '')
+      .replace(/^[\s\-–—:•]+|[\s.…]+$/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 60);
+    return ad ? { ok: true, ad } : { ok: false };
+  } catch { return { ok: false }; }
 });
 ipcMain.handle('model-guncelle', (_e, { id, modelId }) => {
   const bilgi = oturumBilgi.get(id);

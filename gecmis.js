@@ -33,6 +33,22 @@ function ozelBaslikOku(seansDizin) {
   } catch { return ''; }
 }
 
+// Oturum adını Claude Code'un kendi dosyasına yazar (Claude Desktop `/rename` ile aynı biçim).
+// Boş ad dosyayı siler: başlık yeniden ilk kullanıcı mesajından türetilir.
+function ozelBaslikYaz(seansDizin, ad) {
+  const temiz = String(ad || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  const dosya = path.join(seansDizin, 'custom-title.json');
+  if (!temiz) {
+    try { fs.unlinkSync(dosya); } catch {}
+    return '';
+  }
+  fs.mkdirSync(seansDizin, { recursive: true });
+  fs.writeFileSync(dosya, JSON.stringify({ customTitle: temiz }));
+  return temiz;
+}
+
+function baslikOnbellekTemizle(id) { baslikOnbellek.delete(id); }
+
 function baslikOku(dosya, yalnizBaslik) {
   let fd, baslik = '', kaynak = '';
   try {
@@ -480,4 +496,4 @@ function tumOturumlariTara(secenekler) {
   return tumu.filter((x) => x.baslik).slice(0, 100);
 }
 
-module.exports = { oturumGecmisi, tumOturumlariTara, cwdOku, tempMi, oturumSayilari, altAjanlariOku, turDevamEdiyor, baslikOku, ozelBaslikOku, evrenKayitlariOku, OTURUM_KIMLIK, CANLI_ESIK_MS };
+module.exports = { oturumGecmisi, tumOturumlariTara, cwdOku, tempMi, oturumSayilari, altAjanlariOku, turDevamEdiyor, baslikOku, ozelBaslikOku, ozelBaslikYaz, baslikOnbellekTemizle, evrenKayitlariOku, OTURUM_KIMLIK, CANLI_ESIK_MS };
