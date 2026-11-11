@@ -11,7 +11,7 @@
   <a href="LICENSE"><img alt="Lisans: MPL-2.0" src="https://img.shields.io/badge/lisans-MPL--2.0-4c90f0?style=flat-square" /></a>
   <img alt="Platform: Windows 10/11" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-1e242c?style=flat-square" />
   <img alt="Electron" src="https://img.shields.io/badge/Electron-45-1e242c?style=flat-square" />
-  <img alt="Sürüm" src="https://img.shields.io/badge/s%C3%BCr%C3%BCm-0.4.0-1e242c?style=flat-square" />
+  <img alt="Sürüm" src="https://img.shields.io/badge/s%C3%BCr%C3%BCm-0.5.0-1e242c?style=flat-square" />
 </p>
 
 <p align="center">

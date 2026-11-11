@@ -265,11 +265,31 @@ function orkestratorBrifi(yazma) {
   ].join('\n');
 }
 
+const MB = 1024 * 1024;
+
+// Bellek kapısı: RAM kritikken yeni oturum açmak, Claude Code'un memory guard'ının arka plan
+// süreçlerini öldürmesine yol açıyordu. Eşiğin altında kısa süre beklenir; açılmazsa Türkçe hata.
+async function bellekKapisi() {
+  const ham = ayarOku();
+  const esikMb = Number(ham.bellekEsikMb ?? 1600);
+  const enCokMs = Number(ham.bellekEnCokMs ?? 20000);
+  if (!Number.isFinite(esikMb) || esikMb <= 0) return;
+  if (os.freemem() / MB >= esikMb) return;
+  const bekle = Number.isFinite(enCokMs) && enCokMs > 0 ? enCokMs : 0;
+  const bitis = Date.now() + bekle;
+  while (Date.now() < bitis) {
+    await new Promise((r) => setTimeout(r, 3000));
+    if (os.freemem() / MB >= esikMb) return;
+  }
+  throw new Error(`Bellek yetersiz: boş RAM ${Math.round(os.freemem() / MB)} MB (eşik ${Math.round(esikMb)} MB). Önce ölü oturumları kapatın: node araclar/oturum-bak.mjs kapat --uygula`);
+}
+
 // بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ — yeni bir Claude Code oturumu (PTY) açar; başlıkta verilen dizinde çalışır, `devam` verilirse eski oturumu sürdürür.
 async function oturumBaslat({ modelId, dizin, ekDizinler, projeAd, cols, rows, devam, forkSession, orkestrator, kodYazma, efor }) {
   const eforDeger = motor.eforCoz(efor);
   if (devam != null && !gecmis.OTURUM_KIMLIK.test(String(devam))) throw new Error('Geçersiz oturum kimliği.');
   if (kabuklar.size >= 8) throw new Error('En çok 8 oturum açık olabilir; birini kapatın.');
+  await bellekKapisi();
   const p = await panelModulu();
   const anahtarDeger = await anahtar();
   if (!anahtarDeger) throw new Error('EVREN API anahtarı yok. Ana ekrandaki alana anahtarı girin.');
@@ -334,6 +354,10 @@ async function oturumBaslat({ modelId, dizin, ekDizinler, projeAd, cols, rows, d
     if (ork) {
       arg.push('--append-system-prompt', orkestratorBrifi(yazma));
       if (!yazma) arg.push('--disallowedTools', 'Edit', 'Write', 'NotebookEdit');
+      // Şef yalın MCP ile doğar: profil varsa yalnız onu yükle, yoksa bugünkü davranış.
+      const sefProfil = path.join(os.homedir(), '.evren', 'mcp-profilleri', 'sef.json');
+      if (fs.existsSync(sefProfil)) arg.push('--strict-mcp-config', '--mcp-config', sefProfil);
+      else console.log('[mcp] Şef profili yok, varsayılan MCP ile devam: ' + sefProfil);
     }
     try {
       bu = pty.spawn('claude.exe', arg, secenek);
@@ -464,9 +488,38 @@ function tumunuKapat() { for (const id of [...kabuklar.keys()]) kabukKapat(id); 
 //   - agacta MCP disinda calisan bir arac/worker var mi,
 //   - kullanici son [bostaKapatDk] dakikada hic yazmadi mi.
 // Suresi ayarlardan gelir (bostaKapatDk, varsayilan 60 dk; 0 = kapali).
+// Uzun sessiz "goal active" oturumlar da kapanabilsin: bostaZorlaDk (varsayilan 240 dk,
+// 0 = kapali) esigini gecen ve jsonl'i 15 dk'dir dokunulmamis oturum, durumu 'bitti'
+// olmasa da aday olur. ~/.evren/korunan-oturumlar.json'daki uuid'ler asla kapatilmaz.
 // Gecmis diskte durur, sekme ayni oturumla --resume edilebilir.
 const MCP_COCUK = new Set(['node', 'python', 'pythonw', 'cmd', 'conhost',
   'duckduckgo-mcp-server', 'codebase-memory-mcp', 'chrome-devtools-mcp', 'uagents']);
+
+const KORUNAN_DOSYA = path.join(os.homedir(), '.evren', 'korunan-oturumlar.json');
+// Korunan oturum listesi: uuid dizisi ya da uuid -> kayit nesnesi (biçim esnek okunur).
+// Dosya yoksa bos kume; bozuk/okunamazsa null (tur atlanir) — yanlis oturum kapatmaktansa
+// hic kapatmamak yegdir.
+function korunanUuidleriOku() {
+  let ham;
+  try { ham = fs.readFileSync(KORUNAN_DOSYA, 'utf8'); }
+  catch (e) { return e && e.code === 'ENOENT' ? new Set() : null; }
+  let j;
+  try { j = JSON.parse(ham); } catch { return null; }
+  if (!j || typeof j !== 'object') return null;
+  const kume = new Set();
+  const topla = (d) => {
+    if (typeof d === 'string') { if (gecmis.OTURUM_KIMLIK.test(d.trim())) kume.add(d.trim().toLowerCase()); return; }
+    if (Array.isArray(d)) { for (const x of d) topla(x); return; }
+    if (d && typeof d === 'object') {
+      for (const k of Object.keys(d)) {
+        if (gecmis.OTURUM_KIMLIK.test(k)) kume.add(k.toLowerCase());
+        else topla(d[k]);
+      }
+    }
+  };
+  topla(j);
+  return kume;
+}
 
 function torunHaritasi(done) {
   const ps = 'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId)/$($_.ParentProcessId)/$($_.Name)" }';
@@ -501,22 +554,40 @@ function agactaCalismaVar(ebeveyn, kok) {
 }
 
 const bostaKontrol = setInterval(() => {
-  const dk = Number(ayarOku().bostaKapatDk ?? 60);
+  const ayar = ayarOku();
+  const dk = Number(ayar.bostaKapatDk ?? 60);
   if (!Number.isFinite(dk) || dk <= 0) return;
+  const korunan = korunanUuidleriOku();
+  if (!korunan) return;   // dosya bozuk/okunamadi: bu turu atla
   const sinir = dk * 60000;
+  const zorlaDk = Number(ayar.bostaZorlaDk ?? 240);
+  const zorlaSinir = Number.isFinite(zorlaDk) && zorlaDk > 0 ? zorlaDk * 60000 : 0;
   const simdi = Date.now();
   const adaylar = [];
   for (const [id, bilgi] of oturumBilgi) {
     if (!kabuklar.has(id)) continue;
     const son = Math.max(bilgi.sonCikti || 0, bilgi.sonGirdi || 0, bilgi.baslangic || 0);
-    if (simdi - son < sinir) continue;
+    const sessiz = simdi - son;
+    if (sessiz < sinir) continue;
     let dosya = null;
     try {
       dosya = bilgi.devam
         ? sohbet.dosyaYolu(bilgi.dizin, bilgi.devam)
         : sohbet.oturumDosyasiBul({ dizin: bilgi.dizin, baslangicMs: bilgi.baslangic });
     } catch {}
-    if (!dosya || sohbet.oturumDurumu(dosya) !== 'bitti') continue;  // calisiyor/bilinmiyor: dokunma
+    if (!dosya) continue;
+    const kimlik = String(bilgi.devam || path.basename(dosya, '.jsonl')).toLowerCase();
+    if (korunan.has(kimlik)) continue;   // korunan oturum asla kapatilmaz
+    let durum = 'bilinmiyor';
+    try { durum = sohbet.oturumDurumu(dosya); } catch {}
+    let zorlaAday = false;
+    if (zorlaSinir && sessiz > zorlaSinir) {
+      try {
+        const mtime = fs.statSync(dosya).mtimeMs || 0;
+        zorlaAday = mtime > 0 && simdi - mtime > 15 * 60000;
+      } catch {}
+    }
+    if (durum !== 'bitti' && !zorlaAday) continue;  // calisiyor/bilinmiyor: yalniz uzun sessizlikte kapat
     adaylar.push(id);
   }
   if (!adaylar.length) return;
