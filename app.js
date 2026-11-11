@@ -1381,6 +1381,16 @@ function ciktiSaat(ms) {
   const d = new Date(ms);
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
+// Uzun yolu ortadan kırpmak yerine kök + son iki parçayı göster: "D:\…\evren-desktop\app.js".
+function kisaCiktiYolu(p, n = 56) {
+  if (!p) return '';
+  if (p.length <= n) return p;
+  const parcalar = String(p).split(/[\\/]/).filter(Boolean);
+  const son = parcalar.slice(-2).join('\\');
+  const kok = /^[A-Za-z]:$/.test(parcalar[0] || '') ? parcalar[0] + '\\…\\' : '…\\';
+  const aday = kok + son;
+  return aday.length <= n ? aday : '…\\' + parcalar.slice(-1).join('');
+}
 function ciktiIslemEtiketi(islem) {
   if (islem === 'olusturuldu') return 'oluşturuldu';
   if (islem === 'degisti') return 'değişti';
@@ -1416,7 +1426,7 @@ function ciktiCiz() {
             <span class="cikti-ad">${ad}</span>
             <span class="cikti-durum ${durumSinif}"><i></i>${ciktiIslemEtiketi(c.islem)}</span>
           </div>
-          <div class="cikti-yol mono">${esc(kisaYol(c.yol || '', 52))}</div>
+          <div class="cikti-yol mono">${esc(kisaCiktiYolu(c.yol || ''))}</div>
           <div class="cikti-alt">
             <span>${ciktiBoyut(c.boyut)}</span>${saat ? `<span class="nokta">·</span><span>${saat}</span>` : ''}
           </div>
@@ -2571,7 +2581,7 @@ yukle().then(() => {
     setTimeout(async () => {
       // Geçmiş listesi arka planda yüklenir; hazır olana dek kısa süre bekle.
       const basla = Date.now();
-      while ((!S.gecmis || !S.gecmis.length) && Date.now() - basla < 2200) await bekle(100);
+      while ((!S.gecmis || !S.gecmis.length) && Date.now() - basla < 4000) await bekle(100);
       S.sohbetFiltre = 'cikti';
       for (const b of document.querySelectorAll('.sohbet-filtre')) b.classList.toggle('aktif', b.dataset.filtre === 'cikti');
       const secim = new URLSearchParams(location.search).get('cikti');
