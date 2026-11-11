@@ -1,5 +1,12 @@
 # Devir
 
+## 2026-11-11 · oturum hijyeni 0.5.0
+Yapıldı: oturum açmadan önce bellek kapısı (1.6 GB eşiği, Türkçe hata), orkestratör sekmesi yalın MCP profili (`~/.evren/mcp-profilleri/sef.json` varsa `--strict-mcp-config`), korunan oturumlar dosyası (`~/.evren/korunan-oturumlar.json`) ve `bostaZorlaDk` (240 dk) ile uzun sessiz oturumların kapatılması; çıktılar listesi konsol diline çekildi.
+Doğrulama: `npm test` 23/23 yeşil; `node --check main.js` temiz; iki commit push edildi.
+Sıradaki: eklenti tarafında `araclar/oturum-bak.mjs` bitince `kapat --eski 12s` kuru koşusunu gerçek oturumlarla bir kez gözle doğrula.
+Açık: panelin 8/8 göstergesi ancak ölü oturumlar kapatılınca düşer; canlı gözlem yapılmadı.
+Commit: fbc00f3 + 90387d2
+
 ## 2026-11-09 · oturum süreç ağacı ve boşta kapatma
 Yapıldı: `kabukKapat` artık `taskkill /T /F` ile tüm ağacı kapatıyor; `before-quit` eklendi; boşta kapatma kararı ajana bırakıldı (`sohbet.oturumDurumu`: son tur metin mi, araç askıda mı) + süreç ağacında MCP dışı çalışan var mı + kullanıcı son 60 dk yazdı mı; Şef brifine "iş bitince worker'ları kapat ve DEVIR notu düş" kuralı eklendi.
 Doğrulama: `node --check main.js sohbet.js` temiz; 8 gerçek jsonl üzerinde sınıflandırma çalıştı.
