@@ -284,6 +284,15 @@ async function bellekKapisi() {
   throw new Error(`Bellek yetersiz: boş RAM ${Math.round(os.freemem() / MB)} MB (eşik ${Math.round(esikMb)} MB). Önce ölü oturumları kapatın: node araclar/oturum-bak.mjs kapat --uygula`);
 }
 
+// Sekmenin MCP profilini uygular: ~/.evren/mcp-profilleri/<ad>.json varsa yalnız onu yükler; ad boş ya da 'tam' ise dokunmaz.
+function mcpProfiliUygula(arg, ad) {
+  const profil = String(ad ?? '').trim();
+  if (!profil || profil === 'tam') return;
+  const yol = path.join(os.homedir(), '.evren', 'mcp-profilleri', profil + '.json');
+  if (fs.existsSync(yol)) arg.push('--strict-mcp-config', '--mcp-config', yol);
+  else console.log('[mcp] Profil yok, varsayılan MCP ile devam: ' + yol);
+}
+
 // بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ — yeni bir Claude Code oturumu (PTY) açar; başlıkta verilen dizinde çalışır, `devam` verilirse eski oturumu sürdürür.
 async function oturumBaslat({ modelId, dizin, ekDizinler, projeAd, cols, rows, devam, forkSession, orkestrator, kodYazma, efor }) {
   const eforDeger = motor.eforCoz(efor);
@@ -354,10 +363,13 @@ async function oturumBaslat({ modelId, dizin, ekDizinler, projeAd, cols, rows, d
     if (ork) {
       arg.push('--append-system-prompt', orkestratorBrifi(yazma));
       if (!yazma) arg.push('--disallowedTools', 'Edit', 'Write', 'NotebookEdit');
-      // Şef yalın MCP ile doğar: profil varsa yalnız onu yükle, yoksa bugünkü davranış.
+      // Şef yalın MCP ile doğar: sef profili varsa yalnız onu yükle, yoksa ayar profilini (varsayılan yalın) uygula.
       const sefProfil = path.join(os.homedir(), '.evren', 'mcp-profilleri', 'sef.json');
       if (fs.existsSync(sefProfil)) arg.push('--strict-mcp-config', '--mcp-config', sefProfil);
-      else console.log('[mcp] Şef profili yok, varsayılan MCP ile devam: ' + sefProfil);
+      else mcpProfiliUygula(arg, ayarOku().mcpProfil ?? 'yalin');
+    } else {
+      // Her sekme varsayılan olarak yalın MCP ile doğar; ayar anahtarı: mcpProfil ('tam' = bugünkü tüm set).
+      mcpProfiliUygula(arg, ayarOku().mcpProfil ?? 'yalin');
     }
     try {
       bu = pty.spawn('claude.exe', arg, secenek);
@@ -904,6 +916,12 @@ function gecmisIsciAl() {
   if (gecmisIsci.unref) gecmisIsci.unref();
   return gecmisIsci;
 }
+// Başlık önbelleği iki yerde yaşar (ana süreç + tarama iş parçacığı). Ad değişince ikisi de temizlenir;
+// yoksa soldaki geçmiş listesi eski adı göstermeye devam eder.
+function gecmisBaslikOnbellekTemizle(kimlik) {
+  gecmis.baslikOnbellekTemizle(kimlik);
+  if (gecmisIsci) { try { gecmisIsci.postMessage({ tip: 'onbellek-temizle', kimlik }); } catch {} }
+}
 function gecmisOku(dizin) {
   return new Promise((coz) => {
     const t0 = performance.now();
@@ -1137,7 +1155,7 @@ ipcMain.handle('oturum-adlandir', (_e, { dizin, devam, ad } = {}) => {
     const seansDizin = path.join(path.dirname(dosya), id);
     const yeni = gecmis.ozelBaslikYaz(seansDizin, ad);
     sekmeAdiOnbellek.delete(id);
-    gecmis.baslikOnbellekTemizle(id);
+    gecmisBaslikOnbellekTemizle(id);
     if (remoteSunucu) remoteSunucu.oturumListesiGuncelle();
     return { ok: true, ad: yeni };
   } catch (e) { return { ok: false, hata: e.message }; }
