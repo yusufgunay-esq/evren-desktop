@@ -1,5 +1,12 @@
 # Devir
 
+## 2026-11-12 · her sekme yalın MCP (RAM)
+Yapıldı: `mcpProfiliUygula()` eklendi; Şef dışındaki her sekme `ayar.mcpProfil ?? 'yalin'` profiliyle doğuyor, `tam` eski davranışı verir; Şef `sef.json` yoksa ayar profiline düşüyor.
+Doğrulama: `node --check main.js` temiz, `npm test` 23/23 yeşil; EVREN yeniden açılmadan canlı gözlem yapılmadı.
+Sıradaki: EVREN Desktop bir kez yeniden açılıp yeni sekmelerin MCP çocuk sayısı `oturum-bak durum` ile doğrulanmalı.
+Açık: arayüzde profil seçimi yok; yalnız ayar dosyasından (`mcpProfil`) okunuyor.
+Commit: bu notla aynı commit
+
 ## 2026-11-11 · oturum hijyeni 0.5.0
 Yapıldı: oturum açmadan önce bellek kapısı (1.6 GB eşiği, Türkçe hata), orkestratör sekmesi yalın MCP profili (`~/.evren/mcp-profilleri/sef.json` varsa `--strict-mcp-config`), korunan oturumlar dosyası (`~/.evren/korunan-oturumlar.json`) ve `bostaZorlaDk` (240 dk) ile uzun sessiz oturumların kapatılması; çıktılar listesi konsol diline çekildi.
 Doğrulama: `npm test` 23/23 yeşil; `node --check main.js` temiz; iki commit push edildi.
