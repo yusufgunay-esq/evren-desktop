@@ -33,7 +33,7 @@ function dosyaYolu(dizin, kimlik, kokDizin) {
  * `devam` varsa doğrudan o kimliğin dosyası; yoksa oturum başladıktan sonra dizinde
  * oluşan en yeni jsonl dosyası (PTY açıldıktan hemen sonra dosya henüz olmayabilir).
  */
-function oturumDosyasiBul({ dizin, devam, baslangicMs, kokDizin }) {
+function oturumDosyasiBul({ dizin, devam, baslangicMs, kokDizin, haric }) {
   if (!dizin) return null;
   if (devam && OTURUM_KIMLIK.test(String(devam))) {
     const tam = dosyaYolu(dizin, String(devam), kokDizin);
@@ -48,6 +48,8 @@ function oturumDosyasiBul({ dizin, devam, baslangicMs, kokDizin }) {
     if (!ad.endsWith('.jsonl')) continue;
     const kimlik = ad.slice(0, -6);
     if (!OTURUM_KIMLIK.test(kimlik)) continue;
+    // Başka canlı oturumun sahiplendiği kayıt aday olmaz (eşzamanlı açılışta ad karışmasın).
+    if (haric && typeof haric.has === 'function' && haric.has(kimlik)) continue;
     const tam = path.join(klasor, ad);
     let s;
     try { s = fs.statSync(tam); } catch { continue; }
@@ -185,9 +187,11 @@ function girisleriCoz(j, aracAdlari) {
 }
 
 // Dosyanın sonundan geriye doğru okuyup son [adet] girişi döndürür (dosya baştan okunmaz).
+// Okuma yapılamıyorsa (dosya yok, başka süreçte kilitli, disk hatası) `hata: true` döner.
+// Bu, boş dosyadan ayrıdır: çağıran hatalı sonucu önbelleğe yazmamalıdır.
 function sonGirisler(dosya, adet = ILK_ADET) {
   let boyut, fd;
-  try { boyut = fs.statSync(dosya).size; fd = fs.openSync(dosya, 'r'); } catch { return { girisler: [], konum: 0 }; }
+  try { boyut = fs.statSync(dosya).size; fd = fs.openSync(dosya, 'r'); } catch { return { girisler: [], konum: 0, hata: true }; }
   try {
     const parcalar = [];
     let konum = boyut, satirSayisi = 0, toplam = 0;
@@ -212,7 +216,34 @@ function sonGirisler(dosya, adet = ILK_ADET) {
       tumu.push(...girisleriCoz(j, aracAdlari));
     }
     return { girisler: tumu.slice(-adet), konum: boyut };
+  } catch {
+    return { girisler: [], konum: 0, hata: true }; // okuma yarıda kaldı; kısmi sonuç güvenilmez
   } finally { try { fs.closeSync(fd); } catch {} }
+}
+
+// Dosya damgası (mtime + boyut) değişmediyse son girişler yeniden okunmaz.
+// Panel 3 saniyede bir sorar; dosya çoğu turda aynıdır, disk okuması ve parse boşa gider.
+const girisOnbellek = new Map(); // dosya -> { ms, boyut, adet, girisler }
+
+function sonGirislerOnbellekli(dosya, adet = ILK_ADET) {
+  let s;
+  try { s = fs.statSync(dosya); } catch { return { girisler: [], degisti: true }; }
+  const c = girisOnbellek.get(dosya);
+  if (c && c.ms === s.mtimeMs && c.boyut === s.size && c.adet === adet) {
+    return { girisler: c.girisler, degisti: false };
+  }
+  const r = sonGirisler(dosya, adet);
+  // Geçici okuma hatası (kilit, EMFILE vb.) boş dosya değildir: boş listeyi önbelleğe
+  // yazmak paneli kilit kalkana kadar boş bırakırdı. Son iyi okuma varsa o korunur,
+  // bir sonraki tur yeniden denenir; önbellek damgası ilerletilmez.
+  if (!r || r.hata) {
+    if (c && c.adet === adet) return { girisler: c.girisler, degisti: false };
+    return { girisler: [], degisti: true };
+  }
+  const girisler = r.girisler || [];
+  girisOnbellek.set(dosya, { ms: s.mtimeMs, boyut: s.size, adet, girisler });
+  if (girisOnbellek.size > 40) girisOnbellek.delete(girisOnbellek.keys().next().value); // en eski dosya düşer
+  return { girisler, degisti: true };
 }
 
 /**
@@ -551,6 +582,7 @@ module.exports = {
   oturumDosyasiBul,
   girisleriCoz,
   sonGirisler,
+  sonGirislerOnbellekli,
   sonKayitlar,
   oturumDurumu,
   ArtimliOkuyucu,

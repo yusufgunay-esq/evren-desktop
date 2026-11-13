@@ -54,7 +54,7 @@ const S = {
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const kisaYol = (p, n = 34) => (!p ? '' : p.length <= n ? p : p.slice(0, 3) + '…' + p.slice(-(n - 4)));
 const kisaBaglam = (n) => (!n ? '—' : n >= 1e6 ? `${Math.round(n / 1048576)}M` : `${Math.round(n / 1024)}K`);
-// Proje monogramı: "gunay-studio" → GS, "Ahali" → A, "evren-desktop" → ED.
+// Proje monogramı: "ornek-proje" → OP, "Ahali" → A, "evren-desktop" → ED.
 const monogram = (ad) => {
   const p = String(ad || '').split(/[\s._-]+/).filter(Boolean);
   if (!p.length) return '?';
@@ -65,6 +65,16 @@ const seciliModel = () => S.modeller.find((m) => m.id === S.model) || S.modeller
 const seciliProje = () => S.projeler.find((p) => p.yol === S.proje);
 const bekle = (ms) => new Promise((r) => setTimeout(r, ms));
 const ikon = (ad) => `<svg class="ic"><use href="#i-${ad}"/></svg>`;
+// Pano: önce ana süreçteki Electron clipboard (izin gerektirmez), olmazsa tarayıcı API'si.
+// Win+V pano geçmişinden seçilen metin de bu yoldan gelir.
+async function panoOku() {
+  try { const x = await window.evren.panoOku?.(); if (typeof x === 'string') return x; } catch {}
+  try { return await navigator.clipboard.readText(); } catch { return ''; }
+}
+async function panoYaz(metin) {
+  try { if (await window.evren.panoYaz?.(metin)) return true; } catch {}
+  try { await navigator.clipboard.writeText(metin); return true; } catch { return false; }
+}
 const kisaZaman = (ms) => {
   const f = Math.max(0, (Date.now() - ms) / 1000);
   if (f < 60) return 'şimdi';
@@ -151,6 +161,8 @@ function akimCizgiTetikle() {
   akimTimer = setTimeout(() => { el.classList.remove('aktif'); }, 1000);
 }
 let gecmisSonHtml = null; // son yazılan liste HTML'i; aynıysa DOM'a dokunulmaz
+const GECMIS_IDLE_GORUNEN = 8; // boştaki oturumlar önce kısa listelenir; gerisi tek düğmeyle açılır
+let gecmisIdleTumu = false;
 const gecmisAcikMi = (g) => S.oturumlar.some((o) => o.canli && o.devam === g.id); // sekme açık; çalıştığı anlamına gelmez
 const kucult = (s) => String(s || '').toLocaleLowerCase('tr');
 // EVREN işi durumuna göre satır/nokta sınıfı: çalışan yeşil, kesilen turuncu, hatalı kırmızı.
@@ -167,6 +179,15 @@ function kisaModel(ad) {
 function kaynakIsaret(evrenMi) {
   return `<svg class="ic seans-kaynak ${evrenMi ? 'evren' : 'claude'}" role="img" aria-label="${evrenMi ? 'EVREN oturumu' : 'Claude oturumu'}"><use href="#${evrenMi ? 'i-evren' : 'i-claude'}" /></svg>`;
 }
+// Uyku engeli düğmesi: ayar açıksa çalışan oturum varken sistem uyumaz.
+function uykuDugmeCiz() {
+  const b = $('uykuBtn');
+  if (!b) return;
+  b.classList.toggle('aktif', !!S.uyku);
+  b.classList.toggle('uygulanan', !!S.uykuAktif);
+  b.setAttribute('aria-pressed', S.uyku ? 'true' : 'false');
+  b.title = S.uyku ? 'Uyku engeli açık: çalışan oturum varken bilgisayar uykuya geçmez' : 'Uyku engeli kapalı: bilgisayar normal uykuya geçebilir';
+}
 function gecmisCiz() {
   const el = $('gecmisList');
   if (!el) return;
@@ -179,11 +200,15 @@ function gecmisCiz() {
   const eslesir = (g) => kucult(g.baslik).includes(q) ||
     kucult(g.projeAd || '').includes(q) ||
     (g.altAjanlar || []).some((a) => kucult(a.tanim).includes(q) || kucult(a.tur).includes(q)) ||
-    (g.evrenIsleri || []).some((e) => kucult(e.baslik).includes(q) || kucult(e.model).includes(q));
+    (g.evrenIsleri || []).some((e) => kucult(e.baslik).includes(q) || kucult(e.model).includes(q)) ||
+    !!(g.eslesme && g.eslesme.sayi > 0);
   const liste = q ? S.gecmis.filter(eslesir) : S.gecmis;
   if ($('gecmisSay')) $('gecmisSay').textContent = q ? `${liste.length}/${S.gecmis.length}` : (S.gecmis.length || '0');
   if (!liste.length) {
-    el.innerHTML = `<div class="bos-satir">${q ? 'Aramayla eşleşen oturum yok.' : 'Kayıtlı oturum bulunamadı.'}</div>`;
+    const bos = `<div class="bos-satir">${q ? 'Aramayla eşleşen oturum yok.' : 'Kayıtlı oturum bulunamadı.'}</div>`;
+    if (bos === gecmisSonHtml) return;
+    gecmisSonHtml = bos;
+    el.innerHTML = bos;
     return;
   }
   const aktifDevam = aktifOturum() ? aktifOturum().devam : null;
@@ -191,14 +216,25 @@ function gecmisCiz() {
   const inProgress = [];
   const idle = [];
   for (const g of liste) {
-    const calisiyor = g.canli || g.turCanli || (g.calisanAjan > 0) || (g.calisanEvren > 0) || gecmisAcikMi(g);
+    const acik = gecmisAcikMi(g);
+    const calisiyor = g.canli || g.turCanli || (g.calisanAjan > 0) || (g.calisanEvren > 0);
+    g._canli = calisiyor; // kart kendi durumunu taşır: sabitlenen grupta da canlılık görünür
+    g._acik = acik;
     if (ignelenenler.has(g.id)) {
       ignelenenList.push(g);
-    } else if (calisiyor) {
+    } else if (calisiyor || acik) {
       inProgress.push(g);
     } else {
       idle.push(g);
     }
+  }
+  // Kartın tek durum etiketi: soru > çalışıyor > açık > bitti > saat.
+  function durumEtiketi(g, calisiyor, acik) {
+    if (g.sonDurum === 'soru') return '<span class="seans-durum soru" title="Ajan soru sordu, cevap bekliyor"><svg class="ic" aria-hidden="true"><use href="#i-soru" /></svg><span>soru</span></span>';
+    if (calisiyor) return '<span class="seans-durum canli" title="Bu oturum çalışıyor"><span class="led canli"></span><span>çalışıyor</span></span>';
+    if (acik) return '<span class="seans-durum acik" title="Sekme açık, tur beklemede">açık</span>';
+    if (g.sonDurum === 'bitti' && Date.now() - g.ms < 24 * 60 * 60 * 1000) return '<span class="seans-durum bitti" title="Bu oturumda iş bitti"><svg class="ic" aria-hidden="true"><use href="#i-check-circle" /></svg><span>bitti</span></span>';
+    return '<span class="seans-zaman">' + kisaZaman(g.ms) + '</span>';
   }
   const kartHtml = (g, calisiyor, idx = 0) => {
     const secili = aktifDevam === g.id;
@@ -211,7 +247,7 @@ function gecmisCiz() {
     const baslikEs = kucult(g.baslik).includes(q);
     const ajanlar = q && !baslikEs ? tumAjanlar.filter((a) => kucult(a.tanim).includes(q) || kucult(a.tur).includes(q)) : tumAjanlar;
     const isler = q && !baslikEs ? tumIsler.filter((e) => kucult(e.baslik).includes(q) || kucult(e.model).includes(q)) : tumIsler;
-    const ajanAcik = acikAjanlar.has(g.id) || tumAjanlar.some((a) => a.canli) || tumIsler.some((e) => e.canli) || (!!q && ajanlar.length + isler.length > 0);
+    const ajanAcik = acikAjanlar.has(g.id) || (!!q && ajanlar.length + isler.length > 0);
     const belirmeSinif = ilkGecmisYukleme ? ' belirme' : '';
     const gecikmeStil = ilkGecmisYukleme ? ` style="animation-delay: ${Math.min(idx * 25, 200)}ms;"` : '';
     const igneli = ignelenenler.has(g.id);
@@ -220,10 +256,14 @@ function gecmisCiz() {
     // Bilinmeyeni Claude saymak yanlış rozet gösteriyordu: yalnız 'claude' kesin ise kıvılcım, gerisi EVREN.
     const evrenMi = g.kaynak !== 'claude' || g.evren;
     const kaynakHtml = kaynakIsaret(evrenMi);
+    const kartCanli = g._canli ?? calisiyor;
+    const kartAcik = !!g._acik;
+    const durumYazi = kartCanli ? 'çalışıyor' : g.sonDurum === 'soru' ? 'soru bekliyor' : g.sonDurum === 'bitti' ? 'bitti' : esc(goreli(g.ms / 1000));
     return `
-      <div class="seans-kart${secili ? ' sec-li' : ''}${sef ? ' sef' : ''}${belirmeSinif}"${gecikmeStil} role="option" aria-selected="${secili}" data-id="${esc(g.id)}" data-yol="${esc(g.projeYol)}" title="${esc(g.baslik)}
-${esc(g.projeAd)} · ${evrenMi ? 'EVREN' : 'Claude'} · ${esc(goreli(g.ms / 1000))}">
+      <div class="seans-kart${kartCanli ? ' canli' : ''}${secili ? ' sec-li' : ''}${sef ? ' sef' : ''}${igneli ? ' igneli' : ''}${belirmeSinif}"${gecikmeStil} role="option" aria-selected="${secili}" data-id="${esc(g.id)}" data-yol="${esc(g.projeYol)}" title="${esc(g.baslik)}
+${esc(g.projeAd)} · ${evrenMi ? 'EVREN' : 'Claude'} · ${durumYazi}">
         <div class="seans-satir-ust">
+          ${kaynakHtml}
           <span class="seans-baslik">${esc(g.baslik)}</span>
           <button class="seans-ad-btn" type="button" data-adlandir="${esc(g.id)}" title="Oturumu adlandır">
             <svg class="ic"><use href="#i-edit" /></svg>
@@ -231,21 +271,14 @@ ${esc(g.projeAd)} · ${evrenMi ? 'EVREN' : 'Claude'} · ${esc(goreli(g.ms / 1000
           <button class="seans-igne-btn${igneli ? ' aktif' : ''}" type="button" data-igne="${esc(g.id)}" title="${igneli ? 'İğneyi kaldır' : 'En üste iğnele'}">
             <svg class="ic"><use href="#i-pin" /></svg>
           </button>
-          ${calisiyor ? `
-            <span class="seans-durum-canli">
-              <span class="led canli"></span>
-              ${calisanToplam > 0 ? `<span class="seans-rozet mono">${calisanToplam}</span>` : ''}
-            </span>
-          ` : `
-            <span class="seans-zaman">${kisaZaman(g.ms)}</span>
-          `}
+          ${durumEtiketi(g, kartCanli, kartAcik)}
         </div>
         <div class="seans-satir-alt">
-          ${kaynakHtml}
           ${sef ? '<span class="seans-sef mono">şef</span>' : ''}
           <span class="seans-proje">${esc(g.projeAd)}</span>
-          ${dalVar ? `<button class="tag-ajan${calisanToplam ? ' canli' : ''}" data-ajan-toggle="${esc(g.id)}" type="button" title="${tumAjanlar.length + tumIsler.length} alt görev${calisanToplam ? `, ${calisanToplam} çalışıyor` : ''}">${rozetMetin}</button>` : ''}
+          ${dalVar && (calisanToplam > 0 || ajanAcik || q) ? `<button class="tag-ajan${calisanToplam ? ' canli' : ''}" data-ajan-toggle="${esc(g.id)}" type="button" title="${tumAjanlar.length + tumIsler.length} alt görev${calisanToplam ? `, ${calisanToplam} çalışıyor` : ''}">${rozetMetin}</button>` : ''}
         </div>
+        ${q && g.eslesme && g.eslesme.ornek ? `<div class="seans-eslesme" title="Sohbet içinde ${g.eslesme.sayi} eşleşme"><svg class="ic" aria-hidden="true"><use href="#i-search" /></svg><span>${esc(g.eslesme.ornek)}</span>${g.eslesme.sayi > 1 ? `<b class="mono">${g.eslesme.sayi}</b>` : ''}</div>` : ''}
         ${dalVar && ajanAcik ? `
         <div class="ajan-agac${calisanToplam ? ' canli' : ''}">
           ${ajanlar.map((a) => `
@@ -282,7 +315,7 @@ ${esc(g.projeAd)} · ${evrenMi ? 'EVREN' : 'Claude'} · ${esc(goreli(g.ms / 1000
   };
   // Grup başlığı gerçek bir düğme: Enter/Space ile katlanır, ok solda, sayı sağda hep görünür.
   // Arama varken eşleşen gruplar geçici olarak açık gösterilir; kayıtlı katlanma durumu değişmez.
-  const grupHtml = (anahtar, etiket, kayitlar, calisiyor) => {
+  const grupHtml = (anahtar, etiket, kayitlar, calisiyor, ek = '', toplam) => {
     if (!kayitlar.length) return '';
     const kapali = !!S.grupKapali[anahtar] && !q;
     return `
@@ -290,14 +323,19 @@ ${esc(g.projeAd)} · ${evrenMi ? 'EVREN' : 'Claude'} · ${esc(goreli(g.ms / 1000
         <button type="button" class="seans-grup-baslik" aria-expanded="${!kapali}" aria-controls="grup-${anahtar}" data-grup-dugme="${anahtar}">
           <svg class="ic grup-ok" aria-hidden="true"><use href="#i-chevron" /></svg>
           <span>${etiket}</span>
-          <span class="grup-sayi mono">${kayitlar.length}</span>
+          <span class="grup-sayi mono">${toplam || kayitlar.length}</span>
         </button>
         <div class="seans-grup-govde" id="grup-${anahtar}">
-          <div class="seans-grup-ic">${kayitlar.map((g, i) => kartHtml(g, calisiyor, i)).join('')}</div>
+          <div class="seans-grup-ic">${kayitlar.map((g, i) => kartHtml(g, calisiyor, i)).join('')}${ek}</div>
         </div>
       </div>`;
   };
-  const html = grupHtml('ignelenenler', 'İğnelenenler', ignelenenList, null) + grupHtml('calisiyor', 'Çalışıyor', inProgress, true) + grupHtml('bosta', 'Boşta', idle, false);
+  // Boştaki oturumlar kısa listelenir: 96 satırlık duvar yerine son 8, gerisi tek düğme.
+  const idleGorunen = q || gecmisIdleTumu ? idle : idle.slice(0, GECMIS_IDLE_GORUNEN);
+  const idleEk = !q && idle.length > GECMIS_IDLE_GORUNEN
+    ? `<div class="seans-daha"><button type="button" class="seans-daha-btn" data-gecmis-daha="1">${gecmisIdleTumu ? 'Daha az göster' : `Daha eski oturumlar (${idle.length - GECMIS_IDLE_GORUNEN})`}</button></div>`
+    : '';
+  const html = grupHtml('ignelenenler', 'Sabitlenenler', ignelenenList, null) + grupHtml('calisiyor', 'Etkin', inProgress, true) + grupHtml('bosta', 'Geçmiş', idleGorunen, false, idleEk, idle.length);
   // Aynı HTML'i yeniden yazmayız: kaydırma yeri ve fare altındaki satır bozulmasın.
   if (html === gecmisSonHtml) return;
   gecmisSonHtml = html;
@@ -348,6 +386,25 @@ async function oturumIzle(g) {
   sohbetIgneDurumGuncelle();
   setTimeout(() => sigdir(), 80);
 }
+let gecmisAraZaman = null;
+let gecmisAraIstek = 0;
+// Başlık anında süzülür; sohbet içeriği 260 ms sonra iş parçacığında aranır (oturum başına son ~350 KB).
+function gecmisIcerikAra() {
+  const q = gecmisAra.trim();
+  const no = ++gecmisAraIstek;
+  if (q.length < 2) {
+    for (const g of S.gecmis) delete g.eslesme;
+    gecmisCiz();
+    return;
+  }
+  const turler = S.gecmis.filter((g) => g.projeYol && g.id).map((g) => ({ id: g.id, projeYol: g.projeYol }));
+  window.evren.gecmisAra(turler, q).then((sonuc) => {
+    if (no !== gecmisAraIstek) return;
+    for (const g of S.gecmis) g.eslesme = (sonuc && sonuc[g.id]) || null;
+    gecmisCiz();
+  }).catch(() => {});
+}
+
 async function gecmisYukle() {
   const no = ++gecmisIstek;
   try {
@@ -360,6 +417,7 @@ async function gecmisYukle() {
       ignelenenler.add(hedefId);
     }
     gecmisCiz();
+    if (gecmisAra.trim().length >= 2) gecmisIcerikAra();
     if (typeof Takimyildiz !== 'undefined' && Takimyildiz.guncelle) {
       Takimyildiz.guncelle();
     }
@@ -576,13 +634,13 @@ async function yukle() {
     const d = await window.evren.durum();
     S.anahtarVar = !!d.anahtarVar;
     S.surum = d.surum || '';
-    if ($('kunyeSurum')) $('kunyeSurum').textContent = S.surum ? `v${S.surum}` : '';
     S.modeller = d.modeller || [];
     S.projeler = d.projeler || [];
     S.sonKlasorler = d.sonKlasorler || [];
     S.serbestDizin = d.serbestDizin || '';
     S.sonEfor = d.sonEfor || 'medium';
     S.eforlar = d.eforlar || [];
+    S.uyku = d.uyku !== false;
     S.model = S.modeller.some((m) => m.id === d.sonModel) ? d.sonModel : (S.modeller[0] && S.modeller[0].id) || '';
     S.proje = (S.projeler[0] && S.projeler[0].yol) || '';
     // Test/otomasyon: ?proje=<yol> açılışta o projeyi seçer (listedeyse onu, değilse listenin başına ekler).
@@ -596,7 +654,7 @@ async function yukle() {
     if (araParam && $('gecmisAra')) { gecmisAra = araParam; $('gecmisAra').value = araParam; }
   } catch (e) { console.error('durum', e); }
   S.yuklendi = true;
-  modelleriCiz(); projeleriCiz(); ozetYaz(); baglantiYaz();
+  modelleriCiz(); projeleriCiz(); ozetYaz(); baglantiYaz(); uykuDugmeCiz();
   olay('SİSTEM', `EVREN Desktop ${S.surum || ''} hazır`.replace('  ', ' '));
   olay('KASA', S.anahtarVar ? 'DPAPI anahtarı yüklendi' : 'anahtar bulunamadı', S.anahtarVar ? '' : 'uyari');
   olay('PROJE', `${S.projeler.length} proje · ${S.projeler.filter((p) => p.dal).length} git deposu`);
@@ -609,7 +667,7 @@ async function yukle() {
   let tik = 0;
   setInterval(() => { tik++; if (!document.hidden && (!S.calisiyor || tik % 4 === 0)) apiYenile(); }, 15000);
   // Geçmiş: pencere görünürken 15 sn'de bir (çalışıyor/bitti durumu güncel kalsın).
-  setInterval(() => { if (!document.hidden) gecmisYukle(); }, 15000);
+  setInterval(() => { if (!document.hidden && !gecmisAra.trim()) gecmisYukle(); }, 15000);
 }
 async function apiYenile() {
   const btn = $('yenileBtn');
@@ -713,33 +771,46 @@ async function terminalOlustur(o) {
   });
   t.attachCustomKeyEventHandler((e) => {
     if (e.type !== 'keydown') return true;
-    if (e.ctrlKey && e.code === 'KeyC') {
+    if (e.ctrlKey && !e.shiftKey && e.code === 'KeyC') {
       if (t.hasSelection()) {
-        navigator.clipboard.writeText(t.getSelection());
+        panoYaz(t.getSelection());
         return false;
       }
-      return !e.shiftKey;
+      return true;
     }
-    if (e.ctrlKey && e.code === 'KeyV') {
+    // Kesme: terminalde metin silinemez; seçim panoya alınır ve seçim bırakılır.
+    if (e.ctrlKey && !e.shiftKey && e.code === 'KeyX' && t.hasSelection()) {
+      panoYaz(t.getSelection());
+      t.clearSelection();
+      return false;
+    }
+    if (e.ctrlKey && !e.shiftKey && e.code === 'KeyV') {
       e.preventDefault();
-      navigator.clipboard.readText().then((x) => {
-        if (x) t.paste(x);
-      }).catch(() => {});
+      panoOku().then((x) => { if (x) t.paste(x); });
+      return false;
+    }
+    // Ctrl+Shift+C / V: alışılmış terminal kısayolları da aynı yolu kullanır.
+    if (e.ctrlKey && e.shiftKey && e.code === 'KeyC' && t.hasSelection()) {
+      panoYaz(t.getSelection());
+      return false;
+    }
+    if (e.ctrlKey && e.shiftKey && e.code === 'KeyV') {
+      e.preventDefault();
+      panoOku().then((x) => { if (x) t.paste(x); });
       return false;
     }
     if (e.ctrlKey && e.shiftKey && GENEL_TUS.has(e.code)) return false;
     if (e.ctrlKey && e.code === 'Tab') return false;
     return true;
   });
+  // Win+V pano geçmişi doğrudan paste olayı gönderirse: xterm kendi pastesini yaptıysa tekrar etme.
   el.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     if (t.hasSelection()) {
-      navigator.clipboard.writeText(t.getSelection());
+      panoYaz(t.getSelection());
       t.clearSelection();
     } else {
-      navigator.clipboard.readText().then((x) => {
-        if (x) t.paste(x);
-      }).catch(() => {});
+      panoOku().then((x) => { if (x) t.paste(x); });
     }
   });
     // Tampon olcumu ve alternate buffer tespiti
@@ -910,11 +981,6 @@ function sekmeAdi(o) {
 }
 // ---------- sekmeler ----------
 function sekmeleriCiz() {
-  const kisaModel = (id) => {
-    if (!id) return '';
-    if (id.startsWith('claude-')) return id.replace(/^claude-/, '').replace(/-5-5$/, '-5.5');
-    return id.replace(/-flash-next$/, '').replace(/-(flash|next)$/, '').slice(0, 18);
-  };
   $('sekmeler').innerHTML =
     `<button class="tab ana${S.aktif == null ? ' aktif' : ''}" data-id="ana" role="tab" title="Yeni oturum ekranı (Ctrl+Shift+T)">${ikon('term')}<span>ana</span></button>` +
     S.oturumlar.map((o, i) => `
@@ -922,8 +988,6 @@ function sekmeleriCiz() {
         <span class="led${o.canli ? ' canli' : o.kod ? ' kotu' : ''}"></span>
         <span class="tab-ad">${esc(sekmeAdi(o))}</span>
         ${o.orkestrator ? `<span class="tab-ork mono" title="Şef · kod yazma ${o.kodYazma ? 'açık' : 'kapalı'}">ŞEF</span>` : ''}
-        <span class="tab-m">${esc(kisaModel(o.model))}</span>
-        <span class="tab-no">${i + 1}</span>
         <span class="tab-x" data-kapat="${o.id}" title="Sekmeyi kapat (Ctrl+Shift+W)">×</span>
       </button>`).join('');
   const a = $('sekmeler').querySelector('.tab.aktif');
@@ -1157,8 +1221,19 @@ async function aiSekmeAdi(o, metin) {
   o._aiAd = true;
   const r = await window.evren.baslikUret(metin).catch(() => null);
   if (!r || !r.ok || !r.ad || o._ozelAd || !o.canli) return;
-  if (o.devam && o.yol) await oturumAdlandir(o.devam, o.yol, r.ad, { sessiz: true });
-  else { o.ad = r.ad; sekmeleriCiz(); }
+  // Aynı ad iki oturumda görünmesin: "ad 2", "ad 3"…
+  const adlar = new Set(
+    [...S.gecmis.filter((g) => g.id !== o.devam).map((g) => g.baslik), ...S.oturumlar.filter((x) => x !== o).map((x) => x.ad)]
+      .filter(Boolean).map((x) => x.toLocaleLowerCase('tr'))
+  );
+  let ad = r.ad;
+  if (adlar.has(ad.toLocaleLowerCase('tr'))) {
+    let n = 2;
+    while (adlar.has((ad + ' ' + n).toLocaleLowerCase('tr'))) n++;
+    ad = ad + ' ' + n;
+  }
+  if (o.devam && o.yol) await oturumAdlandir(o.devam, o.yol, ad, { sessiz: true });
+  else { o.ad = ad; sekmeleriCiz(); }
 }
 // Şef oturumunun jsonl kimliğini öğrenir; kenar panelde kalıcı olarak işaretler.
 function sefKimligiIzle(o) {
@@ -1231,6 +1306,7 @@ function odakToggle(zorla) {
 // ---------- konuşma / sohbet geçmişi paneli ----------
 let sohbetYukleniyor = false;
 let ciktiYukleniyor = false;
+let sohbetSonAnahtar = ''; // en son çizilen sohbet: 'g:<gecmis id>' | 'o:<pid>'
 function sohbetToggle(zorla) {
   const panel = $('sohbetPanel');
   if (!panel) return;
@@ -1249,15 +1325,20 @@ async function sohbetYukle(zorla = false) {
   if (seciliOturumGecmisi) {
     if (sohbetYukleniyor && !zorla) return;
     sohbetYukleniyor = true;
+    const anahtar = 'g:' + seciliOturumGecmisi.id;
     try {
       const res = await window.evren.sohbetOturumKaydi({
         dizin: seciliOturumGecmisi.projeYol,
         id: seciliOturumGecmisi.id,
       });
+      // Dosya değişmedi ve aynı sohbet zaten çiziliyorsa okuma/çizim atlanır.
+      if (res && res.degisti === false && anahtar === sohbetSonAnahtar) return;
       const girisler = (res && res.girisler) || [];
       if (seciliOturumGecmisi) seciliOturumGecmisi.girisler = girisler;
       sohbetCiz(girisler);
+      sohbetSonAnahtar = anahtar;
     } catch (e) {
+      sohbetSonAnahtar = '';
       console.error('Sohbet kaydı okunamadı:', e);
     } finally {
       sohbetYukleniyor = false;
@@ -1266,18 +1347,24 @@ async function sohbetYukle(zorla = false) {
   }
   const o = aktifOturum();
   if (!o || !o.pid) {
+    sohbetSonAnahtar = '';
     $('sohbetListe').innerHTML = '<div class="sohbet-bos">Aktif bir oturum yok</div>';
     $('sohbetSayac').textContent = '0';
     return;
   }
   if (sohbetYukleniyor && !zorla) return;
   sohbetYukleniyor = true;
+  const anahtar = 'o:' + o.pid;
   try {
     const res = await window.evren.sohbetGecmisi(o.pid);
+    // Dosya değişmedi ve aynı sohbet zaten çiziliyorsa okuma/çizim atlanır.
+    if (res && res.degisti === false && anahtar === sohbetSonAnahtar) return;
     const girisler = (res && res.girisler) || [];
     o.sohbetGirisler = girisler;
     sohbetCiz(girisler);
+    sohbetSonAnahtar = anahtar;
   } catch (e) {
+    sohbetSonAnahtar = '';
     console.error('Sohbet geçmişi okunamadı:', e);
   } finally {
     sohbetYukleniyor = false;
@@ -1286,6 +1373,7 @@ async function sohbetYukle(zorla = false) {
 function sohbetCiz(girisler) {
   const filtre = S.sohbetFiltre || 'hepsi';
   if (filtre === 'cikti') { ciktiCiz(); return; }
+  sohbetBasligiGuncelle();
   const filtrelenmis = (girisler || []).filter((g) => {
     if (filtre === 'mesajlar') return g.rol === 'kullanici' || g.rol === 'asistan';
     if (filtre === 'arac') return g.rol === 'arac';
@@ -1396,7 +1484,17 @@ function ciktiIslemEtiketi(islem) {
   if (islem === 'degisti') return 'değişti';
   return 'üretildi';
 }
+// Panel başlığı içeriğe göre konuşur: dosyalar listelenirken "Çıktılar", sohbette "Konuşma".
+function sohbetBasligiGuncelle() {
+  const panel = $('sohbetPanel');
+  if (!panel) return;
+  const t = panel.querySelector('.sohbet-t');
+  if (t) t.textContent = S.sohbetFiltre === 'cikti' ? 'Çıktılar' : 'Konuşma';
+  const liste = $('sohbetListe');
+  if (liste) liste.classList.toggle('cikti-liste', S.sohbetFiltre === 'cikti');
+}
 function ciktiCiz() {
+  sohbetBasligiGuncelle();
   const liste = $('sohbetListe');
   if (!liste) return;
   const veri = S.ciktilar;
@@ -2064,19 +2162,15 @@ function yeniOturumModalGuncelle() {
   }
   if (!q && eslesen.length <= MODAL_PROJE_GORUNEN) modalProjeTumu = false;
 
-  // Model kartları: ad tam satır, not, bağlam rozeti ve göreli bağlam çubuğu.
-  const enBuyuk = Math.max(...S.modeller.map((m) => m.baglamSayisi || 0), 1);
+  // Model kartları: ad, tek satır not ve bağlam büyüklüğü. Çubuk yerine sayı: daha sakin,
+  // daha az yer kaplar; modeller arasındaki tek nesnel fark zaten bağlam penceresi.
   mIzgara.innerHTML = S.modeller.map((m) => `
     <button class="oturum-secim-kart model-kart${m.id === modalSecilenModel ? ' aktif' : ''}" type="button" data-model="${esc(m.id)}" aria-pressed="${m.id === modalSecilenModel}">
       <div class="oturum-secim-kart-ust">
         <span class="oturum-secim-kart-ad" title="${esc(m.ad || m.id)}">${esc(m.ad || m.id)}</span>
         <span class="oturum-kart-secim" aria-hidden="true"></span>
       </div>
-      <span class="oturum-secim-kart-alt">${esc(m.not || '')}</span>
-      <div class="model-alt">
-        <span class="model-bar" aria-hidden="true"><i style="width:${Math.max(8, Math.round(((m.baglamSayisi || 0) / enBuyuk) * 100))}%"></i></span>
-        <span class="tag mono" title="${esc(kisaBaglam(m.baglamSayisi))} bağlam">${kisaBaglam(m.baglamSayisi)}</span>
-      </div>
+      <span class="oturum-secim-kart-alt">${esc(m.not || '')}${m.baglamSayisi ? ` · ${esc(kisaBaglam(m.baglamSayisi))} bağlam` : ''}</span>
     </button>
   `).join('');
 
@@ -2089,17 +2183,18 @@ function yeniOturumModalGuncelle() {
     { id: 'max', ad: 'Azami', not: 'En derin düşünme, en yavaş' },
   ];
   if (!eforlar.some((e) => e.id === modalEfor)) modalEfor = 'medium';
+  const eObj = eforlar.find((e) => e.id === modalEfor);
   if ($('modalEforSec')) {
     $('modalEforSec').innerHTML = eforlar.map((e) => `
-      <button class="efor-sec${e.id === modalEfor ? ' aktif' : ''}" type="button" role="radio" aria-checked="${e.id === modalEfor}" data-efor="${esc(e.id)}" title="${esc(e.not || '')}">
+      <button class="efor-sec${e.id === modalEfor ? ' aktif' : ''}" type="button" role="radio" aria-checked="${e.id === modalEfor}" aria-label="${esc(e.ad || e.id)} · ${esc(e.not || '')}" data-efor="${esc(e.id)}" title="${esc(e.not || '')}">
         <span class="efor-ad">${esc(e.ad || e.id)}</span>
-        <span class="efor-alt">${esc(e.not || '')}</span>
       </button>`).join('');
   }
+  // Açıklama tek satırda: beş kartın altında değişen ipucu, kartların boyunu eşit tutar.
+  if ($('modalEforIpucu')) $('modalEforIpucu').textContent = eObj ? (eObj.not || '') : '';
   const mObj = S.modeller.find((m) => m.id === modalSecilenModel);
   const pAd = modalSecimEtiket();
   const mAd = mObj ? (mObj.ad || mObj.id) : 'Model seçilmedi';
-  const eObj = eforlar.find((e) => e.id === modalEfor);
   if ($('modalSeciliBilgi')) {
     const prjCip = modalSecim.tip === 'proje' || modalSecim.tip === 'klasor' ? ikon('folder') : ikon('evren');
     $('modalSeciliBilgi').innerHTML = `<span class="oturum-cip">${prjCip}${esc(pAd)}</span><span class="oturum-cip-ok" aria-hidden="true">›</span><span class="oturum-cip">${ikon('cpu')}${esc(mAd)}</span>` +
@@ -2292,17 +2387,40 @@ $('anahtarForm').addEventListener('submit', async (e) => {
   ozetYaz(); apiYenile();
 });
 $('odakIpucu').addEventListener('click', () => odakToggle(false));
+if (window.evren.uykuDinle) window.evren.uykuDinle((acik) => { S.uykuAktif = !!acik; uykuDugmeCiz(); });
+if (window.evren.hedefDinle) window.evren.hedefDinle((id, sayi) => {
+  const o = S.oturumlar.find((x) => x.id === Number(id));
+  olay('SİSTEM', `hedef durakladı · otomatik devam gönderildi (${sayi}/3)${o ? ' · ' + (o.ad || o.proje) : ''}`, 'iyi');
+});
+
+if ($('uykuBtn')) $('uykuBtn').addEventListener('click', async () => {
+  S.uyku = await window.evren.uykuEngelle(!S.uyku).catch(() => !S.uyku);
+  uykuDugmeCiz();
+});
 $('yeniSekme').addEventListener('click', () => sekmeSec(null));
 if ($('gecmisYenile')) $('gecmisYenile').addEventListener('click', gecmisYukle);
 if ($('gecmisAra')) {
-  $('gecmisAra').addEventListener('input', (e) => { gecmisAra = e.target.value; gecmisCiz(); });
+  $('gecmisAra').addEventListener('input', (e) => {
+    gecmisAra = e.target.value;
+    gecmisAraIstek++; // uçuştaki eski yanıt yeni sorguya karışmasın
+    gecmisCiz(); // başlıkta anında süz
+    clearTimeout(gecmisAraZaman);
+    gecmisAraZaman = setTimeout(gecmisIcerikAra, 260);
+  });
   $('gecmisAra').addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     e.stopPropagation();
-    e.target.value = ''; gecmisAra = ''; gecmisCiz(); e.target.blur();
+    clearTimeout(gecmisAraZaman);
+    e.target.value = ''; gecmisAra = ''; gecmisIcerikAra(); e.target.blur();
   });
 }
 $('gecmisList').addEventListener('click', (e) => {
+  if (e.target.closest('[data-gecmis-daha]')) {
+    e.stopPropagation();
+    gecmisIdleTumu = !gecmisIdleTumu;
+    gecmisCiz();
+    return;
+  }
   const adBtn = e.target.closest('[data-adlandir]');
   if (adBtn) {
     e.stopPropagation();
@@ -2547,7 +2665,7 @@ if ($('sohbetPanel')) {
       const kart = k.closest('.sohbet-kart');
       const icerik = kart ? kart.querySelector('.sohbet-icerik').textContent : '';
       if (icerik) {
-        navigator.clipboard.writeText(icerik);
+        panoYaz(icerik);
         const eski = k.textContent;
         k.textContent = 'kopyalandı';
         setTimeout(() => { k.textContent = eski; }, 1200);

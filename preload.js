@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('evren', {
   projeSil: (yol) => ipcRenderer.invoke('proje-sil', yol), // yalnız proje listesinden düşürür
   baslat: (secim) => ipcRenderer.invoke('baslat', secim),
   gecmis: (dizin) => ipcRenderer.invoke('gecmis', dizin),
+  gecmisAra: (turler, sorgu) => ipcRenderer.invoke('gecmis-ara', turler, sorgu), // sohbet içeriği araması
   gecmisBlok: () => ipcRenderer.invoke('gecmis-blok'), // ölçüm: ana süreçte geçmiş taraması için harcanan süre
   sohbetGecmisi: (id) => ipcRenderer.invoke('sohbet-gecmisi', id),
   oturumBaglam: (id) => ipcRenderer.invoke('oturum-baglam', id), // gerçek bağlam kullanımı + tur sayacı
@@ -26,6 +27,11 @@ contextBridge.exposeInMainWorld('evren', {
   baslikUret: (metin) => ipcRenderer.invoke('baslik-uret', metin), // ilk mesajdan kısa başlık
   projeOzet: (dizin) => ipcRenderer.invoke('proje-ozet', dizin),
   disari: (url) => ipcRenderer.invoke('disari', url),
+  panoOku: () => ipcRenderer.invoke('pano-oku'), // pano metni (ana süreç; Win+V geçmişi dahil)
+  panoYaz: (metin) => ipcRenderer.invoke('pano-yaz', metin),
+  uykuEngelle: (deger) => ipcRenderer.invoke('uyku-engelle', deger), // çalışan oturum varken uykuyu engelle
+  uykuDinle: (f) => ipcRenderer.on('uyku:durum', (_e, acik) => f(acik)), // blok gerçekten devrede mi
+  hedefDinle: (f) => ipcRenderer.on('hedef:devam', (_e, id, sayi) => f(id, sayi)), // hedef duraklayınca otomatik devam
   veriDinle: (f) => ipcRenderer.on('pty:veri', (_e, id, veri) => f(id, veri)),
   cikisDinle: (f) => ipcRenderer.on('pty:cikis', (_e, id, bilgi) => f(id, bilgi)),
   remoteBilgi: () => ipcRenderer.invoke('remote:bilgi'),
