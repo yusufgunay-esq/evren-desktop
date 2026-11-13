@@ -70,3 +70,17 @@ Yapıldı: sekmeye çift tıklama ve geçmiş kartındaki kalem, adlandırma mod
 Doğrulama: `npm test` 23/23 yeşil (test/oturum-ad.test.js: 4 test); `node --check` app/main/gecmis/preload temiz; ekran kanıtı `_ekran/adlandir-modal.png`.
 Sıradaki: canlı oturumda çift tık → ad → telefon listesinde aynı adı bir kez gözle doğrula.
 Açık: `app.js`/`styles.css` içindeki eski yerel Çıktılar rafinasyonu yine commit dışında bırakıldı.
+
+## 2026-11-13 · panel elden geçirme, içerik araması, uyku engeli, hedef otomatik devam
+Yapıldı: yeniden adlandırma sol listeye anında yansıyor (kalıcı başlık önbelleği + işçi temizliği); pano Ctrl+C/X/V + Win+V; sekmeler sadeleşti, ince kaydırma çubuğu geri; çalışan/sabitlenen kart durumu ve iğne çakışması düzeldi; oturum modalı ve durum çubuğu yenilendi; arama artık sohbet içeriğine de bakıyor (son ~350 KB, kart altı eşleşme); uyku engeli ayarı (çalışan oturum varken); hedef duraklamasında otomatik "devam"; eşzamanlı açılışta oturum kimliği çakışması giderildi (ad karışması).
+Doğrulama: npm test 33/33; node --check temiz; ekran: _ekran/_arama6.png, _uyku.png, _igne.png, _duzeltme-son.png; uyku bloğu canlı oturumda [uyku] true true; 2. denetim bulguları düzeltildi (zamanlayıcı iptali, telefon devralma, boş dal, ölü paste dinleyicisi, arama jetonu, exe kaçışı, aria).
+Sıradaki: 3. denetim turunu koştur; temizse commit + push.
+Açık: denetim yeniden koşumu ve commit izni Yusuf'ta; telefon uygulaması _claude/yan-gorevler.md sırasında.
+Commit: — (bu parti henüz commit edilmedi)
+
+## 2026-11-13 · Sekme adlandırma turu
+Yapıldı: ad üretimi 2-5 kelime/48 karakter, dil zorunlu, sarmalayan tırnak atılır (içteki kesme korunur), "devam/tamam" gibi mesajlar ad olmaz ve sekme adı ilk anlamlı mesajdan gelir, tekrar eden adlara "2/3" eki; eşzamanlı açılışta kimlik çakışması (yanlış ad) sahiplik filtresiyle giderildi.
+Doğrulama: npm test 36/36; node --check temiz; uygulama açılıyor. Yeni testler: test/baslik.test.js, test/oturum-dosya.test.js.
+Sıradaki: sol panel sadeleştirme + kartta bitti/soru durumu.
+Açık: dışarıdan (Claude Desktop/CLI) gelen otomatik özetin adı ezmesi ölçülmedi; şüphe varsa ayrı iş.
+Commit: — (parti hâlâ commit edilmedi)

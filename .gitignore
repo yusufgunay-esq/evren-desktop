@@ -1,3 +1,5 @@
 node_modules/
 _ekran/
 _demo/
+_ekran_*.png
+.claude/

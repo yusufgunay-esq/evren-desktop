@@ -4,11 +4,12 @@
  * If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/.
  * Copyright (c) 2026 Yusuf Günay. */
 // EVREN Desktop — ana süreç: IPC, çoklu pty (ConPTY), EVREN API ölçümü. Model/ayar/kasa mantığı motor.js'te.
-const { app, BrowserWindow, ipcMain, dialog, shell, screen, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, screen, nativeImage, clipboard, powerSaveBlocker } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 const { Worker } = require('node:worker_threads');
+const oturumKarar = require('./oturum-karar');
 const pty = require('@homebridge/node-pty-prebuilt-multiarch');
 const motor = require('./motor');
 const gecmis = require('./gecmis');
@@ -190,6 +191,7 @@ async function yerelDurum() {
     projeler: projeListesi(),
     sonKlasorler: sonKlasorListesi(),
     serbestDizin: SERBEST_DIZIN,
+    uyku: ham.uykuEngelle !== false,
   };
 }
 
@@ -231,16 +233,12 @@ async function apiDurum() {
 }
 
 
-// Orkestratörün çağıracağı EVREN köprüsü: en yeni kurulu plugin sürümünden bulunur.
+// Orkestratörün çağıracağı köprü betiği: ortam değişkeni, uygulama klasörü ya da PATH.
+// Kişisel katman bu yolu kendi yamasıyla değiştirir; public depo bilmez.
 function evrenAjanYolu() {
-  const kok = path.join(os.homedir(), '.claude', 'plugins', 'cache', 'gunay-studio', 'gunay-studio');
-  try {
-    const surumler = fs.readdirSync(kok)
-      .filter((d) => fs.existsSync(path.join(kok, d, 'araclar', 'evren-ajan.mjs')))
-      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
-    if (surumler.length) return path.join(kok, surumler[0], 'araclar', 'evren-ajan.mjs');
-  } catch {}
-  return 'evren-ajan.mjs';
+  if (process.env.EVREN_AJAN) return process.env.EVREN_AJAN;
+  const yerel = path.join(__dirname, 'evren-ajan.mjs');
+  return fs.existsSync(yerel) ? yerel : 'evren-ajan.mjs';
 }
 
 // Orkestratör brifi: oturumun sistem istemine eklenir. Rolü ve bağlam disiplinini tanımlar;
@@ -379,6 +377,7 @@ async function oturumBaslat({ modelId, dizin, ekDizinler, projeAd, cols, rows, d
   }
   const id = ++sonKimlik;
   kabuklar.set(id, bu);
+  uykuGuncelle();
   const bilgi = {
     id,
     modelId: model.id || '',
@@ -398,7 +397,10 @@ async function oturumBaslat({ modelId, dizin, ekDizinler, projeAd, cols, rows, d
     let deneme = 0;
     const ara = setInterval(() => {
       if (!kabuklar.has(id) || deneme++ > 120) { clearInterval(ara); return; }
-      const dosya = sohbet.oturumDosyasiBul({ dizin: hedefDizin, baslangicMs: bilgi.baslangic });
+      // Aynı projede eşzamanlı açılan oturumlar aynı jsonl'i sahiplenmesin: adlar karışmasın.
+      const sahipli = new Set();
+      for (const [baskaId, baska] of oturumBilgi) if (baskaId !== id && baska.devam) sahipli.add(baska.devam);
+      const dosya = sohbet.oturumDosyasiBul({ dizin: hedefDizin, baslangicMs: bilgi.baslangic, haric: sahipli });
       if (!dosya) return;
       bilgi.devam = path.basename(dosya, '.jsonl');
       clearInterval(ara);
@@ -406,12 +408,13 @@ async function oturumBaslat({ modelId, dizin, ekDizinler, projeAd, cols, rows, d
     }, 1500);
     if (ara.unref) ara.unref();
   }
-  bu.onData((veri) => { bilgi.sonCikti = Date.now(); ptyTamponla(id, veri); });
+  bu.onData((veri) => { bilgi.sonCikti = Date.now(); ptyTamponla(id, veri); hedefDuraklamaTara(bilgi, veri); });
   bu.onExit(({ exitCode }) => {
     ptyBosalt(id); // son çıktı, çıkış bildiriminden ÖNCE geçsin (sıra korunur)
     ptyTampon.delete(id);
     if (pencere && !pencere.isDestroyed()) pencere.webContents.send('pty:cikis', id, { kod: exitCode });
     kabuklar.delete(id);
+    uykuGuncelle();
     if (remoteSunucu) remoteSunucu.oturumKapandi(id, exitCode);
   });
 
@@ -484,15 +487,61 @@ function agacOldur(pid) {
 function kabukKapat(id) {
   const k = kabuklar.get(id);
   if (!k) return;
+  const bilgiK = oturumBilgi.get(id);
+  if (bilgiK && bilgiK.hedefSayac) bilgiK.hedefSayac.iptalEt();
   agacOldur(k.pid);
   try { k.kill(); } catch {}
   ptyBosalt(id);
   ptyTampon.delete(id);
   kabuklar.delete(id);
   baglamIzleyiciler.delete(id);
+  uykuGuncelle();
   if (remoteSunucu) remoteSunucu.oturumKapandi(id, 0);
 }
 function tumunuKapat() { for (const id of [...kabuklar.keys()]) kabukKapat(id); }
+
+// Çalışan oturum varken bilgisayar uykuya geçmesin (ayar: uykuEngelle, varsayılan açık).
+// prevent-app-suspension: ekran kapanabilir, sistem uyumaz; iş bitince blok kalkar.
+let uykuBlok = null;
+function uykuGuncelle() {
+  try {
+    const acik = ayarOku().uykuEngelle !== false && kabuklar.size > 0;
+    if (acik && uykuBlok == null) uykuBlok = powerSaveBlocker.start('prevent-app-suspension');
+    else if (!acik && uykuBlok != null) { powerSaveBlocker.stop(uykuBlok); uykuBlok = null; }
+    if (pencere && !pencere.isDestroyed()) pencere.webContents.send('uyku:durum', acik);
+  } catch {}
+}
+
+// Hedef duraklaması: CLI "send a message to continue" dediğinde kullanıcı yazmadan sürsün.
+// Oturum başına en çok 3 otomatik devam, aralarında en az 90 sn; kullanıcı yazınca sayaç sıfırlanır.
+const HEDEF_SINIR = { enCok: 3, aralik: 90 * 1000 };
+const HEDEF_KUYRUK = 8192;
+// Kullanıcı (panel ya da telefon) yazınca bekleyen otomatik devam iptal edilir ve bütçe tazelenir.
+function hedefDevral(bilgi) {
+  if (!bilgi) return;
+  if (bilgi.hedefSayac) bilgi.hedefSayac.iptalEt();
+  bilgi.hedefDevam = { sayi: 0, son: 0 };
+}
+function hedefDuraklamaTara(bilgi, veri) {
+  // Ham kuyruk ucuz ön eleme için tutulur; pahalı ANSI temizliği yalnız "Goal paused" görülünce koşar.
+  const ham = ((bilgi.hedefKuyruk || '') + veri).slice(-HEDEF_KUYRUK);
+  bilgi.hedefKuyruk = ham;
+  if (ham.indexOf('Goal paused') < 0) return;
+  if (!oturumKarar.hedefDurakladi(oturumKarar.ansiTemizle(ham))) return;
+  const h = bilgi.hedefDevam || (bilgi.hedefDevam = { sayi: 0, son: 0 });
+  const simdi = Date.now();
+  if (!oturumKarar.hedefDevamIzni(h, simdi, HEDEF_SINIR)) return;
+  h.sayi++;
+  h.son = simdi;
+  bilgi.hedefKuyruk = ''; // aynı satır ikinci kez tetiklemesin
+  if (!bilgi.hedefSayac) bilgi.hedefSayac = oturumKarar.hedefDevamKur();
+  bilgi.hedefSayac.kur(() => {
+    const k = kabuklar.get(bilgi.id);
+    if (!k) return;
+    try { k.write('devam' + String.fromCharCode(13)); } catch { return; }
+    if (pencere && !pencere.isDestroyed()) pencere.webContents.send('hedef:devam', bilgi.id, h.sayi);
+  });
+}
 
 // Bosta kalan oturumlar kendiliginden kapanir: bitmis ajan arkada MCP yigini tutmasin.
 // Karari zamanlayici tek basina vermez; ajanin kendi kaydina (jsonl) ve surec agacina bakilir:
@@ -504,8 +553,12 @@ function tumunuKapat() { for (const id of [...kabuklar.keys()]) kabukKapat(id); 
 // 0 = kapali) esigini gecen ve jsonl'i 15 dk'dir dokunulmamis oturum, durumu 'bitti'
 // olmasa da aday olur. ~/.evren/korunan-oturumlar.json'daki uuid'ler asla kapatilmaz.
 // Gecmis diskte durur, sekme ayni oturumla --resume edilebilir.
-const MCP_COCUK = new Set(['node', 'python', 'pythonw', 'cmd', 'conhost',
-  'duckduckgo-mcp-server', 'codebase-memory-mcp', 'chrome-devtools-mcp', 'uagents']);
+const MCP_COCUK = new Set(['node', 'python', 'pythonw', 'cmd', 'conhost']);
+// Virgülle ayrılmış ek adlar: kişisel/özel MCP sunucuları boşta kapatma kararında tanınsın.
+for (const ad of String(process.env.EVREN_MCP_COCUK || '').split(',')) {
+  const a = ad.trim().toLowerCase().replace(/\.exe$/i, '');
+  if (a) MCP_COCUK.add(a);
+}
 
 const KORUNAN_DOSYA = path.join(os.homedir(), '.evren', 'korunan-oturumlar.json');
 // Korunan oturum listesi: uuid dizisi ya da uuid -> kayit nesnesi (biçim esnek okunur).
@@ -576,6 +629,7 @@ const bostaKontrol = setInterval(() => {
   const zorlaSinir = Number.isFinite(zorlaDk) && zorlaDk > 0 ? zorlaDk * 60000 : 0;
   const simdi = Date.now();
   const adaylar = [];
+  const zorlaKume = new Set();
   for (const [id, bilgi] of oturumBilgi) {
     if (!kabuklar.has(id)) continue;
     const son = Math.max(bilgi.sonCikti || 0, bilgi.sonGirdi || 0, bilgi.baslangic || 0);
@@ -601,6 +655,7 @@ const bostaKontrol = setInterval(() => {
     }
     if (durum !== 'bitti' && !zorlaAday) continue;  // calisiyor/bilinmiyor: yalniz uzun sessizlikte kapat
     adaylar.push(id);
+    if (zorlaAday) zorlaKume.add(id); // zorla eşiğini geçen oturumda süreç ağacı bahane değil
   }
   if (!adaylar.length) return;
   torunHaritasi((ebeveyn) => {
@@ -608,7 +663,7 @@ const bostaKontrol = setInterval(() => {
     for (const id of adaylar) {
       const k = kabuklar.get(id);
       if (!k || !kabuklar.has(id)) continue;
-      if (agactaCalismaVar(ebeveyn, k.pid)) continue;
+      if (!zorlaKume.has(id) && agactaCalismaVar(ebeveyn, k.pid)) continue;
       kabukKapat(id);
       if (pencere && !pencere.isDestroyed()) pencere.webContents.send('pty:cikis', id, { kod: 0, bosta: true });
     }
@@ -729,7 +784,7 @@ function remoteSunucuBaslat() {
     onPtyYaz: (id, veri) => {
       const k = kabuklar.get(id);
       const b = oturumBilgi.get(id);
-      if (b) b.sonGirdi = Date.now();
+      if (b) { b.sonGirdi = Date.now(); hedefDevral(b); } // telefondan yazan da devralır
       if (k) { try { k.write(veri); } catch {} }
     },
     onYeniOturum: (secim) => oturumBaslat(secim),
@@ -834,6 +889,12 @@ ipcMain.handle('durum', async () => {
   catch (e) { return { anahtarVar: false, modeller: [], projeler: [], hata: e.message }; }
 });
 ipcMain.handle('anahtar-kaydet', async (_e, deger) => anahtarKaydet(deger));
+// Uyku engeli ayarı: açıksa çalışan oturum varken sistem uyumaz.
+ipcMain.handle('uyku-engelle', async (_e, deger) => {
+  ayarYaz({ uykuEngelle: !!deger });
+  uykuGuncelle();
+  return ayarOku().uykuEngelle !== false;
+});
 ipcMain.handle('api', async () => {
   try { return await apiDurum(); }
   catch (e) { return { anahtarVar: true, ok: false, hata: e.message }; }
@@ -905,7 +966,7 @@ function gecmisIsciAl() {
     const coz = gecmisBekleyen.get(m.id);
     if (!coz) return;
     gecmisBekleyen.delete(m.id);
-    coz(m.hata ? [] : (Array.isArray(m.sonuc) ? m.sonuc : []));
+    coz(m.hata ? null : m.sonuc); // dizi (tarama) ya da nesne (içerik araması)
   });
   gecmisIsci.on('error', (e) => {
     console.error('[gecmis-isci] ', e && e.message);
@@ -943,6 +1004,19 @@ function gecmisOku(dizin) {
   });
 }
 ipcMain.handle('gecmis', async (_e, dizin) => (await gecmisOku(dizin)) || []);
+
+// İçerik arama: liste renderer'da; dosya kuyrukları iş parçacığında taranır, ana süreç beklemez.
+function gecmisAraOku(turler, sorgu) {
+  return new Promise((coz) => {
+    let isci;
+    try { isci = gecmisIsciAl(); } catch { try { coz(gecmis.icerikAraListe(turler, sorgu)); } catch { coz({}); } return; }
+    const id = ++gecmisSayac;
+    gecmisBekleyen.set(id, (sonuc) => coz(sonuc || {}));
+    try { isci.postMessage({ id, tip: 'ara', turler, sorgu }); }
+    catch { gecmisBekleyen.delete(id); coz({}); }
+  });
+}
+ipcMain.handle('gecmis-ara', async (_e, turler, sorgu) => (await gecmisAraOku(turler, sorgu)) || {});
 
 
 // Claude/EVREN oturumunu çatalleyip temizleme (Item 4d, 4e)
@@ -995,28 +1069,28 @@ ipcMain.handle('oturum-catalla', async (_e, { kaynakId, dizin, modelId }) => {
 ipcMain.handle('sohbet-oturum-kaydi', async (_e, { dizin, id }) => {
   try {
     const dosya = sohbet.oturumDosyasiBul({ dizin, devam: id });
-    if (!dosya || !fs.existsSync(dosya)) return { girisler: [] };
-    const { girisler } = sohbet.sonGirisler(dosya, 50);
-    return { girisler: girisler || [] };
+    if (!dosya || !fs.existsSync(dosya)) return { girisler: [], degisti: true };
+    const { girisler, degisti } = sohbet.sonGirislerOnbellekli(dosya, 50);
+    return { girisler: girisler || [], degisti };
   } catch {
-    return { girisler: [] };
+    return { girisler: [], degisti: true };
   }
 });
 ipcMain.handle('gecmis-blok', () => ({ maks: gecmisBlok.maks, ort: gecmisBlok.sayi ? gecmisBlok.toplam / gecmisBlok.sayi : 0, sayi: gecmisBlok.sayi }));
 ipcMain.handle('sohbet-gecmisi', async (_e, id) => {
   const bilgi = oturumBilgi.get(id);
-  if (!bilgi) return { girisler: [] };
+  if (!bilgi) return { girisler: [], degisti: true };
   const dosya = sohbet.oturumDosyasiBul({
     dizin: bilgi.dizin,
     devam: bilgi.devam,
     baslangicMs: bilgi.baslangic,
   });
-  if (!dosya) return { girisler: [] };
+  if (!dosya) return { girisler: [], degisti: true };
   try {
-    const sonuc = sohbet.sonGirisler(dosya, 200);
-    return { girisler: sonuc.girisler || [] };
+    const sonuc = sohbet.sonGirislerOnbellekli(dosya, 200);
+    return { girisler: sonuc.girisler || [], degisti: sonuc.degisti };
   } catch {
-    return { girisler: [] };
+    return { girisler: [], degisti: true };
   }
 });
 // Durum çubuğu: aktif oturumun gerçek bağlam kullanımı (son yanıtın token'ları / model penceresi)
@@ -1116,7 +1190,7 @@ ipcMain.handle('dosya-klasor', (_e, yol) => {
 ipcMain.handle('yaz', (_e, id, veri) => {
   const k = kabuklar.get(id);
   const b = oturumBilgi.get(id);
-  if (b) b.sonGirdi = Date.now();
+  if (b) { b.sonGirdi = Date.now(); hedefDevral(b); } // kullanıcı devraldı
   if (k) { try { k.write(veri); } catch {} }
 });
 ipcMain.handle('boyut', (_e, id, { cols, rows }) => {
@@ -1137,7 +1211,7 @@ ipcMain.handle('oturum-kimlik', (_e, id) => {
       const dosya = sohbet.dosyaYolu(b.dizin, b.devam);
       // Claude Desktop'ın verdiği özel ad (custom-title.json) varsa o tercih edilir; yoksa ilk kullanıcı mesajı.
       baslik = gecmis.ozelBaslikOku(path.join(path.dirname(dosya), b.devam)) || '';
-      if (!baslik && fs.existsSync(dosya)) baslik = (gecmis.baslikOku(dosya, true) || {}).baslik || '';
+      if (!baslik && fs.existsSync(dosya)) baslik = (gecmis.baslikOku(dosya, true, true) || {}).baslik || '';
       if (baslik) sekmeAdiOnbellek.set(b.devam, baslik);
     } catch {}
   }
@@ -1166,6 +1240,7 @@ ipcMain.handle('oturum-adlandir', (_e, { dizin, devam, ad } = {}) => {
 ipcMain.handle('baslik-uret', async (_e, metin) => {
   const kaynak = String(metin || '').replace(/\s+/g, ' ').trim().slice(0, 1600);
   if (kaynak.length < 8) return { ok: false };
+  if (oturumKarar.baslikAnlamsiz(kaynak)) return { ok: false, anlamsiz: true }; // "devam" gibi mesajlar ad olmaz
   try {
     const k = await anahtar();
     if (!k) return { ok: false };
@@ -1175,7 +1250,7 @@ ipcMain.handle('baslik-uret', async (_e, metin) => {
       thinking: { type: 'disabled' },
       messages: [{
         role: 'user',
-        content: 'Aşağıdaki ilk mesaj için 2-6 kelimelik, mesajın dilinde bir oturum başlığı yaz. Yalnız başlığı yaz; tırnak, nokta, açıklama ve etiket kullanma.\n\nMesaj: ' + kaynak,
+        content: ['Bir yazılım oturumu için kısa başlık üret.', 'Kurallar:', '- Mesajın dilinde yaz (Türkçe mesaj → Türkçe başlık).', '- 2-5 kelime, en çok 48 karakter.', '- Mesajın kendi sözcüklerini kullan; çeviri yapma.', '- Tırnak, nokta, emoji, açıklama ve etiket kullanma.', '', 'Mesaj: ' + kaynak].join(String.fromCharCode(10)),
       }],
     };
     const r = await fetch(`${EVREN_BASE_URL}/v1/messages`, {
@@ -1187,13 +1262,9 @@ ipcMain.handle('baslik-uret', async (_e, metin) => {
     if (!r.ok) return { ok: false };
     const j = await r.json().catch(() => null);
     const parca = j && Array.isArray(j.content) ? j.content.find((c) => c && c.type === 'text' && c.text) : null;
-    const ad = String((parca && parca.text) || '')
-      .replace(/["'“”‘’`]/g, '')
-      .replace(/^[\s\-–—:•]+|[\s.…]+$/g, '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 60);
-    return ad ? { ok: true, ad } : { ok: false };
+    const ad = oturumKarar.baslikDuzelt((parca && parca.text) || '');
+    if (!ad || oturumKarar.baslikAnlamsiz(ad)) return { ok: false };
+    return { ok: true, ad };
   } catch { return { ok: false }; }
 });
 ipcMain.handle('model-guncelle', (_e, { id, modelId }) => {
@@ -1206,6 +1277,10 @@ ipcMain.handle('model-guncelle', (_e, { id, modelId }) => {
   }
 });
 ipcMain.handle('disari', (_e, url) => { if (/^https:\/\//.test(url)) shell.openExternal(url); });
+// Pano: renderer'ın navigator.clipboard izni bazı kurulumlarda kapalı; ana süreçteki clipboard
+// her zaman çalışır. Win+V pano geçmişinden gelen metin de bu yoldan terminale ulaşır.
+ipcMain.handle('pano-oku', () => { try { return clipboard.readText() || ''; } catch { return ''; } });
+ipcMain.handle('pano-yaz', (_e, metin) => { try { clipboard.writeText(String(metin ?? '')); return true; } catch { return false; } });
 ipcMain.handle('remote:bilgi', async () => (remoteSunucu ? remoteSunucu.bilgi() : { acik: false }));
 ipcMain.handle('remote:qr', async () => (remoteSunucu ? await remoteSunucu.qrKodPngDataUrl() : ''));
 ipcMain.handle('remote:yenile', async () => (remoteSunucu ? await remoteSunucu.tokenYenile() : { acik: false }));

@@ -7,6 +7,7 @@
 // Electron'a bağlı değildir; `node -e "require('./gecmis').oturumGecmisi(...)"` ile doğrulanabilir.
 'use strict';
 const fs = require('node:fs');
+const oturumKarar = require('./oturum-karar');
 const os = require('node:os');
 const path = require('node:path');
 const { StringDecoder } = require('node:string_decoder');
@@ -23,13 +24,22 @@ function metinCikar(icerik) {
 
 // İlk gerçek kullanıcı mesajı = oturum başlığı; ilk yanıtın modeli = kaynak (claude-* ise Claude, değilse EVREN).
 // Başlık ve model bulununca sonuç önbelleğe alınır, dosya bir daha okunmaz.
-const baslikOnbellek = new Map(); // id -> { baslik, kaynak }
+const baslikOnbellek = new Map(); // id -> { bilgi, damga, ms, boyut }
 
 function ozelBaslikOku(seansDizin) {
   try {
     const d = path.join(seansDizin, 'custom-title.json');
     const j = JSON.parse(fs.readFileSync(d, 'utf8'));
     return (j && typeof j.customTitle === 'string' && j.customTitle.trim()) || '';
+  } catch { return ''; }
+}
+
+// custom-title.json'ın damgası: yeniden adlandırma (bizden ya da Claude Desktop'tan) önbelleği düşürsün.
+function ozelBaslikDamgasi(seansDizin) {
+  if (!seansDizin) return '';
+  try {
+    const s = fs.statSync(path.join(seansDizin, 'custom-title.json'));
+    return `${s.mtimeMs}:${s.size}`;
   } catch { return ''; }
 }
 
@@ -49,7 +59,56 @@ function ozelBaslikYaz(seansDizin, ad) {
 
 function baslikOnbellekTemizle(id) { baslikOnbellek.delete(id); }
 
-function baslikOku(dosya, yalnizBaslik) {
+// ---------- Kalıcı başlık önbelleği ----------
+// Üst veri değişmediyse başlık yeniden okunmaz; uygulama açılışında 100 oturumun 6 MB'lık
+// kafalarını taramak yerine diskten gelir. Kimlik anahtarı: dosya mtime + boyut + ad damgası.
+// Test/demo (EVREN_PROJE_DIZINI) altında varsayılan olarak kapalıdır; gerçek ~/.claude taranmaz.
+const KALICI_SURUM = 1;
+let kaliciOnbellek = null; // { id: { ms, boyut, damga, baslik, kaynak } }
+let kaliciZaman = null;
+
+function kaliciOnbellekYolu() {
+  const verilen = process.env.EVREN_BASLIK_ONBELLEK;
+  if (verilen === 'kapali') return '';
+  if (verilen) return verilen;
+  if (process.env.EVREN_PROJE_DIZINI) return ''; // test/demo: gerçek eve yazma
+  return path.join(os.homedir(), '.evren', 'baslik-onbellek.json');
+}
+
+function kaliciOnbellekOku() {
+  if (kaliciOnbellek) return kaliciOnbellek;
+  kaliciOnbellek = {};
+  const dosya = kaliciOnbellekYolu();
+  if (!dosya) return kaliciOnbellek;
+  try {
+    const j = JSON.parse(fs.readFileSync(dosya, 'utf8'));
+    if (j && j.v === KALICI_SURUM && j.kayitlar && typeof j.kayitlar === 'object') kaliciOnbellek = j.kayitlar;
+  } catch {}
+  return kaliciOnbellek;
+}
+
+function kaliciOnbellekYaz(id, kayit) {
+  const dosya = kaliciOnbellekYolu();
+  if (!dosya) return;
+  const m = kaliciOnbellekOku();
+  delete m[id];
+  m[id] = kayit; // son kullanılan sona: sınır aşınca en eski düşer
+  const adlar = Object.keys(m);
+  if (adlar.length > 500) for (const a of adlar.slice(0, adlar.length - 500)) delete m[a];
+  if (kaliciZaman) return;
+  kaliciZaman = setTimeout(() => {
+    kaliciZaman = null;
+    try {
+      const gecici = `${dosya}.tmp-${process.pid}`;
+      fs.mkdirSync(path.dirname(dosya), { recursive: true });
+      fs.writeFileSync(gecici, JSON.stringify({ v: KALICI_SURUM, kayitlar: m }));
+      fs.renameSync(gecici, dosya);
+    } catch {} // pano/disk hatası taramayı düşürmez
+  }, 250);
+  if (kaliciZaman.unref) kaliciZaman.unref();
+}
+
+function baslikOku(dosya, yalnizBaslik, anlamli) {
   let fd, baslik = '', kaynak = '';
   try {
     fd = fs.openSync(dosya, 'r');
@@ -69,7 +128,7 @@ function baslikOku(dosya, yalnizBaslik) {
         if (!j || !j.message) continue;
         if (!baslik && j.type === 'user' && !j.isMeta) {
           const m = metinCikar(j.message.content).replace(/<[^>]+>[\s\S]*?<\/[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-          if (m && !m.startsWith('Caveat:') && !m.startsWith('[Request interrupted')) baslik = m.slice(0, 90);
+          if (m && !m.startsWith('Caveat:') && !m.startsWith('[Request interrupted') && !(anlamli && oturumKarar.baslikAnlamsiz(m))) baslik = m.slice(0, 90);
         } else if (!kaynak && j.type === 'assistant' && typeof j.message.model === 'string' && j.message.model !== '<synthetic>') {
           kaynak = /^(claude|opus|sonnet|haiku)/i.test(j.message.model) ? 'claude' : 'evren';
         }
@@ -89,13 +148,28 @@ function denemeOturumu(baslik, boyut, altAjanSayisi, canli) {
   return !canli && !altAjanSayisi && asil.length <= 40 && DENEME_BASLIK.test(asil);
 }
 
-function oturumBilgisi(dosya, id, seansDizin) {
+function oturumBilgisi(dosya, id, seansDizin, olcu) {
+  // Damga önbellekten önce okunur: ad dosyası değiştiyse (yerel ya da dış `/rename`) başlık yeniden çözülür.
+  const damga = ozelBaslikDamgasi(seansDizin);
+  let ms = olcu && olcu.ms, boyut = olcu && olcu.boyut;
+  if (ms == null || boyut == null) {
+    try { const s = fs.statSync(dosya); ms = s.mtimeMs; boyut = s.size; } catch { ms = 0; boyut = 0; }
+  }
   const c = baslikOnbellek.get(id);
-  if (c) return c;
+  if (c && c.damga === damga && c.ms === ms && c.boyut === boyut) return c.bilgi;
+  const disk = kaliciOnbellekOku()[id];
+  if (disk && disk.damga === damga && disk.ms === ms && disk.boyut === boyut && disk.baslik && disk.kaynak) {
+    const b = { baslik: disk.baslik, kaynak: disk.kaynak };
+    baslikOnbellek.set(id, { bilgi: b, damga, ms, boyut });
+    return b;
+  }
   const ozel = seansDizin ? ozelBaslikOku(seansDizin) : '';
   const b = baslikOku(dosya);
   if (ozel) b.baslik = ozel;
-  if (b.baslik && b.kaynak) baslikOnbellek.set(id, b);
+  if (b.baslik && b.kaynak) {
+    baslikOnbellek.set(id, { bilgi: b, damga, ms, boyut });
+    kaliciOnbellekYaz(id, { ms, boyut, damga, baslik: b.baslik, kaynak: b.kaynak });
+  }
   return b;
 }
 
@@ -118,6 +192,50 @@ function turDevamEdiyor(dosya, boyut) {
     }
   } catch {} finally { if (fd != null) try { fs.closeSync(fd); } catch {} }
   return null; // anlaşılamadı
+}
+
+// Sol panelin tek durum etiketi: ajan cevap bekleyen bir soru sordu mu, iş bitti mi?
+// Dosyanın son 256 KB'ı tek geçişte taranır; sonuç (ms, boyut) damgasıyla önbelleklenir.
+const durumOnbellek = new Map(); // id -> { ms, boyut, durum }
+function sonDurumOku(dosya, boyut, id, ms) {
+  try {
+    if (id) {
+      const c = durumOnbellek.get(id);
+      if (c && c.ms === ms && c.boyut === boyut) return c.durum;
+    }
+    let durum = '';
+    let fd;
+    try {
+      fd = fs.openSync(dosya, 'r');
+      const uzunluk = Math.min(boyut, 256 * 1024);
+      const t = Buffer.alloc(uzunluk);
+      fs.readSync(fd, t, 0, uzunluk, boyut - uzunluk);
+      const satirlar = t.toString('utf8').split(String.fromCharCode(10));
+      if (boyut > uzunluk) satirlar.shift(); // baştaki yarım satır
+      let sonTip = '', sonBitti = false, bekleyen = new Set();
+      for (const satir of satirlar) {
+        let j; try { j = JSON.parse(satir); } catch { continue; }
+        if (!j || j.isMeta === true || j.isSidechain === true) continue; // hook/meta ve alt ajan kayıtları tur sayılmaz
+        if ((j.type !== 'user' && j.type !== 'assistant') || !j.message) continue;
+        const icerik = Array.isArray(j.message.content) ? j.message.content : [];
+        if (j.type === 'assistant') {
+          sonTip = 'assistant';
+          sonBitti = ['end_turn', 'stop_sequence', 'max_tokens', 'refusal'].includes(j.message.stop_reason);
+          bekleyen = new Set(icerik.filter((b) => b && b.type === 'tool_use' && ['AskUserQuestion', 'AskUserInput', 'Question'].includes(b.name)).map((b) => b.id));
+        } else {
+          sonTip = 'user';
+          sonBitti = false;
+          const sonuclar = icerik.filter((b) => b && b.type === 'tool_result');
+          for (const b of sonuclar) bekleyen.delete(b.tool_use_id);
+          if (!sonuclar.length) bekleyen.clear(); // kullanıcı yeni tur başlattı
+        }
+      }
+      if (sonTip === 'assistant' && bekleyen.size > 0) durum = 'soru';
+      else if (sonTip === 'assistant' && sonBitti) durum = 'bitti';
+    } finally { if (fd != null) try { fs.closeSync(fd); } catch {} }
+    if (id) durumOnbellek.set(id, { ms, boyut, durum });
+    return durum;
+  } catch { return ''; } // okunamayan dosya durum etiketi üretmez
 }
 
 // Workflow ajan klasörünün görünen adı: <oturum>/workflows/wf_x.json içindeki betiğin meta.name alanı.
@@ -152,7 +270,7 @@ function ajanOku(dizin, metaAd, simdi, ek) {
   return {
     id,
     tanim: j.description,
-    tur: (j.agentType || '').replace(/^gunay-studio:/, ''),
+    tur: (j.agentType || '').replace(/^[a-z0-9-]+:/i, ''), // plugin öneki (ad:) varsa kırp
     model: j.pickedEffortModel || j.model || '',
     faz: j.workflowPhase || '',
     bitti: !canli,
@@ -289,13 +407,14 @@ function oturumGecmisi(dizin, secenekler) {
       const calisanAjan = altAjanlar.filter((a) => a.canli).length;
       return {
         id: x.id,
-        ...oturumBilgisi(x.dosya, x.id, seansDizin),
+        ...oturumBilgisi(x.dosya, x.id, seansDizin, { ms: x.ms, boyut: x.boyut }),
         ms: x.ms,
         boyut: x.boyut,
         turCanli,
         ajanCalisiyor: calisanAjan > 0,
         calisanAjan,
         canli: turCanli || calisanAjan > 0, // tur bitse de arka planda çalışan alt ajan/EVREN işi oturumu "çalışıyor" gösterir
+        sonDurum: sonDurumOku(x.dosya, x.boyut, x.id, x.ms),
         altAjanlar,
         evrenIsleri: [],
       };
@@ -309,8 +428,8 @@ function oturumGecmisi(dizin, secenekler) {
     if (denemeOturumu(is.baslik || '', 0, 0, is.canli)) continue; // ajan yoklama işi
     const ust = is.ust ? ustHarita.get(is.ust) : null;
     if (ust) ust.evrenIsleri.push(is);
-    else {
-      // Üst oturum yok: iş kendi satırında görünür (başlığı işin başlığı, etiketi arayüzde "EVREN işi").
+    else if (is.canli) {
+      // Üst oturum yok: iş yalnız canlıyken kendi satırında görünür (bitmiş iş listeyi kirletmez).
       kayitsizlar.push({
         id: is.id,
         baslik: is.baslik,
@@ -434,7 +553,7 @@ function tumOturumlariTara(secenekler) {
       const turCanli = taze && turDevamEdiyor(dosya, s.size) !== false;
       const altAjanlar = altAjanlariOku(seansDizin);
       const calisanAjan = altAjanlar.filter((x) => x.canli).length;
-      const bilgi = oturumBilgisi(dosya, id, seansDizin);
+      const bilgi = oturumBilgisi(dosya, id, seansDizin, { ms: s.mtimeMs, boyut: s.size });
 
       if (!bilgi.baslik) continue;
       if (denemeOturumu(bilgi.baslik, s.size, altAjanlar.length, turCanli || calisanAjan > 0)) continue;
@@ -449,6 +568,7 @@ function tumOturumlariTara(secenekler) {
         ajanCalisiyor: calisanAjan > 0,
         calisanAjan,
         canli: turCanli || calisanAjan > 0,
+        sonDurum: sonDurumOku(dosya, s.size, id, s.mtimeMs),
         altAjanlar,
         evrenIsleri: [],
       });
@@ -462,7 +582,7 @@ function tumOturumlariTara(secenekler) {
     if (denemeOturumu(is.baslik || '', 0, 0, is.canli)) continue; // ajan yoklama işi
     const ust = is.ust ? ustHarita.get(is.ust) : null;
     if (ust) ust.evrenIsleri.push(is);
-    else if (is.dizin && !tempMi(is.dizin) && !arsivMi(is.dizin) && fs.existsSync(is.dizin)) {
+    else if (is.canli && is.dizin && !tempMi(is.dizin) && !arsivMi(is.dizin) && fs.existsSync(is.dizin)) {
       const projeAd = (is.dizin ? path.basename(is.dizin) : 'EVREN') || 'EVREN';
       kayitsizlar.push({
         id: is.id,
@@ -496,4 +616,84 @@ function tumOturumlariTara(secenekler) {
   return tumu.filter((x) => x.baslik).slice(0, 100);
 }
 
-module.exports = { oturumGecmisi, tumOturumlariTara, cwdOku, tempMi, oturumSayilari, altAjanlariOku, turDevamEdiyor, baslikOku, ozelBaslikOku, ozelBaslikYaz, baslikOnbellekTemizle, evrenKayitlariOku, OTURUM_KIMLIK, CANLI_ESIK_MS };
+// ---- Sohbet içeriği arama (arama kutusu yalnız başlığa bakmasın) ----
+// Oturum dosyaları büyük (medyan ~1,6 MB); arama her dosyanın son ARAMA_BAYT baytlık
+// kuyruğunda yapılır. Küçültme tek karakterli eşlemedir: eşleşme dizini özgün metindeki
+// dizinle aynı kalır, örnek satır özgün büyük/küçük harfiyle kesilir.
+const ARAMA_BAYT = 350 * 1024;
+const ARAMA_BUTCE = 48 * 1024 * 1024; // tek aramada tüm dosyalar için üst sınır
+const ARAMA_HARF = { A: 'a', B: 'b', C: 'c', D: 'd', E: 'e', F: 'f', G: 'g', H: 'h', I: 'ı', J: 'j', K: 'k', L: 'l', M: 'm', N: 'n', O: 'o', P: 'p', Q: 'q', R: 'r', S: 's', T: 't', U: 'u', V: 'v', W: 'w', X: 'x', Y: 'y', Z: 'z', Ç: 'ç', Ğ: 'ğ', İ: 'i', Ö: 'ö', Ş: 'ş', Ü: 'ü' };
+const aramaMetni = (s) => String(s).replace(/[A-ZÇĞİÖŞÜ]/g, (c) => ARAMA_HARF[c] || c).toLowerCase();
+
+// Dosyanın kuyruğunda sorguyu arar; ilk eşleşmenin çevresinden tek satırlık örnek çıkarır.
+function icerikAra(dosya, sorgu, enCok = ARAMA_BAYT) {
+  const q = aramaMetni(String(sorgu || '').trim());
+  if (q.length < 2) return null;
+  let fd;
+  try { fd = fs.openSync(dosya, 'r'); } catch { return null; }
+  try {
+    const boyut = fs.fstatSync(fd).size;
+    const n = Math.min(enCok, boyut);
+    if (n <= 0) return null;
+    const bas = boyut - n;
+    const t = Buffer.alloc(n);
+    let okunan = 0;
+    while (okunan < n) {
+      const r = fs.readSync(fd, t, okunan, n - okunan, bas + okunan);
+      if (!r) break;
+      okunan += r;
+    }
+    const ham = t.toString('utf8', 0, okunan);
+    const metin = aramaMetni(ham);
+    const ilk = metin.indexOf(q);
+    if (ilk < 0) return null;
+    let sayi = 0;
+    for (let i = ilk; i >= 0 && sayi < 999; i = metin.indexOf(q, i + q.length)) sayi++;
+    // Örnek, JSON kabuğundan arındırılsın: eşleşmeden geriye doğru en yakın "content" alanı.
+    let basIx = Math.max(0, ilk - 55);
+    // JSON metin değerinin başı: eşleşmeden geriye doğru en yakın tırnak-iki nokta-tırnak.
+    const deger = ham.lastIndexOf('":"', ilk);
+    if (deger >= 0 && ilk - deger < 400) basIx = deger + 3;
+    else {
+      const anahtar = ham.lastIndexOf('"content"', ilk);
+      if (anahtar >= 0 && ilk - anahtar < 3000) basIx = anahtar + 9;
+    }
+    let kes = Math.min(ham.length, ilk + q.length + 90);
+    const satirSonu = ham.indexOf('\n', ilk);
+    if (satirSonu >= 0 && satirSonu < kes) kes = satirSonu; // örnek tek JSON satırında kalsın
+    let ornek = ham.slice(basIx, kes)
+      .replace(/\\u([0-9a-fA-F]{4})/g, (_m, h) => String.fromCharCode(parseInt(h, 16)))
+      .replace(/\\[nrt]/g, ' ')
+      .replace(/\\"/g, '"')
+      .replace(/\\/g, ' ')
+      .replace(/^\s*:\s*"?/, '')
+      .replace(/\s+/g, ' ')
+      .replace(/[\s"}\]]+$/, '')
+      .trim();
+    if (ornek.length > 150) ornek = ornek.slice(0, 150).trim() + '…';
+    return { sayi, ornek };
+  } catch { return null; }
+  finally { try { fs.closeSync(fd); } catch {} }
+}
+
+// [{ id, projeYol }] listesini arar; yalnız eşleşen oturumları döndürür.
+function icerikAraListe(turler, sorgu) {
+  const q = String(sorgu || '').trim();
+  if (q.length < 2 || !Array.isArray(turler)) return {};
+  const kok = claudeKokDizini();
+  const sonuc = {};
+  let butce = ARAMA_BUTCE;
+  for (const t of turler) {
+    if (butce <= 0) break;
+    if (!t || !OTURUM_KIMLIK.test(String(t.id || ''))) continue;
+    if (!t.projeYol || typeof t.projeYol !== 'string') continue;
+    const pay = Math.min(ARAMA_BAYT, butce);
+    butce -= pay;
+    const dosya = path.join(kok, t.projeYol.replace(/[^a-zA-Z0-9]/g, '-'), t.id + '.jsonl');
+    const e = icerikAra(dosya, q, pay);
+    if (e) sonuc[t.id] = e;
+  }
+  return sonuc;
+}
+
+module.exports = { oturumGecmisi, tumOturumlariTara, cwdOku, tempMi, oturumSayilari, altAjanlariOku, turDevamEdiyor, sonDurumOku, baslikOku, ozelBaslikOku, ozelBaslikYaz, baslikOnbellekTemizle, evrenKayitlariOku, icerikAra, icerikAraListe, aramaMetni, OTURUM_KIMLIK, CANLI_ESIK_MS };

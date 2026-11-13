@@ -111,6 +111,7 @@ npm run basla      # ya da EVREN.bat (konsolsuz)
 | `Ctrl+Shift+P` | Komut paleti |
 | `Ctrl+Shift+B` | Kenar panelini aç/kapat |
 | `↑` / `↓` | Listede gez |
+| `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Seçimi kopyala / kes / yapıştır (pano geçmişi dahil) |
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | Terminalde kopyala / yapıştır |
 | `Ctrl` + fare tekeri | Terminal yazı boyutu |
 
