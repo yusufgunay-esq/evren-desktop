@@ -345,6 +345,10 @@ async function oturumBaslat({ modelId, dizin, ekDizinler, projeAd, cols, rows, d
   delete env.CLAUDE_CODE_SSE_PORT;
   if (model.baglamSayisi) env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(model.baglamSayisi);
   if (model.cikti) env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(model.cikti);
+  // Claude Code kendi eşiğinde (~pencerenin %90'ı) sıkıştırıyor; bu, çıktı tavanı payı
+  // bırakmadığı için "istem + tavan > pencere" 400'üne düşüyordu. Pencereyi erkene al.
+  const otoPencere = motor.autocompactPenceresi(model.baglamSayisi, model.cikti);
+  if (otoPencere) env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(otoPencere);
 
 
   const olcu = {

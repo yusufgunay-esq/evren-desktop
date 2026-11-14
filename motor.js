@@ -68,6 +68,22 @@ function modelleriCoz(veri) {
   }));
 }
 
+// Güvenli auto-compact penceresi: API "istem + çıktı tavanı ≤ bağlam penceresi" şartını
+// arar (aşarsa 400 döner), Claude Code ise pencereyi tam dolduracak kadar büyümeye izin
+// verip geç sıkıştırıyor. Çıktı tavanı + pay kadar erken tetiklenen pencere taşmayı
+// kökten engeller (glm 512K→442K, qwen 256K→180K, deepseek 1M→966K).
+// Claude Code değeri 100K–1M dışına kenetler (99 999 → 100k, ölçüldü): güvenli pencere
+// 100K altına düşüyorsa değer yazılmaz; küçük pencereli modelleri vekil kurtarması korur.
+const CIKTI_TAVANI_VARSAYILAN = 65536;
+const AUTOCOMPACT_PAY = 16384;
+const AUTOCOMPACT_ALT_SINIR = 100000;
+function autocompactPenceresi(baglamSayisi, cikti) {
+  const pencere = Number(baglamSayisi);
+  if (!Number.isFinite(pencere) || pencere <= 0) return null;
+  const tavan = pencere - (Number(cikti) > 0 ? Number(cikti) : CIKTI_TAVANI_VARSAYILAN) - AUTOCOMPACT_PAY;
+  return tavan >= AUTOCOMPACT_ALT_SINIR ? tavan : null;
+}
+
 // ---- Git dalı (git çalıştırmadan, .git/HEAD okunarak; worktree destekli) ----
 function gitDal(dizin) {
   try {
@@ -128,4 +144,4 @@ async function anahtarYaz(anahtar) {
   return ANAHTAR_DOSYASI;
 }
 
-module.exports = { MODELLER, modelleriCoz, EFORLAR, EFOR_VARSAYILAN, eforCoz, baglamMetni, gitDal, ayarOku, ayarYaz, anahtarOku, anahtarYaz, VERI_DIZINI };
+module.exports = { MODELLER, modelleriCoz, autocompactPenceresi, EFORLAR, EFOR_VARSAYILAN, eforCoz, baglamMetni, gitDal, ayarOku, ayarYaz, anahtarOku, anahtarYaz, VERI_DIZINI };
