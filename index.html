@@ -1,7 +1,7 @@
 <!doctype html>
 <!-- أَعُوذُ بِاللَّهِ مِنَ الشَّيْطَانِ الرَّجِيمِ -->
 <!-- بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ -->
-<!-- This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. Copyright (c) 2026 Yusuf Günay. -->
+<!-- Copyright (c) 2026 Yusuf Günay. GNU GPL v3 or later; see LICENSE and LICENSE-EK.md. -->
 <html lang="tr">
 <head>
   <meta charset="utf-8" />
@@ -42,6 +42,7 @@
       <symbol id="i-check-circle" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="m5.2 8 2 2 3.8-4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
       <symbol id="i-soru" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M6.2 6.1a1.9 1.9 0 0 1 3.7.7c0 1.1-1.8 1.2-1.8 2.3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8.1" cy="11.3" r="0.75" fill="currentColor"/></symbol>
       <symbol id="i-pin" viewBox="0 0 16 16"><path d="M4.5 2.5h7M8 2.5v4M5 6.5h6l-1 4.5h-4zM8 11v3.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-arsiv" viewBox="0 0 16 16"><path d="M2.5 3.5h11v3h-11zM3.5 6.5v6h9v-6M6.5 9h3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
       <symbol id="i-uyku" viewBox="0 0 16 16"><path d="M3.4 5.6h7v3.7a3.5 3.5 0 0 1-3.5 3.5h0a3.5 3.5 0 0 1-3.5-3.5zM10.4 6.5h1.1a1.9 1.9 0 0 1 0 3.8h-1.1M5.3 2.4v1.3M7.9 2.4v1.3" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     </defs>
   </svg>
@@ -91,7 +92,7 @@
           
           <div class="side-ara">
             <svg class="ic"><use href="#i-search" /></svg>
-            <input id="gecmisAra" type="text" placeholder="Oturumlarda ara…" spellcheck="false" autocomplete="off" aria-label="Oturumlarda ara" />
+            <input id="gecmisAra" type="text" placeholder="Oturumlarda ara" spellcheck="false" autocomplete="off" aria-label="Oturumlarda ara" />
           </div>
         </div>
 
@@ -135,6 +136,7 @@
             </span>
             <span class="side-durum-kota mono" id="apiKota">—</span>
             <button class="sec-a aktif" id="uykuBtn" type="button" aria-pressed="true" title="Çalışan oturum varken bilgisayar uykuya geçmesin"><svg class="ic"><use href="#i-uyku" /></svg></button>
+            <button class="sec-a" id="claudeBtn" type="button" aria-pressed="false" title="Claude Code oturumlarını da göster"><svg class="ic"><use href="#i-claude" /></svg></button>
             <button class="sec-a" id="yenileBtn" type="button" title="Bağlantıyı yenile"><svg class="ic"><use href="#i-refresh" /></svg></button>
           </div>
           <span id="kasa" hidden></span>
@@ -145,7 +147,7 @@
       <!-- Ana alan -->
       <main class="main">
         <div class="tabbar">
-          <button class="icbtn" id="sideBtn" type="button" title="Kenar paneli (Ctrl+Shift+B)"><svg class="ic"><use href="#i-side" /></svg></button>
+          <button class="icbtn" id="sideBtn" type="button" title="Oturumlar (Ctrl+Shift+B)"><svg class="ic"><use href="#i-side" /></svg></button>
           <div class="tabs" id="sekmeler" role="tablist" aria-label="Oturumlar"></div>
           <button class="icbtn" id="yeniSekme" type="button" title="Yeni oturum (Ctrl+Shift+T)"><svg class="ic"><use href="#i-plus" /></svg></button>
           <div class="tab-tools">
@@ -156,15 +158,36 @@
             <button class="icbtn" id="temizleBtn" type="button" title="Terminali temizle"><svg class="ic"><use href="#i-clear" /></svg></button>
             <span class="tool-sep"></span>
             <button class="icbtn" id="odakBtn" type="button" title="Odak modu (Ctrl+Shift+F)"><svg class="ic"><use href="#i-odak" /></svg></button>
-            <span class="tool-sep"></span>
-            <button class="icbtn" id="sohbetBtn" type="button" title="Konuşma geçmişi (Ctrl+Shift+H)"><svg class="ic"><use href="#i-chat" /></svg></button>
           </div>
         </div>
 
 
+        <!-- Oturum başına tek görünüm anahtarı: Sohbet · Terminal · Dosyalar -->
+        <div class="gorunum-bar" id="gorunumBar" hidden>
+          <div class="gorunum-seg" id="gorunumSeg" role="tablist" aria-label="Oturum görünümü">
+            <button type="button" role="tab" data-g="sohbet" title="Sohbet (Ctrl+1)">Sohbet<kbd>1</kbd></button>
+            <button type="button" role="tab" data-g="terminal" title="Terminal (Ctrl+2)">Terminal<kbd>2</kbd></button>
+            <button type="button" role="tab" data-g="dosyalar" title="Dosyalar (Ctrl+3) · bu oturumun yazdığı dosyalar">Dosyalar<kbd>3</kbd><span class="gorunum-say mono" id="gorunumDosyaSay" hidden></span></button>
+          </div>
+        </div>
+
         <div class="stage" id="stage">
           <div class="terminal-akim-cizgi" id="akimCizgi"></div>
-          <div id="terminaller" class="terminaller"></div>
+          <div class="term-alan" id="termAlan">
+            <div id="terminaller" class="terminaller"></div>
+            <div class="term-ara" id="termAra" hidden>
+              <input id="termAraGiris" type="text" placeholder="Terminalde ara" spellcheck="false" autocomplete="off" aria-label="Terminalde ara" />
+              <span class="term-ara-say mono" id="termAraSay"></span>
+              <button class="icbtn" id="termAraOnce" type="button" title="Önceki (Shift+Enter)"><svg class="ic"><use href="#i-chevron" style="transform:rotate(180deg);transform-origin:center" /></svg></button>
+              <button class="icbtn" id="termAraSonra" type="button" title="Sonraki (Enter)"><svg class="ic"><use href="#i-chevron" /></svg></button>
+              <button class="icbtn" id="termAraKapat" type="button" title="Kapat (Esc)"><svg class="ic"><use href="#i-close" /></svg></button>
+            </div>
+            <div class="term-ipucu" id="termIpucu" hidden><img id="termIpucuResim" alt=""><span id="termIpucuMetin">görsel eklendi</span></div>
+            <div class="tus-serit" id="tusSerit" hidden>
+              <button class="tus-ac" id="tusAc" type="button" title="Tuş şeridini aç / kapat" aria-expanded="true">Tuşlar</button>
+              <div class="tus-dugmeler" id="tusDugmeler"></div>
+            </div>
+          </div>
 
 
           <!-- Sağ kenar paneli: Konuşma / Sohbet Geçmişi -->
@@ -173,26 +196,42 @@
               <div class="sohbet-h-sol">
                 <svg class="ic"><use href="#i-chat" /></svg>
                 <span class="sohbet-t">Konuşma</span>
+                <span class="sohbet-mod mono" id="sohbetMod" hidden></span>
               </div>
               <div class="sohbet-h-sag">
                 <span class="sohbet-sayac mono" id="sohbetSayac">0</span>
-                <button class="btn primary btn-fork" id="sohbetForkBtn" type="button" title="Bu oturumdan çatallayıp yeni sekmede sürdür" hidden>
+                <button class="btn primary btn-devam" id="sohbetDevamBtn" type="button" title="Bu oturumu terminalde sürdür" hidden>
+                  <svg class="ic"><use href="#i-play" /></svg><span>Devam et</span>
+                </button>
+                <button class="btn ghost btn-fork" id="sohbetForkBtn" type="button" title="Bu oturumdan çatallayıp yeni sekmede sürdür" hidden>
                   <svg class="ic"><use href="#i-play" /></svg><span>Burada devam et</span>
                 </button>
                 <button class="icbtn" id="sohbetIgneBtn" type="button" title="Sohbeti en üste iğnele"><svg class="ic"><use href="#i-pin" /></svg></button>
                 <button class="icbtn" id="sohbetYenileBtn" type="button" title="Yenile"><svg class="ic"><use href="#i-refresh" /></svg></button>
-                <button class="icbtn" id="sohbetKapatBtn" type="button" title="Kapat (Ctrl+Shift+H)"><svg class="ic"><use href="#i-close" /></svg></button>
               </div>
             </header>
             <div class="sohbet-filtreler">
               <button class="sohbet-filtre aktif" data-filtre="hepsi" type="button">Tümü</button>
               <button class="sohbet-filtre" data-filtre="mesajlar" type="button">Mesajlar</button>
               <button class="sohbet-filtre" data-filtre="arac" type="button">Araçlar</button>
-              <button class="sohbet-filtre" data-filtre="cikti" type="button">Çıktılar</button>
+            </div>
+            <div class="dosya-ust" id="dosyaUst">
+              <div class="dosya-suz" id="dosyaSuz">
+                <button class="sohbet-filtre aktif" data-dsuz="hepsi" type="button">Tümü</button>
+                <button class="sohbet-filtre" data-dsuz="gorseller" type="button">Görseller</button>
+                <button class="sohbet-filtre" data-dsuz="kod" type="button">Kod</button>
+                <button class="sohbet-filtre" data-dsuz="diger" type="button">Diğer</button>
+              </div>
+              <span class="dosya-kok mono" id="dosyaKok"></span>
             </div>
             <div class="sohbet-liste" id="sohbetListe">
               <div class="sohbet-bos">Kayıt bekleniyor...</div>
             </div>
+            <!-- Yazı çubuğu: yalnız canlı oturumda görünür; mesaj oturumun terminaline gider. -->
+            <form class="sohbet-gonder" id="sohbetGonder" hidden autocomplete="off">
+              <input id="sohbetGonderGiris" type="text" placeholder="Mesaj yaz · Enter gönderir · görsel yapıştırılabilir" spellcheck="false" autocomplete="off" aria-label="Bu oturuma mesaj gönder" />
+              <button class="icbtn" type="submit" title="Gönder (Enter)" aria-label="Gönder"><svg class="ic"><use href="#i-chevron" style="transform:rotate(-90deg);transform-origin:center" /></svg></button>
+            </form>
           </aside>
 
 
@@ -242,6 +281,7 @@
 
 
               <ul class="hints">
+                <li><kbd>Ctrl K</kbd> hızlı geçiş</li>
                 <li><kbd>Ctrl ⇧ T</kbd> yeni oturum</li>
                 <li><kbd>Ctrl Tab</kbd> sekme değiştir</li>
                 <li><kbd>Ctrl ⇧ F</kbd> odak modu</li>
@@ -325,11 +365,11 @@
       <span class="seg" id="sSohbetSeg" title="Bu oturumdaki asistan turu (sohbet sayacı)"><svg class="ic"><use href="#i-chat" /></svg><span id="sSohbet">—</span></span>
       <span class="seg" id="sDalSeg"><svg class="ic"><use href="#i-branch" /></svg><span id="sDal">—</span></span>
       <span class="seg flex"></span>
-      <span class="seg" id="sOturum">0/0 oturum</span>
+      <span class="seg" id="sOturum" title="Canlı kabuk / açık sekme sayısı. Soldaki liste sohbet geçmişidir; henüz ilk mesajı olmayan ya da geçici klasörde açılmış oturum geçmişe yazılmaz.">0/0 sekme</span>
       <span class="seg"><span class="k">ConPTY</span></span>
       <span class="seg">UTF-8</span>
       <span class="seg"><svg class="ic"><use href="#i-term" /></svg><span id="sSure">—</span></span>
-      <span class="seg kunye" id="kunye" role="link" tabindex="0" title="Kaynak kod GitHub'da">© 2026 Yusuf GÜNAY</span>
+      <span class="seg kunye" id="kunye" role="link" tabindex="0">EVREN Desktop · Yusuf Günay yapımı</span>
     </footer>
   </div>
 
@@ -560,7 +600,16 @@
 
   <script src="node_modules/@xterm/xterm/lib/xterm.js"></script>
   <script src="node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+  <div class="gorsel-katman" id="gorselKatman" hidden role="dialog" aria-label="Görsel önizleme">
+    <button class="icbtn gk-kapat" id="gkKapat" type="button" title="Kapat (Esc)"><svg class="ic"><use href="#i-close" /></svg></button>
+    <button class="icbtn gk-ok gk-onceki" id="gkOnceki" type="button" title="Önceki (←)"><svg class="ic"><use href="#i-chevron" style="transform:rotate(90deg);transform-origin:center" /></svg></button>
+    <img id="gkResim" alt="">
+    <button class="icbtn gk-ok gk-sonraki" id="gkSonraki" type="button" title="Sonraki (→)"><svg class="ic"><use href="#i-chevron" style="transform:rotate(-90deg);transform-origin:center" /></svg></button>
+    <div class="gk-alt mono"><span id="gkAd"></span><span id="gkSira"></span><button class="gk-dugme" id="gkAc" type="button">Aç</button><button class="gk-dugme" id="gkKlasor" type="button">Klasörde göster</button><button class="gk-dugme" id="gkKopya" type="button">Yolu kopyala</button></div>
+  </div>
   <script src="node_modules/@xterm/addon-webgl/lib/addon-webgl.js"></script>
+  <script src="node_modules/@xterm/addon-search/lib/addon-search.js"></script>
+  <script src="gorunum.js"></script>
   <script src="app.js"></script>
 
 

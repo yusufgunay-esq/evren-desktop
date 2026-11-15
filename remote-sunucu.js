@@ -1,8 +1,7 @@
 // أَعُوذُ بِاللَّهِ مِنَ الشَّيْطَانِ الرَّجِيمِ
 // بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
-/* This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
- * If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/.
- * Copyright (c) 2026 Yusuf Günay. */
+/* Copyright (c) 2026 Yusuf Günay.
+ * This program is free software under the GNU GPL v3 or later; see LICENSE and LICENSE-EK.md. */
 // EVREN Desktop - Uzaktan Kumanda (Remote Control) Köprüsü
 // Yerel ağda WebSocket + HTTP sunucusu açar, QR kod ve mobil eşleşme sağlar.
 

@@ -1,10 +1,9 @@
 // أَعُوذُ بِاللَّهِ مِنَ الشَّيْطَانِ الرَّجِيمِ
 // بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
-/* This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
- * If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/.
- * Copyright (c) 2026 Yusuf Günay. */
+/* Copyright (c) 2026 Yusuf Günay.
+ * This program is free software under the GNU GPL v3 or later; see LICENSE and LICENSE-EK.md. */
 // Renderer ile ana süreç arasındaki dar köprü: yalnız gerekli kanallar.
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('evren', {
   durum: () => ipcRenderer.invoke('durum'),
@@ -16,6 +15,9 @@ contextBridge.exposeInMainWorld('evren', {
   baslat: (secim) => ipcRenderer.invoke('baslat', secim),
   gecmis: (dizin) => ipcRenderer.invoke('gecmis', dizin),
   gecmisAra: (turler, sorgu) => ipcRenderer.invoke('gecmis-ara', turler, sorgu), // sohbet içeriği araması
+  tercihOku: () => ipcRenderer.invoke('tercih-oku'), // sabit / arşiv / elle proje / kümeleme (userData JSON)
+  tercihYaz: (t) => ipcRenderer.invoke('tercih-yaz', t),
+  projeCikar: (liste) => ipcRenderer.invoke('proje-cikar', liste), // klasörsüz oturumun asıl projesi
   gecmisBlok: () => ipcRenderer.invoke('gecmis-blok'), // ölçüm: ana süreçte geçmiş taraması için harcanan süre
   sohbetGecmisi: (id) => ipcRenderer.invoke('sohbet-gecmisi', id),
   oturumBaglam: (id) => ipcRenderer.invoke('oturum-baglam', id), // gerçek bağlam kullanımı + tur sayacı
@@ -29,6 +31,7 @@ contextBridge.exposeInMainWorld('evren', {
   disari: (url) => ipcRenderer.invoke('disari', url),
   panoOku: () => ipcRenderer.invoke('pano-oku'), // pano metni (ana süreç; Win+V geçmişi dahil)
   panoYaz: (metin) => ipcRenderer.invoke('pano-yaz', metin),
+  claudeOturumlari: (deger) => ipcRenderer.invoke('claude-oturumlari', deger), // Claude Code oturumlarını da göster (ayar)
   uykuEngelle: (deger) => ipcRenderer.invoke('uyku-engelle', deger), // çalışan oturum varken uykuyu engelle
   uykuDinle: (f) => ipcRenderer.on('uyku:durum', (_e, acik) => f(acik)), // blok gerçekten devrede mi
   hedefDinle: (f) => ipcRenderer.on('hedef:devam', (_e, id, sayi) => f(id, sayi)), // hedef duraklayınca otomatik devam
@@ -43,6 +46,11 @@ contextBridge.exposeInMainWorld('evren', {
   oturumCatalla: (bilgi) => ipcRenderer.invoke('oturum-catalla', bilgi),
   sohbetOturumKaydi: (param) => ipcRenderer.invoke('sohbet-oturum-kaydi', param),
   oturumCikti: (param) => ipcRenderer.invoke('oturum-cikti', param), // oturumun ürettiği dosyalar
+  panoEkAl: () => ipcRenderer.invoke('pano-ek-al'), // panodaki görsel (yapistir/ altına PNG) ya da kopyalanan dosyalar
+  gorselSec: () => ipcRenderer.invoke('gorsel-sec'), // dosya seçici (Görsel ekle)
+  dosyaOnizleme: (yol) => ipcRenderer.invoke('dosya-onizleme', yol),
+  gorselBuyuk: (yol) => ipcRenderer.invoke('gorsel-buyuk', yol), // önizleme katmanı için büyük görsel
+  dosyaYolu: (dosya) => { try { return webUtils.getPathForFile(dosya) || ''; } catch { return ''; } }, // sürükle-bırak
   dosyaAc: (yol) => ipcRenderer.invoke('dosya-ac', yol), // dosyayı varsayılan uygulamada aç
   dosyaKlasor: (yol) => ipcRenderer.invoke('dosya-klasor', yol), // dosya konumunu Explorer'da göster
 });

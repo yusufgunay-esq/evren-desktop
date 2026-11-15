@@ -1,8 +1,7 @@
 // أَعُوذُ بِاللَّهِ مِنَ الشَّيْطَانِ الرَّجِيمِ
 // بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
-/* This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
- * If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/.
- * Copyright (c) 2026 Yusuf Günay. */
+/* Copyright (c) 2026 Yusuf Günay.
+ * This program is free software under the GNU GPL v3 or later; see LICENSE and LICENSE-EK.md. */
 // Claude Code oturum kayıtları (~/.claude/projects) okuyucu: başlık, kaynak, canlılık ve alt ajanlar.
 // Electron'a bağlı değildir; `node -e "require('./gecmis').oturumGecmisi(...)"` ile doğrulanabilir.
 'use strict';
@@ -622,12 +621,28 @@ function tumOturumlariTara(secenekler) {
 // dizinle aynı kalır, örnek satır özgün büyük/küçük harfiyle kesilir.
 const ARAMA_BAYT = 350 * 1024;
 const ARAMA_BUTCE = 48 * 1024 * 1024; // tek aramada tüm dosyalar için üst sınır
-const ARAMA_HARF = { A: 'a', B: 'b', C: 'c', D: 'd', E: 'e', F: 'f', G: 'g', H: 'h', I: 'ı', J: 'j', K: 'k', L: 'l', M: 'm', N: 'n', O: 'o', P: 'p', Q: 'q', R: 'r', S: 's', T: 't', U: 'u', V: 'v', W: 'w', X: 'x', Y: 'y', Z: 'z', Ç: 'ç', Ğ: 'ğ', İ: 'i', Ö: 'ö', Ş: 'ş', Ü: 'ü' };
-const aramaMetni = (s) => String(s).replace(/[A-ZÇĞİÖŞÜ]/g, (c) => ARAMA_HARF[c] || c).toLowerCase();
+// Arama katlaması ve ad eşleşmesi renderer ile ortak (gorunum.js); burada yeniden dışa verilir.
+const { aramaMetni, katla, birFark, adEslesir } = require('./gorunum');
+
+// Bir JSONL satırından yalnız insanın okuyacağı metin: kullanıcı mesajı ve asistan "text" blokları.
+// thinking, signature, tool_use girdisi, tool_result, görsel/base64 ve 40+ karakterlik boşluksuz dizgiler atılır.
+function okunurMetin(satir) {
+  let o;
+  try { o = JSON.parse(satir); } catch { return ''; }
+  if (!o || (o.type !== 'user' && o.type !== 'assistant') || !o.message) return '';
+  const c = o.message.content;
+  const parcalar = [];
+  if (typeof c === 'string') parcalar.push(c);
+  else if (Array.isArray(c)) for (const b of c) if (b && b.type === 'text' && typeof b.text === 'string') parcalar.push(b.text);
+  return parcalar.join(' ')
+    .replace(/\S{40,}/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 // Dosyanın kuyruğunda sorguyu arar; ilk eşleşmenin çevresinden tek satırlık örnek çıkarır.
 function icerikAra(dosya, sorgu, enCok = ARAMA_BAYT) {
-  const q = aramaMetni(String(sorgu || '').trim());
+  const q = katla(String(sorgu || '').trim());
   if (q.length < 2) return null;
   let fd;
   try { fd = fs.openSync(dosya, 'r'); } catch { return null; }
@@ -643,40 +658,30 @@ function icerikAra(dosya, sorgu, enCok = ARAMA_BAYT) {
       if (!r) break;
       okunan += r;
     }
-    const ham = t.toString('utf8', 0, okunan);
-    const metin = aramaMetni(ham);
-    const ilk = metin.indexOf(q);
-    if (ilk < 0) return null;
+    const satirlar = t.toString('utf8', 0, okunan).split('\n');
     let sayi = 0;
-    for (let i = ilk; i >= 0 && sayi < 999; i = metin.indexOf(q, i + q.length)) sayi++;
-    // Örnek, JSON kabuğundan arındırılsın: eşleşmeden geriye doğru en yakın "content" alanı.
-    let basIx = Math.max(0, ilk - 55);
-    // JSON metin değerinin başı: eşleşmeden geriye doğru en yakın tırnak-iki nokta-tırnak.
-    const deger = ham.lastIndexOf('":"', ilk);
-    if (deger >= 0 && ilk - deger < 400) basIx = deger + 3;
-    else {
-      const anahtar = ham.lastIndexOf('"content"', ilk);
-      if (anahtar >= 0 && ilk - anahtar < 3000) basIx = anahtar + 9;
+    let ornek = '';
+    for (const satir of satirlar) {
+      if (!satir || satir.length < q.length) continue;
+      const metin = okunurMetin(satir);
+      if (!metin) continue;
+      const kat = katla(metin);
+      let i = kat.indexOf(q);
+      if (i < 0) continue;
+      if (!ornek) {
+        const bas2 = Math.max(0, i - 40);
+        ornek = (bas2 > 0 ? '…' : '') + metin.slice(bas2, Math.min(metin.length, i + q.length + 80)).trim();
+        if (i + q.length + 80 < metin.length) ornek += '…';
+      }
+      for (; i >= 0 && sayi < 999; i = kat.indexOf(q, i + q.length)) sayi++;
     }
-    let kes = Math.min(ham.length, ilk + q.length + 90);
-    const satirSonu = ham.indexOf('\n', ilk);
-    if (satirSonu >= 0 && satirSonu < kes) kes = satirSonu; // örnek tek JSON satırında kalsın
-    let ornek = ham.slice(basIx, kes)
-      .replace(/\\u([0-9a-fA-F]{4})/g, (_m, h) => String.fromCharCode(parseInt(h, 16)))
-      .replace(/\\[nrt]/g, ' ')
-      .replace(/\\"/g, '"')
-      .replace(/\\/g, ' ')
-      .replace(/^\s*:\s*"?/, '')
-      .replace(/\s+/g, ' ')
-      .replace(/[\s"}\]]+$/, '')
-      .trim();
-    if (ornek.length > 150) ornek = ornek.slice(0, 150).trim() + '…';
-    return { sayi, ornek };
+    return sayi ? { sayi, ornek } : null;
   } catch { return null; }
   finally { try { fs.closeSync(fd); } catch {} }
 }
 
-// [{ id, projeYol }] listesini arar; yalnız eşleşen oturumları döndürür.
+// [{ id, projeYol, baslik, projeAd }] listesini arar. Sıra: önce ad / proje (klasör) eşleşmesi
+// ({ ad: true }, içerik bağlamı yok), sonra sohbet içeriği. Yalnız eşleşen oturumlar döner.
 function icerikAraListe(turler, sorgu) {
   const q = String(sorgu || '').trim();
   if (q.length < 2 || !Array.isArray(turler)) return {};
@@ -684,8 +689,12 @@ function icerikAraListe(turler, sorgu) {
   const sonuc = {};
   let butce = ARAMA_BUTCE;
   for (const t of turler) {
-    if (butce <= 0) break;
     if (!t || !OTURUM_KIMLIK.test(String(t.id || ''))) continue;
+    if (adEslesir([t.baslik, t.projeAd, t.projeYol], q)) { sonuc[t.id] = { ad: true, sayi: 0, ornek: '' }; continue; }
+    // Eşleşme iç içe bir alt işte ise adı döner: kart hangi alt işin eşleştiğini gösterir.
+    const altAd = (Array.isArray(t.ekler) ? t.ekler.slice(0, 40) : []).find((e) => adEslesir([e], q));
+    if (altAd) { sonuc[t.id] = { ad: true, sayi: 0, ornek: '', alt: String(altAd) }; continue; }
+    if (butce <= 0) continue;
     if (!t.projeYol || typeof t.projeYol !== 'string') continue;
     const pay = Math.min(ARAMA_BAYT, butce);
     butce -= pay;
@@ -696,4 +705,4 @@ function icerikAraListe(turler, sorgu) {
   return sonuc;
 }
 
-module.exports = { oturumGecmisi, tumOturumlariTara, cwdOku, tempMi, oturumSayilari, altAjanlariOku, turDevamEdiyor, sonDurumOku, baslikOku, ozelBaslikOku, ozelBaslikYaz, baslikOnbellekTemizle, evrenKayitlariOku, icerikAra, icerikAraListe, aramaMetni, OTURUM_KIMLIK, CANLI_ESIK_MS };
+module.exports = { oturumGecmisi, tumOturumlariTara, cwdOku, tempMi, oturumSayilari, altAjanlariOku, turDevamEdiyor, sonDurumOku, baslikOku, ozelBaslikOku, ozelBaslikYaz, baslikOnbellekTemizle, evrenKayitlariOku, icerikAra, icerikAraListe, aramaMetni, katla, adEslesir, birFark, okunurMetin, OTURUM_KIMLIK, CANLI_ESIK_MS };

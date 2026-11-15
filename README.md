@@ -8,7 +8,11 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img alt="Lisans: MPL-2.0" src="https://img.shields.io/badge/lisans-MPL--2.0-4c90f0?style=flat-square" /></a>
+  by <a href="https://github.com/yusufgunay-esq">Yusuf Günay</a>
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img alt="Lisans: GPL-3.0" src="https://img.shields.io/badge/lisans-GPL--3.0-4c90f0?style=flat-square" /></a>
   <img alt="Platform: Windows 10/11" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-1e242c?style=flat-square" />
   <img alt="Electron" src="https://img.shields.io/badge/Electron-45-1e242c?style=flat-square" />
   <img alt="Sürüm" src="https://img.shields.io/badge/s%C3%BCr%C3%BCm-0.5.0-1e242c?style=flat-square" />
@@ -183,7 +187,9 @@ Hata bildirimi ve öneriler için issue açabilirsiniz. Çekme isteklerinde değ
 
 ## Lisans
 
-[Mozilla Public License 2.0](LICENSE). Bu lisans kapsamındaki dosyalarda yaptığınız değişiklikler aynı lisansla açık kalır; kendi ayrı kodunuzu istediğiniz lisansla dağıtabilirsiniz. Telif bildirimi ve üçüncü taraf bileşenler için [NOTICE](NOTICE).
+[GNU Genel Kamu Lisansı 3.0](LICENSE) (GPLv3 ya da daha sonraki bir sürüm). Yazılımı değiştirip dağıtırsanız türev çalışma da GPLv3 ile açık kalır. Telif bildirimi, ek şartlar ve üçüncü taraf bileşenler için [NOTICE](NOTICE).
+
+GPLv3 bölüm 7(b) uyarınca ek atıf şartı [LICENSE-EK.md](LICENSE-EK.md) dosyasındadır: dağıtımda, Hakkında ekranında ya da eşdeğer yasal bildirimde ve dağıtım sayfasında bağlantıyla birlikte **"Based on EVREN Desktop by Yusuf Günay"** satırı görünür. Başlığın altındaki "by Yusuf Günay" satırı yazar atfıdır ve korunmalıdır.
 
 © 2026 Yusuf Günay · Günay Studio
 
@@ -200,6 +206,6 @@ Also: multiple sessions in tabs, a focus mode that leaves only the terminal, and
 
 Requirements: Windows 10/11, Node.js 20+, Claude Code CLI on PATH, an EVREN account (sign-in via e-Devlet). Install with `npm install`, run with `npm run basla`; paste your API key on first launch.
 
-This is an independent community project and is not affiliated with the Presidency of Defence Industries (SSB) or the EVREN platform. Licensed under MPL-2.0.
+This is an independent community project and is not affiliated with the Presidency of Defence Industries (SSB) or the EVREN platform. Licensed under the GNU GPL v3 or later; see [LICENSE](LICENSE) and the additional attribution terms in [LICENSE-EK.md](LICENSE-EK.md).
 
 </details>

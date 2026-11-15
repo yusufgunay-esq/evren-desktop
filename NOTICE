@@ -4,8 +4,14 @@ Copyright (c) 2026 Yusuf Günay.
 Bu yazılım Yusuf Günay tarafından geliştirilmiştir; bu telif bildirimi korunmalıdır.
 This software was created by Yusuf Günay; this copyright notice must be retained.
 
-Mozilla Public License 2.0 kapsamındaki dosyalarda yaptığınız değişiklikler aynı lisansla açık kalır;
-kendi eklediğiniz ayrı dosyaları istediğiniz lisansla dağıtabilirsiniz.
+EVREN Desktop özgür yazılımdır: GNU Genel Kamu Lisansı'nın (GPL) 3. sürümü ya da daha sonraki bir
+sürümü koşulları altında dağıtılır. Tam metin LICENSE dosyasındadır.
+This program is free software under the GNU GPL version 3 or later. See LICENSE.
+
+GPLv3 bölüm 7(b) ek şartı (LICENSE-EK.md): her dağıtım, Hakkında ekranında ya da eşdeğer yasal
+bildirimlerde ve her dağıtım sayfasında (README, mağaza, site), https://github.com/yusufgunay-esq/evren-desktop
+bağlantısıyla "Based on EVREN Desktop by Yusuf Günay" satırını görünür biçimde gösterir. README'nin
+başındaki "by Yusuf Günay" satırı yazar atfıdır ve korunmalıdır.
 
 Bu proje bağımsızdır; T.C. Cumhurbaşkanlığı Savunma Sanayii Başkanlığı (SSB) veya EVREN platformu ile
 resmî bir bağı yoktur. EVREN adı ve markası sahiplerine aittir.

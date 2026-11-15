@@ -1,8 +1,7 @@
 // أَعُوذُ بِاللَّهِ مِنَ الشَّيْطَانِ الرَّجِيمِ
 // بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
-/* This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
- * If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/.
- * Copyright (c) 2026 Yusuf Günay. */
+/* Copyright (c) 2026 Yusuf Günay.
+ * This program is free software under the GNU GPL v3 or later; see LICENSE and LICENSE-EK.md. */
 /* EVREN Desktop — arayüz. Terminal xterm.js; kabuk ana süreçte (node-pty/ConPTY). */
 'use strict';
 // Chromium ctx.font ParseShorthand leading-space düzeltmesi (xterm addon-webgl #6297)
@@ -37,6 +36,7 @@ const AZ_HAREKET = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const TerminalSinif = window.Terminal || (window.xterm && window.xterm.Terminal);
 const FitSinif = window.FitAddon ? (window.FitAddon.FitAddon || window.FitAddon) : null;
 const WebglSinif = window.WebglAddon ? (window.WebglAddon.WebglAddon || window.WebglAddon) : null;
+const AraSinif = window.SearchAddon ? (window.SearchAddon.SearchAddon || window.SearchAddon) : null;
 let webglAktifSayi = 0; // doğrulama: kaç terminal WebGL ile çiziliyor
 const S = {
   modeller: [], projeler: [], model: '', proje: '',
@@ -45,10 +45,15 @@ const S = {
   calisiyor: false, basliyor: false, oturumlar: [], aktif: null,
   fs: Math.min(18, Math.max(11, Number(new URLSearchParams(location.search).get('fs') || sakla.oku('fs', 13)) || 13)),
   sohbetAcik: sakla.oku('sohbetPanelAcik', false), sohbetFiltre: 'hepsi',
-  ciktilar: null, ciktiAnahtar: null, // oturumun ürettiği dosyalar (panel "Çıktılar" sekmesi)
+  ciktilar: null, ciktiAnahtar: null, ciktiKok: '', ciktiImza: '', // oturumun yazdığı dosyalar (Dosyalar görünümü)
+  panelMod: 'sohbet', dosyaSuz: 'hepsi', dosyaGorseller: [], tusSerit: sakla.oku('tusSerit', true),
+  gorunumler: sakla.oku('gorunumler', {}), // oturum başına Sohbet · Terminal · Dosyalar seçimi
   grupKapali: sakla.oku('grupKapali', {}), // { calisiyor: true, bosta: true } — gruplar ayrı ayrı katlanır
   sefOturumlar: new Set(sakla.oku('sefOturumlar', [])), // Şef olarak açılmış oturum kimlikleri (kalıcı)
+  ayar: { claudeOturumlari: false }, // ana süreçteki ayardan gelir (durum)
 };
+// Claude Code oturumları görünsün mü: tek okuma noktası (kişisel katman yalnız bu satırı değiştirebilir).
+const claudeGoster = () => S.ayar.claudeOturumlari === true;
 
 // ---------- yardımcılar ----------
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -141,14 +146,121 @@ let gecmisIstek = 0;
 let gecmisAra = ''; // oturum listesi süzgeci (başlıkta ve ajan tanımında arar)
 S.gecmis = [];
 const acikAjanlar = new Set();
-const ignelenenler = new Set(sakla.oku('ignelenenler', []));
+// Sabit / arşiv / elle proje / kümeleme biçimi: ana süreçte tek küçük JSON (localStorage değil), userData altında.
+const ignelenenler = new Set(); // sabitlenen oturum kimlikleri ("Sabitlenenler" bölümü)
+const arsivlenenler = new Set(); // arşive alınan oturum kimlikleri (silinmez, yalnız gizlenir)
+let elleProje = {}; // { oturumKimligi: projeKlasoru } — elle seçim, otomatik çıkarımı ezer
+let kumeBicimi = 'tarih'; // Geçmiş kümeleme: 'tarih' | 'proje'
+let cikarilanProje = {}; // { oturumKimligi: { yol, ad } } — yol çoğunluğundan çıkarım
+const cikarimIstendi = new Map(); // oturum kimliği -> ms (damga değişmedikçe yeniden sorulmaz)
+function tercihKaydet() {
+  try { window.evren.tercihYaz({ sabit: [...ignelenenler], arsiv: [...arsivlenenler], proje: elleProje, kume: kumeBicimi, gorulen, gorulenTaban, acilan }); } catch {}
+}
+// Okunmamış işareti ve hızlı geçiş: oturum kimliği -> son görülme ms; taban = özelliğin ilk açıldığı an; acilan = en yeni önde.
+let gorulen = {};
+let gorulenTaban = 0;
+let acilan = [];
+let gorulenZaman = null;
+// Orta alanda görünen oturum kimliği (canlı sekme ya da okuma görünümü).
+function gorunenOturumId() {
+  if (seciliOturumGecmisi) return seciliOturumGecmisi.id;
+  const o = aktifOturum();
+  return (o && o.devam) || null;
+}
+// Görünen oturum görülmüş sayılır; yeni içerik gelmişse ya da sıra değiştiyse yazılır (kısa gecikmeyle birleştirilir).
+function gorulduIsaretle(id) {
+  if (!id || !gorulenTaban) return;
+  const g = S.gecmis.find((x) => x.id === id);
+  const yeniIcerik = (gorulen[id] || 0) < ((g && g.ms) || 0) || !gorulen[id];
+  if (!yeniIcerik && acilan[0] === id) return;
+  if (yeniIcerik) gorulen = { ...gorulen, [id]: Math.max(Date.now(), (g && g.ms) || 0) };
+  acilan = Gorunum.acilanEkle(acilan, id);
+  clearTimeout(gorulenZaman);
+  gorulenZaman = setTimeout(tercihKaydet, 400);
+}
+async function tercihYukle() {
+  let t = null;
+  try { t = await window.evren.tercihOku(); } catch {}
+  t = t || { sabit: [], arsiv: [], proje: {}, kume: 'tarih' };
+  gorulen = t.gorulen || {};
+  acilan = t.acilan || [];
+  gorulenTaban = t.gorulenTaban || 0;
+  if (!gorulenTaban) { gorulenTaban = Date.now(); setTimeout(tercihKaydet, 0); } // ilk açılış: eski oturumlar okunmuş sayılır
+  for (const id of t.sabit) ignelenenler.add(id);
+  for (const id of t.arsiv) arsivlenenler.add(id);
+  elleProje = t.proje || {};
+  kumeBicimi = t.kume === 'proje' ? 'proje' : 'tarih';
+  // Eski sürümün localStorage iğneleri bir kez taşınır.
+  const eski = sakla.oku('ignelenenler', []);
+  if (Array.isArray(eski) && eski.length && !sakla.oku('tercihTasindi', false)) {
+    for (const id of eski) if (typeof id === 'string' && id) ignelenenler.add(id);
+    sakla.yaz('tercihTasindi', true);
+    tercihKaydet();
+  }
+}
+const tercihHazir = tercihYukle();
 function oturumIgnele(id) {
   if (!id) return;
   if (ignelenenler.has(id)) ignelenenler.delete(id);
-  else ignelenenler.add(id);
-  sakla.yaz('ignelenenler', [...ignelenenler]);
+  else { ignelenenler.add(id); arsivlenenler.delete(id); }
+  tercihKaydet();
   gecmisCiz();
   sohbetIgneDurumGuncelle();
+}
+// Etkin (çalışan ya da sekmesi açık) oturum arşivlenemez; arşivlenen sabitten düşer.
+function oturumArsivle(id) {
+  if (!id) return;
+  if (arsivlenenler.has(id)) arsivlenenler.delete(id);
+  else {
+    const g = S.gecmis.find((x) => x.id === id);
+    if (g && (gecmisAcikMi(g) || g.canli || g.turCanli || g.calisanAjan > 0 || g.calisanEvren > 0)) return;
+    arsivlenenler.add(id);
+    ignelenenler.delete(id);
+  }
+  tercihKaydet();
+  gecmisCiz();
+  sohbetIgneDurumGuncelle();
+}
+function oturumProjeTasi(id, yol) {
+  if (!id) return;
+  if (yol) elleProje = { ...elleProje, [id]: yol };
+  else { elleProje = { ...elleProje }; delete elleProje[id]; } // otomatiğe dön
+  tercihKaydet();
+  gecmisCiz();
+}
+function kumeBicimiSec(b) {
+  if (b !== 'tarih' && b !== 'proje') return;
+  if (kumeBicimi === b) return;
+  kumeBicimi = b;
+  tercihKaydet();
+  gecmisCiz();
+}
+const projeAdiBul = (yol) => { const p = (S.projeler || []).find((x) => x.yol === yol); return p ? p.ad : ''; };
+const projeBilgi = (g) => Gorunum.etkinProje(g, elleProje, cikarilanProje, projeAdiBul);
+// Klasörsüz (genel EVREN) oturum: asıl projesi kaydındaki yazılan dosyalardan çıkarılabilir.
+function genelOturumMu(g) {
+  if (!g || !g.projeYol) return true;
+  const n = (y) => String(y || '').replace(/[\\]/g, '/').replace(/[/]+$/, '').toLowerCase();
+  return !!S.serbestDizin && n(g.projeYol) === n(S.serbestDizin);
+}
+async function projeCikarimiIste(liste) {
+  const istek = liste.filter((g) => genelOturumMu(g) && !elleProje[g.id] && cikarimIstendi.get(g.id) !== g.ms)
+    .map((g) => ({ id: g.id, projeYol: g.projeYol, ms: g.ms }));
+  if (!istek.length) return;
+  for (const o of istek) cikarimIstendi.set(o.id, o.ms);
+  let sonuc = null;
+  try { sonuc = await window.evren.projeCikar(istek); } catch {}
+  if (!sonuc) return;
+  let degisti = false;
+  for (const o of istek) {
+    const yeni = sonuc[o.id] || null;
+    const eski = cikarilanProje[o.id] || null;
+    if ((yeni && yeni.yol) !== (eski && eski.yol)) {
+      degisti = true;
+      if (yeni) cikarilanProje[o.id] = yeni; else delete cikarilanProje[o.id];
+    }
+  }
+  if (degisti) gecmisCiz();
 }
 let ilkGecmisYukleme = true;
 let seciliOturumGecmisi = null;
@@ -196,13 +308,16 @@ function gecmisCiz() {
     el.innerHTML = '<div class="bos-satir">Henüz kayıtlı proje yok.</div>';
     return;
   }
+  gorulduIsaretle(gorunenOturumId());
   const q = kucult(gecmisAra.trim());
   const eslesir = (g) => kucult(g.baslik).includes(q) ||
-    kucult(g.projeAd || '').includes(q) ||
+    kucult(g.projeAd || '').includes(q) || kucult(projeBilgi(g).ad).includes(q) ||
     (g.altAjanlar || []).some((a) => kucult(a.tanim).includes(q) || kucult(a.tur).includes(q)) ||
     (g.evrenIsleri || []).some((e) => kucult(e.baslik).includes(q) || kucult(e.model).includes(q)) ||
-    !!(g.eslesme && g.eslesme.sayi > 0);
-  const liste = q ? S.gecmis.filter(eslesir) : S.gecmis;
+    !!g.eslesme;
+  const adOnce = (g) => (kucult(g.baslik).includes(q) || kucult(g.projeAd || '').includes(q) || (g.eslesme && g.eslesme.ad)) ? 0 : 1;
+  // Önce ad / proje eşleşmesi, sonra sohbet içeriği (sıralama kararlı: aynı sınıfta tarih sırası korunur).
+  const liste = q ? S.gecmis.filter(eslesir).map((g, i) => [g, i]).sort((x, y) => adOnce(x[0]) - adOnce(y[0]) || x[1] - y[1]).map((x) => x[0]) : S.gecmis;
   if ($('gecmisSay')) $('gecmisSay').textContent = q ? `${liste.length}/${S.gecmis.length}` : (S.gecmis.length || '0');
   if (!liste.length) {
     const bos = `<div class="bos-satir">${q ? 'Aramayla eşleşen oturum yok.' : 'Kayıtlı oturum bulunamadı.'}</div>`;
@@ -216,13 +331,15 @@ function gecmisCiz() {
   const inProgress = [];
   const idle = [];
   for (const g of liste) {
-    const acik = gecmisAcikMi(g);
-    const calisiyor = g.canli || g.turCanli || (g.calisanAjan > 0) || (g.calisanEvren > 0);
-    g._canli = calisiyor; // kart kendi durumunu taşır: sabitlenen grupta da canlılık görünür
-    g._acik = acik;
+    g._canli = !!(g.canli || g.turCanli || (g.calisanAjan > 0) || (g.calisanEvren > 0)); // kart kendi durumunu taşır: sabitlenen grupta da canlılık görünür
+    g._acik = gecmisAcikMi(g);
+  }
+  // Arşivdekiler ayrı bölüme gider (etkin oturum arşivde olsa da normal listede kalır).
+  const { normal, arsivli } = Gorunum.arsivAyir(liste, arsivlenenler, (g) => g._canli || g._acik);
+  for (const g of normal) {
     if (ignelenenler.has(g.id)) {
       ignelenenList.push(g);
-    } else if (calisiyor || acik) {
+    } else if (g._canli || g._acik) {
       inProgress.push(g);
     } else {
       idle.push(g);
@@ -233,40 +350,54 @@ function gecmisCiz() {
     if (g.sonDurum === 'soru') return '<span class="seans-durum soru" title="Ajan soru sordu, cevap bekliyor"><svg class="ic" aria-hidden="true"><use href="#i-soru" /></svg><span>soru</span></span>';
     if (calisiyor) return '<span class="seans-durum canli" title="Bu oturum çalışıyor"><span class="led canli"></span><span>çalışıyor</span></span>';
     if (acik) return '<span class="seans-durum acik" title="Sekme açık, tur beklemede">açık</span>';
-    if (g.sonDurum === 'bitti' && Date.now() - g.ms < 24 * 60 * 60 * 1000) return '<span class="seans-durum bitti" title="Bu oturumda iş bitti"><svg class="ic" aria-hidden="true"><use href="#i-check-circle" /></svg><span>bitti</span></span>';
-    return '<span class="seans-zaman">' + kisaZaman(g.ms) + '</span>';
+    // Bitti ayrı etiket almaz: geçmişte zaman yeter, satır sakin kalır (durum ipucu başlık metninde).
+    return `<span class="seans-zaman"${g.sonDurum === 'bitti' ? ' title="Bu oturumda iş bitti"' : ''}>${kisaZaman(g.ms)}</span>`;
   }
   const kartHtml = (g, calisiyor, idx = 0) => {
-    const secili = aktifDevam === g.id;
+    const secili = aktifDevam === g.id || (!!seciliOturumGecmisi && seciliOturumGecmisi.id === g.id);
     const sef = S.sefOturumlar.has(g.id) || S.oturumlar.some((o) => o.orkestrator && o.devam === g.id);
     const tumAjanlar = Array.isArray(g.altAjanlar) ? g.altAjanlar : [];
     const tumIsler = Array.isArray(g.evrenIsleri) ? g.evrenIsleri : [];
     const dalVar = tumAjanlar.length + tumIsler.length > 0;
     const calisanToplam = (g.calisanAjan || 0) + (g.calisanEvren || 0);
-    const rozetMetin = calisanToplam ? `${calisanToplam}/${tumAjanlar.length + tumIsler.length}` : `${tumAjanlar.length + tumIsler.length}`;
+    const rozetMetin = calisanToplam ? `${calisanToplam}/${tumAjanlar.length + tumIsler.length} iş` : `${tumAjanlar.length + tumIsler.length} iş`;
     const baslikEs = kucult(g.baslik).includes(q);
-    const ajanlar = q && !baslikEs ? tumAjanlar.filter((a) => kucult(a.tanim).includes(q) || kucult(a.tur).includes(q)) : tumAjanlar;
-    const isler = q && !baslikEs ? tumIsler.filter((e) => kucult(e.baslik).includes(q) || kucult(e.model).includes(q)) : tumIsler;
-    const ajanAcik = acikAjanlar.has(g.id) || (!!q && ajanlar.length + isler.length > 0);
+    const altAd = q && !baslikEs && g.eslesme && g.eslesme.alt ? g.eslesme.alt : '';
+    const ajanlar = q && !baslikEs ? tumAjanlar.filter((a) => kucult(a.tanim).includes(q) || kucult(a.tur).includes(q) || a.tanim === altAd) : tumAjanlar;
+    const isler = q && !baslikEs ? tumIsler.filter((e) => kucult(e.baslik).includes(q) || kucult(e.model).includes(q) || e.baslik === altAd) : tumIsler;
+    // Eşleşme iç içe bir alt işteyse kartta adı görünür; EVREN işiyse tıklayınca o işin kaydı açılır.
+    const altIs = altAd ? Gorunum.altIsBul(tumIsler, altAd) : null;
+    const altEsHtml = altAd ? `<div class="seans-alt-es${altIs ? ' tikli' : ''}"${altIs ? ` data-alt-is="${esc(altIs.id)}" data-alt-ust="${esc(g.id)}" role="button" tabindex="0"` : ''} title="Eşleşen alt iş${altIs ? ' · kaydı aç' : ''}"><svg class="ic" aria-hidden="true"><use href="#i-branch" /></svg>${(() => { const ib = isBasligi(altAd); return ib ? `<span class="is-no mono">İŞ ${esc(ib.no)}</span><span>${esc(ib.ad)}</span>` : `<span>${esc(altAd)}</span>`; })()}</div>` : '';
+    const ajanAcik = acikAjanlar.has(g.id) || (!!q && !altAd && ajanlar.length + isler.length > 0); // eşleşen alt iş kartta tek satır görünür; ağaç yinelenmesin
     const belirmeSinif = ilkGecmisYukleme ? ' belirme' : '';
     const gecikmeStil = ilkGecmisYukleme ? ` style="animation-delay: ${Math.min(idx * 25, 200)}ms;"` : '';
     const igneli = ignelenenler.has(g.id);
+    const arsivde = arsivlenenler.has(g.id) && !(g._canli || g._acik);
+    const pb = projeBilgi(g);
+    const pbIpucu = pb.kaynak === 'elle' ? ' · elle taşındı' : pb.kaynak === 'cikarim' ? ' · yazılan dosyalardan çıkarıldı' : '';
     // Bu uygulamanın açtığı her oturum EVREN arka ucunda koşar. Kaynak, oturum dosyasındaki İLK asistan yanıtının
     // modelinden okunur; model henüz yazılmadıysa (kullanıcı mesajı gidip yanıt beklenirken) bilinmiyor demektir.
     // Bilinmeyeni Claude saymak yanlış rozet gösteriyordu: yalnız 'claude' kesin ise kıvılcım, gerisi EVREN.
     const evrenMi = g.kaynak !== 'claude' || g.evren;
-    const kaynakHtml = kaynakIsaret(evrenMi);
     const kartCanli = g._canli ?? calisiyor;
+    // Okunmamış: arka planda bitmiş/soru sormuş ve görülmemiş oturumda kaynak ikonunun yerine 5px vurgu noktası.
+    const okunmadi = !kartCanli && Gorunum.okunmamisMi(g, gorulen, secili, gorulenTaban);
+    const kaynakHtml = okunmadi
+      ? '<span class="seans-okunmadi" role="img" aria-label="Okunmamış" title="Okunmamış: bu oturum arka planda bitti ya da soru sordu"></span>'
+      : kaynakIsaret(evrenMi);
     const kartAcik = !!g._acik;
     const durumYazi = kartCanli ? 'çalışıyor' : g.sonDurum === 'soru' ? 'soru bekliyor' : g.sonDurum === 'bitti' ? 'bitti' : esc(goreli(g.ms / 1000));
     return `
-      <div class="seans-kart${kartCanli ? ' canli' : ''}${secili ? ' sec-li' : ''}${sef ? ' sef' : ''}${igneli ? ' igneli' : ''}${belirmeSinif}"${gecikmeStil} role="option" aria-selected="${secili}" data-id="${esc(g.id)}" data-yol="${esc(g.projeYol)}" title="${esc(g.baslik)}
-${esc(g.projeAd)} · ${evrenMi ? 'EVREN' : 'Claude'} · ${durumYazi}">
+      <div class="seans-kart${kartCanli ? ' canli' : ''}${secili ? ' sec-li' : ''}${sef ? ' sef' : ''}${igneli ? ' igneli' : ''}${arsivde ? ' arsivli' : ''}${belirmeSinif}"${gecikmeStil} role="option" aria-selected="${secili}" data-id="${esc(g.id)}" data-yol="${esc(g.projeYol)}" title="${esc(g.baslik)}
+${esc(pb.ad)}${pbIpucu} · ${evrenMi ? 'EVREN' : 'Claude'} · ${durumYazi}">
         <div class="seans-satir-ust">
           ${kaynakHtml}
           <span class="seans-baslik">${esc(g.baslik)}</span>
           <button class="seans-ad-btn" type="button" data-adlandir="${esc(g.id)}" title="Oturumu adlandır">
             <svg class="ic"><use href="#i-edit" /></svg>
+          </button>
+          <button class="seans-arsiv-btn" type="button" data-arsivle="${esc(g.id)}" title="${arsivde ? 'Arşivden çıkar' : 'Arşivle (silmez, gizler)'}">
+            <svg class="ic"><use href="#i-arsiv" /></svg>
           </button>
           <button class="seans-igne-btn${igneli ? ' aktif' : ''}" type="button" data-igne="${esc(g.id)}" title="${igneli ? 'İğneyi kaldır' : 'En üste iğnele'}">
             <svg class="ic"><use href="#i-pin" /></svg>
@@ -275,10 +406,12 @@ ${esc(g.projeAd)} · ${evrenMi ? 'EVREN' : 'Claude'} · ${durumYazi}">
         </div>
         <div class="seans-satir-alt">
           ${sef ? '<span class="seans-sef mono">şef</span>' : ''}
-          <span class="seans-proje">${esc(g.projeAd)}</span>
-          ${dalVar && (calisanToplam > 0 || ajanAcik || q) ? `<button class="tag-ajan${calisanToplam ? ' canli' : ''}" data-ajan-toggle="${esc(g.id)}" type="button" title="${tumAjanlar.length + tumIsler.length} alt görev${calisanToplam ? `, ${calisanToplam} çalışıyor` : ''}">${rozetMetin}</button>` : ''}
+          ${arsivde && q ? '<span class="seans-arsiv-etiket mono">arşivde</span>' : ''}
+          <span class="seans-proje${pb.kaynak !== 'kendi' ? ' tasindi' : ''}">${esc(pb.ad)}</span>
+          ${dalVar && (calisanToplam > 0 || ajanAcik) && !(q && g.eslesme && g.eslesme.sayi > 1) ? `<button class="tag-ajan${calisanToplam ? ' canli' : ''}" data-ajan-toggle="${esc(g.id)}" type="button" title="${tumAjanlar.length + tumIsler.length} alt görev${calisanToplam ? `, ${calisanToplam} çalışıyor` : ''}">${rozetMetin}</button>` : ''}
         </div>
-        ${q && g.eslesme && g.eslesme.ornek ? `<div class="seans-eslesme" title="Sohbet içinde ${g.eslesme.sayi} eşleşme"><svg class="ic" aria-hidden="true"><use href="#i-search" /></svg><span>${esc(g.eslesme.ornek)}</span>${g.eslesme.sayi > 1 ? `<b class="mono">${g.eslesme.sayi}</b>` : ''}</div>` : ''}
+        ${q && g.eslesme && !g.eslesme.ad && !baslikEs && g.eslesme.ornek ? `<div class="seans-eslesme" title="Sohbet içinde ${g.eslesme.sayi} eşleşme"><svg class="ic" aria-hidden="true"><use href="#i-search" /></svg><span>${esc(g.eslesme.ornek)}</span>${g.eslesme.sayi > 1 ? `<b class="mono">${g.eslesme.sayi}</b>` : ''}</div>` : ''}
+        ${altEsHtml}
         ${dalVar && ajanAcik ? `
         <div class="ajan-agac${calisanToplam ? ' canli' : ''}">
           ${ajanlar.map((a) => `
@@ -315,27 +448,44 @@ ${esc(g.projeAd)} · ${evrenMi ? 'EVREN' : 'Claude'} · ${durumYazi}">
   };
   // Grup başlığı gerçek bir düğme: Enter/Space ile katlanır, ok solda, sayı sağda hep görünür.
   // Arama varken eşleşen gruplar geçici olarak açık gösterilir; kayıtlı katlanma durumu değişmez.
-  const grupHtml = (anahtar, etiket, kayitlar, calisiyor, ek = '', toplam) => {
+  const grupHtml = (anahtar, etiket, kayitlar, calisiyor, ek = '', toplam, secenek = {}) => {
     if (!kayitlar.length) return '';
-    const kapali = !!S.grupKapali[anahtar] && !q;
+    const kapali = !q && (S.grupKapali[anahtar] ?? !!secenek.varsayilanKapali);
+    const sayiHtml = secenek.sayiYok ? '' : `<span class="grup-sayi mono">${toplam || kayitlar.length}</span>`;
+    const icerik = secenek.icHtml != null ? secenek.icHtml : kayitlar.map((g, i) => kartHtml(g, calisiyor, i)).join('');
     return `
       <div class="seans-grup${kapali ? ' kapali' : ''}" data-grup="${anahtar}">
         <button type="button" class="seans-grup-baslik" aria-expanded="${!kapali}" aria-controls="grup-${anahtar}" data-grup-dugme="${anahtar}">
           <svg class="ic grup-ok" aria-hidden="true"><use href="#i-chevron" /></svg>
           <span>${etiket}</span>
-          <span class="grup-sayi mono">${toplam || kayitlar.length}</span>
+          ${sayiHtml}
         </button>
+        ${secenek.baslikEk || ''}
         <div class="seans-grup-govde" id="grup-${anahtar}">
-          <div class="seans-grup-ic">${kayitlar.map((g, i) => kartHtml(g, calisiyor, i)).join('')}${ek}</div>
+          <div class="seans-grup-ic">${icerik}${ek}</div>
         </div>
       </div>`;
   };
-  // Boştaki oturumlar kısa listelenir: 96 satırlık duvar yerine son 8, gerisi tek düğme.
-  const idleGorunen = q || gecmisIdleTumu ? idle : idle.slice(0, GECMIS_IDLE_GORUNEN);
-  const idleEk = !q && idle.length > GECMIS_IDLE_GORUNEN
+  // Tarih kümesinde boştaki oturumlar kısa listelenir (son 8, gerisi tek düğme); Proje kümesinde hepsi gruplanır.
+  const projeKumesi = kumeBicimi === 'proje';
+  const idleGorunen = q || gecmisIdleTumu || projeKumesi ? idle : idle.slice(0, GECMIS_IDLE_GORUNEN);
+  const idleEk = !q && !projeKumesi && idle.length > GECMIS_IDLE_GORUNEN
     ? `<div class="seans-daha"><button type="button" class="seans-daha-btn" data-gecmis-daha="1">${gecmisIdleTumu ? 'Daha az göster' : `Daha eski oturumlar (${idle.length - GECMIS_IDLE_GORUNEN})`}</button></div>`
     : '';
-  const html = grupHtml('ignelenenler', 'Sabitlenenler', ignelenenList, null) + grupHtml('calisiyor', 'Etkin', inProgress, true) + grupHtml('bosta', 'Geçmiş', idleGorunen, false, idleEk, idle.length);
+  let sira = 0;
+  const araBaslik = (ad, sayi) => `<div class="seans-ara-baslik"><span>${esc(ad)}</span>${sayi ? `<b class="mono">${sayi}</b>` : ''}</div>`;
+  const kumeler = projeKumesi
+    ? Gorunum.projeGrupla(idleGorunen, projeBilgi).map((k) => araBaslik(k.ad, k.ogeler.length) + k.ogeler.map((g) => kartHtml(g, false, sira++)).join(''))
+    : Gorunum.tarihGrupla(idleGorunen).map((k) => araBaslik(k.ad) + k.ogeler.map((g) => kartHtml(g, false, sira++)).join(''));
+  const kumeAnahtar = `<div class="kume-anahtar" role="group" aria-label="Geçmişi kümele">
+      <button type="button" data-kume="tarih" aria-pressed="${!projeKumesi}" title="Tarihe göre kümele">Tarih</button>
+      <button type="button" data-kume="proje" aria-pressed="${projeKumesi}" title="Projeye göre kümele">Proje</button>
+    </div>`;
+  // Grup "çalışan + açık" ikisini birden taşır: kart kendi etiketini yazar (çalışıyor/açık/soru),
+  // başlık ikisini kapsayan tek kelimedir — yalnız "Çalışıyor" demek boştaki açık kartları yanlış adlandırıyordu.
+  const html = grupHtml('ignelenenler', 'Sabitlenenler', ignelenenList, null) + grupHtml('calisiyor', 'Etkin', inProgress, true) +
+    grupHtml('bosta', 'Geçmiş', idleGorunen, false, idleEk, idle.length, { icHtml: kumeler.join(''), baslikEk: idle.length ? kumeAnahtar : '' }) +
+    grupHtml('arsiv', `Arşiv (${arsivli.length})`, arsivli, false, '', null, { varsayilanKapali: true, sayiYok: true });
   // Aynı HTML'i yeniden yazmayız: kaydırma yeri ve fare altındaki satır bozulmasın.
   if (html === gecmisSonHtml) return;
   gecmisSonHtml = html;
@@ -376,15 +526,137 @@ async function oturumIzle(g) {
     return;
   }
   seciliOturumGecmisi = g;
-  const panel = $('sohbetPanel');
-  if (panel) panel.hidden = false;
-  S.sohbetAcik = true; // yalnız bu izleme için: kalıcı tercihe yazılmaz
-  if ($('sohbetBtn')) $('sohbetBtn').classList.toggle('aktif', true);
-  const forkBtn = $('sohbetForkBtn');
-  if (forkBtn) forkBtn.hidden = false;
+  gorunumUygula();
+  sekmeleriCiz();
+  gecmisCiz();
   await sohbetYukle(true);
   sohbetIgneDurumGuncelle();
   setTimeout(() => sigdir(), 80);
+}
+// Alt iş (EVREN işi) kaydını okuma görünümünde açar; kayıt üst oturumun proje klasöründedir.
+function altIsAc(ustId, isId) {
+  const ust = S.gecmis.find((x) => x.id === ustId);
+  const is = ust && (ust.evrenIsleri || []).find((e) => e.id === isId);
+  if (!ust || !is) return;
+  const var_ = S.oturumlar.find((o) => o.canli && o.devam === is.id);
+  if (var_) { sekmeSec(var_.id); return; }
+  oturumIzle({ id: is.id, projeYol: is.dizin || ust.projeYol, yedekYol: ust.projeYol, baslik: is.baslik, projeAd: ust.projeAd, model: is.model, altIs: true, ms: is.ms });
+}
+// ---- Sohbet · Terminal · Dosyalar görünümü ----
+// Üç görünüm tek anahtardan seçilir ve oturum başına localStorage'da hatırlanır. Canlı oturumda Sohbet ve Dosyalar
+// terminalin üstüne binen panelde, Terminal panelsiz görünür. Geçmiş (salt okunur) oturumda Terminal "Devam et"tir.
+function oturumGorunumu(o) {
+  // Kayıtlı seçim varsa o; yoksa varsayılan (terminal — sohbet salt okunur, yazı terminalden gider).
+  return Gorunum.oku(S.gorunumler, Gorunum.anahtar(o), Gorunum.VARSAYILAN);
+}
+function gorunumKur(o, deger) {
+  if (!o) return;
+  S.gorunumler = Gorunum.yaz(S.gorunumler, Gorunum.anahtar(o), deger);
+  sakla.yaz('gorunumler', S.gorunumler);
+  gorunumUygula();
+}
+// Görünen görünüm: canlı oturumda kayıtlı seçim, okunan geçmişte Sohbet ya da Dosyalar; oturum yoksa null.
+function aktifGorunum() {
+  if (seciliOturumGecmisi) return Gorunum.oku(S.gorunumler, 'd:' + seciliOturumGecmisi.id, 'sohbet') === 'dosyalar' ? 'dosyalar' : 'sohbet';
+  const o = aktifOturum();
+  return o && o.term ? oturumGorunumu(o) : null;
+}
+function gorunumSec(deger) {
+  if (!Gorunum.GORUNUMLER.includes(deger)) return false;
+  const g = seciliOturumGecmisi;
+  if (g) {
+    if (deger === 'terminal') { okumaDevamEt(); return true; }
+    S.gorunumler = Gorunum.yaz(S.gorunumler, 'd:' + g.id, deger);
+    sakla.yaz('gorunumler', S.gorunumler);
+    gorunumUygula();
+    return true;
+  }
+  const o = aktifOturum();
+  if (!o || !o.term) return false;
+  gorunumKur(o, deger);
+  return true;
+}
+// Ctrl+Shift+H: Sohbet → Terminal → Dosyalar → Sohbet
+function gorunumDon() {
+  const g = aktifGorunum();
+  return g ? gorunumSec(Gorunum.sonraki(g)) : false;
+}
+function gorunumSayiGuncelle() {
+  const b = $('gorunumDosyaSay');
+  if (!b) return;
+  const h = ciktiParametresi();
+  const n = h && S.ciktilar && S.ciktiAnahtar === h.anahtar ? S.ciktilar.length : 0;
+  b.textContent = n;
+  b.hidden = !n;
+}
+// Panelin, anahtarın, tuş şeridinin ve karşılama kartının görünürlüğü tek yerden belirlenir.
+function gorunumUygula() {
+  const panel = $('sohbetPanel');
+  if (!panel) return;
+  const izleme = !!seciliOturumGecmisi;
+  const o = izleme ? null : aktifOturum();
+  const canli = !!(o && o.term);
+  const gorunum = aktifGorunum();
+  const mod = gorunum === 'sohbet' || gorunum === 'dosyalar' ? gorunum : null;
+  const goster = !!mod;
+  if (mod && mod !== S.panelMod) { sohbetSonAnahtar = ''; S.ciktiImza = ''; } // içerik türü değişti: önbellek geçersiz
+  if (mod) S.panelMod = mod;
+  panel.hidden = !goster;
+  S.sohbetAcik = goster;
+  panel.classList.toggle('izleme', izleme);
+  panel.classList.toggle('canli', canli);
+  panel.classList.toggle('mod-dosyalar', mod === 'dosyalar');
+  if ($('sohbetForkBtn')) $('sohbetForkBtn').hidden = !izleme || !!seciliOturumGecmisi.altIs;
+  if ($('sohbetDevamBtn')) $('sohbetDevamBtn').hidden = !izleme;
+  // Yazı çubuğu yalnız canlı oturumun sohbetinde: mesaj oturumun kendi terminaline yazılır.
+  // Okuma görünümünde (bitmiş kayıt) yazılacak PTY yoktur — "Devam et" kapısı zaten başlıkta.
+  if ($('sohbetGonder')) $('sohbetGonder').hidden = !(canli && mod === 'sohbet');
+  const bar = $('gorunumBar');
+  if (bar) {
+    bar.hidden = !gorunum;
+    for (const b of bar.querySelectorAll('[data-g]')) {
+      const on = b.dataset.g === gorunum;
+      b.classList.toggle('aktif', on);
+      b.setAttribute('aria-selected', String(on));
+    }
+  }
+  const serit = $('tusSerit');
+  const terminalGorunur = canli && gorunum === 'terminal';
+  if (serit) serit.hidden = !terminalGorunur;
+  if (!terminalGorunur) { if ($('termIpucu')) $('termIpucu').hidden = true; }
+  if (!terminalGorunur || (o && S.araOturum !== o.id)) termAraKapat(false);
+  if (mod !== 'dosyalar') gorselKatmanKapat();
+  // Oturum seçiliyken (canlı ya da okunan) karşılama kartı orta alanı kaplamaz.
+  const brif = $('brif');
+  if ((izleme || canli) && brif && !brif.hidden) brifGizle();
+  sohbetBasligiGuncelle();
+  gorunumSayiGuncelle();
+  if (goster) sohbetYukle(true);
+  else if (canli) { sigdir(); setTimeout(() => o.term.focus(), 0); }
+  setTimeout(() => sigdir(), 80);
+}
+// Okuma görünümünden çık: karşılama ya da etkin sekme geri gelir.
+function okumaKapat() {
+  if (!seciliOturumGecmisi) return;
+  seciliOturumGecmisi = null;
+  S.sohbetAcik = false;
+  sohbetSonAnahtar = '';
+  if (S.aktif == null || !aktifOturum()) brifGoster();
+  gorunumUygula();
+  sekmeleriCiz();
+  gecmisCiz();
+  sohbetIgneDurumGuncelle();
+}
+// "Devam et": oturumu bugünkü gibi terminalde sürdürür (hedef terminal görünümünde açılır).
+function okumaDevamEt() {
+  const g = seciliOturumGecmisi;
+  if (!g || !g.id) return;
+  const var_ = S.oturumlar.find((o) => o.canli && (o.devam === g.id || o.id === g.id));
+  if (var_) { gorunumKur(var_, 'terminal'); sekmeSec(var_.id); return; }
+  S.gorunumler = Gorunum.yaz(S.gorunumler, 'd:' + g.id, 'terminal');
+  sakla.yaz('gorunumler', S.gorunumler);
+  const dizin = (g.projeYol || '').trim() || S.proje;
+  basla(g.id, { dizin, modelId: (g.model || '').trim() });
 }
 let gecmisAraZaman = null;
 let gecmisAraIstek = 0;
@@ -397,7 +669,7 @@ function gecmisIcerikAra() {
     gecmisCiz();
     return;
   }
-  const turler = S.gecmis.filter((g) => g.projeYol && g.id).map((g) => ({ id: g.id, projeYol: g.projeYol }));
+  const turler = S.gecmis.filter((g) => g.projeYol && g.id).map((g) => ({ id: g.id, projeYol: g.projeYol, baslik: g.baslik, projeAd: g.projeAd, ekler: [...(g.altAjanlar || []).map((a) => a.tanim), ...(g.evrenIsleri || []).map((e) => e.baslik)] }));
   window.evren.gecmisAra(turler, q).then((sonuc) => {
     if (no !== gecmisAraIstek) return;
     for (const g of S.gecmis) g.eslesme = (sonuc && sonuc[g.id]) || null;
@@ -408,15 +680,18 @@ function gecmisIcerikAra() {
 async function gecmisYukle() {
   const no = ++gecmisIstek;
   try {
+    await tercihHazir;
     const hepsi = await window.evren.gecmis().catch(() => []);
     if (no !== gecmisIstek) return;
-    S.gecmis = Array.isArray(hepsi) ? hepsi : [];
+    // Claude Code oturumları varsayılan gizli; sekmesi açık olanlar ve EVREN oturumları her zaman görünür.
+    S.gecmis = Gorunum.claudeSuz(Array.isArray(hepsi) ? hepsi : [], claudeGoster(), gecmisAcikMi);
     const igneParam = new URLSearchParams(location.search).get('igne');
     if (igneParam && S.gecmis.length > 0) {
       const hedefId = igneParam === '1' ? S.gecmis[0].id : igneParam;
       ignelenenler.add(hedefId);
     }
     gecmisCiz();
+    projeCikarimiIste(S.gecmis);
     if (gecmisAra.trim().length >= 2) gecmisIcerikAra();
     if (typeof Takimyildiz !== 'undefined' && Takimyildiz.guncelle) {
       Takimyildiz.guncelle();
@@ -641,6 +916,7 @@ async function yukle() {
     S.sonEfor = d.sonEfor || 'medium';
     S.eforlar = d.eforlar || [];
     S.uyku = d.uyku !== false;
+    S.ayar.claudeOturumlari = d.claudeOturumlari === true;
     S.model = S.modeller.some((m) => m.id === d.sonModel) ? d.sonModel : (S.modeller[0] && S.modeller[0].id) || '';
     S.proje = (S.projeler[0] && S.projeler[0].yol) || '';
     // Test/otomasyon: ?proje=<yol> açılışta o projeyi seçer (listedeyse onu, değilse listenin başına ekler).
@@ -654,7 +930,7 @@ async function yukle() {
     if (araParam && $('gecmisAra')) { gecmisAra = araParam; $('gecmisAra').value = araParam; }
   } catch (e) { console.error('durum', e); }
   S.yuklendi = true;
-  modelleriCiz(); projeleriCiz(); ozetYaz(); baglantiYaz(); uykuDugmeCiz();
+  modelleriCiz(); projeleriCiz(); ozetYaz(); baglantiYaz(); uykuDugmeCiz(); claudeBtnCiz();
   olay('SİSTEM', `EVREN Desktop ${S.surum || ''} hazır`.replace('  ', ' '));
   olay('KASA', S.anahtarVar ? 'DPAPI anahtarı yüklendi' : 'anahtar bulunamadı', S.anahtarVar ? '' : 'uyari');
   olay('PROJE', `${S.projeler.length} proje · ${S.projeler.filter((p) => p.dal).length} git deposu`);
@@ -735,6 +1011,7 @@ const TEMA_ORK = {
 };
 const GENEL_TUS = new Set(['KeyP', 'KeyB', 'KeyT', 'KeyW', 'KeyF', 'KeyH']); // Ctrl+Shift+<tuş>: uygulamaya ait
 async function terminalOlustur(o) {
+  o.sonBoyut = null; // terminal yeniden kuruldu: boyut defteri sıfırlanır, ilk sigdir gerçek boyutu bildirir
   try { await document.fonts.ready; await document.fonts.load(`${S.fs}px "IBM Plex Mono"`); } catch {}
   const el = document.createElement('div');
   el.className = 'terminal' + (o.orkestrator ? ' terminal-ork' : '');
@@ -749,6 +1026,14 @@ async function terminalOlustur(o) {
   t.open(el);
   const f = FitSinif ? new FitSinif() : null;
   if (f) t.loadAddon(f);
+  let ara = null;
+  if (AraSinif) {
+    try {
+      ara = new AraSinif();
+      t.loadAddon(ara);
+      ara.onDidChangeResults((r) => { if (o.id === S.aktif) termAraSayYaz(r); });
+    } catch { ara = null; }
+  }
   // WebGL karolama: desteklenmezse sessizce canvas çizimine düşer (uygulama çalışmaya devam eder).
   let webgl = null;
   if (WebglSinif) {
@@ -786,7 +1071,7 @@ async function terminalOlustur(o) {
     }
     if (e.ctrlKey && !e.shiftKey && e.code === 'KeyV') {
       e.preventDefault();
-      panoOku().then((x) => { if (x) t.paste(x); });
+      terminaleYapistir(t);
       return false;
     }
     // Ctrl+Shift+C / V: alışılmış terminal kısayolları da aynı yolu kullanır.
@@ -796,22 +1081,39 @@ async function terminalOlustur(o) {
     }
     if (e.ctrlKey && e.shiftKey && e.code === 'KeyV') {
       e.preventDefault();
-      panoOku().then((x) => { if (x) t.paste(x); });
+      terminaleYapistir(t);
       return false;
     }
     if (e.ctrlKey && e.shiftKey && GENEL_TUS.has(e.code)) return false;
     if (e.ctrlKey && e.code === 'Tab') return false;
+    // Uygulama kısayolları terminale gitmez; terminalDisi olanlar (Ctrl+K: satır sonuna kadar sil) terminale gider.
+    if (Gorunum.kisayolBul(e, Gorunum.KISAYOLLAR, true)) return false;
     return true;
   });
-  // Win+V pano geçmişi doğrudan paste olayı gönderirse: xterm kendi pastesini yaptıysa tekrar etme.
+  // Pano penceresinden (Win+V) tıklanan öğe terminale paste olayı olarak gelir, keydown gelmez.
+  // xterm bu olayda yalnız metni yapıştırıp görseli yutar; yakalama aşamasında olayı devralıyoruz.
+  el.addEventListener('paste', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    terminaleYapistir(t);
+  }, true);
   el.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     if (t.hasSelection()) {
       panoYaz(t.getSelection());
       t.clearSelection();
     } else {
-      panoOku().then((x) => { if (x) t.paste(x); });
+      terminaleYapistir(t);
     }
+  });
+  // Dosya / görsel sürükle-bırak: tırnaklı yollar terminale yazılır (ajan görseli yoldan okur).
+  el.addEventListener('dragover', (e) => { e.preventDefault(); el.classList.add('birak'); });
+  el.addEventListener('dragleave', () => el.classList.remove('birak'));
+  el.addEventListener('drop', (e) => {
+    e.preventDefault();
+    el.classList.remove('birak');
+    const yollar = [...((e.dataTransfer && e.dataTransfer.files) || [])].map((f) => window.evren.dosyaYolu(f)).filter(Boolean);
+    if (yollar.length) terminaleYollarYaz(t, yollar);
   });
     // Tampon olcumu ve alternate buffer tespiti
   const olcTampon = () => {
@@ -828,7 +1130,108 @@ async function terminalOlustur(o) {
     // Tekerlekle panel kendiliğinden açılmaz; yalnız konuşma düğmesi / Ctrl+Shift+H açar.
   }, { passive: true });
   setTimeout(olcTampon, 1200);
-  Object.assign(o, { el, term: t, fit: f, webgl, olcTampon });
+  Object.assign(o, { el, term: t, fit: f, webgl, ara, olcTampon });
+}
+// ---- terminale görsel / dosya ekleme, ipucu, arama, tuş şeridi ----
+let ipucuZaman = 0;
+function terminalIpucu(onizleme, metin) {
+  const el = $('termIpucu');
+  if (!el) return;
+  const r = $('termIpucuResim');
+  r.hidden = !onizleme;
+  if (onizleme) r.src = onizleme;
+  $('termIpucuMetin').textContent = metin || 'görsel eklendi';
+  el.hidden = false;
+  el.classList.remove('goster');
+  void el.offsetWidth;
+  el.classList.add('goster');
+  clearTimeout(ipucuZaman);
+  ipucuZaman = setTimeout(() => { el.hidden = true; }, 2000);
+}
+// Yollar tırnaklı ve sonda boşlukla yapıştırılır (bracketed paste: ajan yapıştırılan görsel yolunu tanır).
+function terminaleYollarYaz(t, yollar, onizleme) {
+  t.paste(Gorunum.yolMetni(yollar));
+  const ilk = yollar[0] || '';
+  const goster = (on) => terminalIpucu(on, yollar.length > 1 ? `${yollar.length} dosya eklendi` : (/\.(png|jpe?g|gif|webp|bmp)$/i.test(ilk) ? 'görsel eklendi' : 'dosya eklendi'));
+  if (onizleme !== undefined) goster(onizleme);
+  else window.evren.dosyaOnizleme(ilk).then(goster, () => goster(null));
+}
+// Ctrl+V / pano penceresi / sağ tık: panoda görsel ya da kopyalanmış dosya varsa eki (yolları) yaz,
+// yoksa metni yapıştır. Dış uygulamalar "Resmi kopyala"da adres metnini de panoya koyduğu için
+// ek varken ek kazanır (Gorunum.panoKarar).
+async function terminaleYapistir(t) {
+  const karar = Gorunum.panoKarar(await window.evren.panoEkAl(), await panoOku());
+  if (!karar) return;
+  if (karar.yollar) { terminaleYollarYaz(t, karar.yollar, karar.onizleme); return; }
+  t.paste(karar.metin);
+}
+async function terminaleDosyaEkle() {
+  const o = aktifOturum();
+  if (!o || !o.term) return;
+  const r = await window.evren.gorselSec();
+  if (r && r.yollar && r.yollar.length) terminaleYollarYaz(o.term, r.yollar, r.onizleme);
+  o.term.focus();
+}
+const ARA_DEKOR = { matchBackground: '#3a3320', matchBorder: '#6b5a2e', matchOverviewRuler: '#e0b36a', activeMatchBackground: '#7a6330', activeMatchBorder: '#e0b36a', activeMatchColorOverviewRuler: '#e0b36a' };
+function termAraSayYaz(r) {
+  const s = $('termAraSay');
+  if (!s) return;
+  if (!$('termAraGiris').value) { s.textContent = ''; return; }
+  s.textContent = !r || !r.resultCount ? 'yok' : (r.resultIndex >= 0 ? `${r.resultIndex + 1}/${r.resultCount}` : `${r.resultCount}+`);
+}
+function termAraAc() {
+  const o = aktifOturum();
+  if (!o || !o.ara) return false;
+  S.araOturum = o.id;
+  $('termAra').hidden = false;
+  const g = $('termAraGiris');
+  const sec = o.term.getSelection();
+  if (sec && !/[\r\n]/.test(sec)) g.value = sec;
+  g.focus();
+  g.select();
+  if (g.value) termAraYap(1, true);
+  return true;
+}
+function termAraYap(yon, artimli = false) {
+  const o = aktifOturum();
+  if (!o || !o.ara) return;
+  const q = $('termAraGiris').value;
+  if (!q) { o.ara.clearDecorations(); termAraSayYaz(null); return; }
+  const secenek = { decorations: ARA_DEKOR, incremental: artimli };
+  if (yon > 0) o.ara.findNext(q, secenek); else o.ara.findPrevious(q, secenek);
+}
+function termAraKapat(odakla = true) {
+  const k = $('termAra');
+  if (!k || k.hidden) return;
+  k.hidden = true;
+  S.araOturum = null;
+  const o = aktifOturum();
+  if (o && o.ara) { try { o.ara.clearDecorations(); } catch {} }
+  if (odakla && o && o.term) o.term.focus();
+}
+function tusSeritKur() {
+  const kutu = $('tusDugmeler');
+  if (!kutu) return;
+  kutu.innerHTML = Gorunum.TERMINAL_TUSLARI.map((k) => `<button class="tus" type="button" data-tus="${k.id}" title="${esc(k.ipucu)}"><kbd>${esc(k.etiket)}</kbd></button>`).join('') +
+    '<span class="tus-ayrac"></span><button class="tus tus-gorsel" type="button" data-gorsel="1" title="Görsel ya da dosya ekle: yolu terminale yazılır (Ctrl+V ile panodan da eklenir)"><svg class="ic"><use href="#i-plus" /></svg>Görsel ekle</button>';
+  const uygula = () => {
+    $('tusSerit').classList.toggle('kapali', !S.tusSerit);
+    $('tusAc').setAttribute('aria-expanded', String(S.tusSerit));
+    setTimeout(() => sigdir(), 60);
+  };
+  uygula();
+  $('tusSerit').addEventListener('mousedown', (e) => e.preventDefault()); // terminal odağı kaybolmasın
+  $('tusAc').addEventListener('click', () => { S.tusSerit = !S.tusSerit; sakla.yaz('tusSerit', S.tusSerit); uygula(); const o = aktifOturum(); if (o && o.term) o.term.focus(); });
+  kutu.addEventListener('click', (e) => {
+    const o = aktifOturum();
+    if (!o || !o.term) return;
+    if (e.target.closest('[data-gorsel]')) { terminaleDosyaEkle(); return; }
+    const d = e.target.closest('[data-tus]');
+    const tus = d && Gorunum.TERMINAL_TUSLARI.find((k) => k.id === d.dataset.tus);
+    if (!tus || !o.pid) return;
+    window.evren.yaz(o.pid, tus.dizi);
+    o.term.focus();
+  });
 }
 const aktifOturum = () => S.oturumlar.find((o) => o.id === S.aktif) || null;
 const aktifTerm = () => { const o = aktifOturum(); return o ? o.term : null; };
@@ -859,22 +1262,31 @@ function sigdir() {
   cancelAnimationFrame(sigdirZaman);
   sigdirZaman = requestAnimationFrame(() => {
     if (o.fit) { try { o.fit.fit(); } catch {} }
-    if (o.pid && o.term.cols && o.term.rows) window.evren.boyut(o.pid, { cols: o.term.cols, rows: o.term.rows });
+    const cols = o.term.cols, rows = o.term.rows;
+    // Aynı boyutu yeniden göndermek pty'de SIGWINCH üretir; Claude Code TUI tüm transkripti yeniden basar.
+    const boyut = { cols, rows };
+    if (o.pid && cols && rows && !Gorunum.boyutAyni(o.sonBoyut, boyut)) {
+      window.evren.boyut(o.pid, boyut);
+      o.sonBoyut = boyut;
+    }
   });
 }
 // "/" menüsü açılıp kapanınca satır içi arayüz ekranın ortasında kalabiliyor: girdi bloğunun altında
-// boş satırlar kalır (imleç en altta olsa bile). Çıktı durulunca bu durum görülürse pty'ye Ctrl+L
-// gönderilir; kullanıcının elle yaptığı düzeltmenin aynısıdır, araç görünümü silip alt alta yeniden
-// çizer. Yazılan metin korunur (ölçüldü). Menü açıkken altında boş satır olmadığı için tetiklenmez.
-// Aynı hizasızlık için en çok iki kez denenir; hiza düzelince ya da kullanıcı yazınca sayaç sıfırlanır.
+// boş satırlar kalır. Çıktı durulunca ve imleç ekranın ortasında/üstündeyken pty'ye Ctrl+L gönderilir;
+// kullanıcının elle yaptığı düzeltmenin aynısıdır, araç görünümü silip alt alta yeniden çizer.
+// Yazılan metin korunur (ölçüldü). İmleç dipteyse alttaki boşluklar girdi alanıdır, dokunulmaz.
+// Aynı hizasızlık için en çok bir kez denenir (her Ctrl+L TUI'de tüm transkripti yeniden basar);
+// hiza düzelince ya da kullanıcı yazınca sayaç sıfırlanır.
 const HIZA_BOS_ESIK = 3;
-const HIZA_EN_COK = 2;
+const HIZA_EN_COK = 1;
 function hizaKontrol(o) {
   if (!o || !o.term || !o.pid || o.id !== S.aktif) return;
   const b = o.term.buffer.active, rows = o.term.rows;
   // Alt tampon (vim/less) ve kullanıcının geçmişe kaydırdığı görünüm olduğu gibi bırakılır.
   // baseY = 0 ise içerik bir ekranı doldurmamıştır; Ctrl+L onu aşağı taşıyamaz, başlangıç ekranı bozulmaz.
   if (b.type !== 'normal' || b.baseY <= 0 || b.viewportY !== b.baseY) { o.hizaDeneme = 0; return; }
+  // İmleç dipteyse alttaki boş satırlar normal girdi alanıdır (Claude Code TUI); onarım yapılmaz.
+  if (b.cursorY >= rows - 1) { o.hizaDeneme = 0; return; }
   let son = -1;
   for (let y = rows - 1; y >= 0; y--) {
     const l = b.getLine(b.baseY + y);
@@ -982,14 +1394,15 @@ function sekmeAdi(o) {
 // ---------- sekmeler ----------
 function sekmeleriCiz() {
   $('sekmeler').innerHTML =
-    `<button class="tab ana${S.aktif == null ? ' aktif' : ''}" data-id="ana" role="tab" title="Yeni oturum ekranı (Ctrl+Shift+T)">${ikon('term')}<span>ana</span></button>` +
+    `<button class="tab ana${S.aktif == null && !seciliOturumGecmisi ? ' aktif' : ''}" data-id="ana" role="tab" title="Yeni oturum ekranı (Ctrl+Shift+T)">${ikon('term')}<span>ana</span></button>` +
     S.oturumlar.map((o, i) => `
-      <button class="tab${o.id === S.aktif ? ' aktif' : ''}${o.canli ? '' : ' bitti'}${o.yeni ? ' yeni' : ''}${o.orkestrator ? ' ork' : ''}" data-id="${o.id}" role="tab" title="${esc(sekmeAdi(o))} · ${esc(o.proje)} · ${esc(o.model)}${o.efor ? ' · efor ' + esc(o.efor) : ''}${o.dal ? ' · ' + esc(o.dal) : ''}${o.orkestrator ? ' · şef · kod yazma ' + (o.kodYazma ? 'açık' : 'kapalı') : ''} · çift tık: adlandır">
+      <button class="tab${o.id === S.aktif && !seciliOturumGecmisi ? ' aktif' : ''}${o.canli ? '' : ' bitti'}${o.yeni ? ' yeni' : ''}${o.orkestrator ? ' ork' : ''}" data-id="${o.id}" role="tab" title="${esc(sekmeAdi(o))} · ${esc(o.proje)} · ${esc(o.model)}${o.efor ? ' · efor ' + esc(o.efor) : ''}${o.dal ? ' · ' + esc(o.dal) : ''}${o.orkestrator ? ' · şef · kod yazma ' + (o.kodYazma ? 'açık' : 'kapalı') : ''} · çift tık: adlandır">
         <span class="led${o.canli ? ' canli' : o.kod ? ' kotu' : ''}"></span>
         <span class="tab-ad">${esc(sekmeAdi(o))}</span>
         ${o.orkestrator ? `<span class="tab-ork mono" title="Şef · kod yazma ${o.kodYazma ? 'açık' : 'kapalı'}">ŞEF</span>` : ''}
         <span class="tab-x" data-kapat="${o.id}" title="Sekmeyi kapat (Ctrl+Shift+W)">×</span>
-      </button>`).join('');
+      </button>`).join('') +
+    (seciliOturumGecmisi ? `<button class="tab okuma aktif" data-id="okuma" role="tab" title="${esc(seciliOturumGecmisi.baslik || '')} · salt okunur kayıt">${ikon('chat')}<span class="tab-ad">${esc(seciliOturumGecmisi.baslik || 'kayıt')}</span><span class="tab-x" data-okuma-kapat="1" title="Okumayı kapat">×</span></button>` : '');
   const a = $('sekmeler').querySelector('.tab.aktif');
   if (a) a.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   durumYaz();
@@ -1008,7 +1421,7 @@ function durumYaz() {
   $('sDal').textContent = o ? (o.dal || '—') : (p && p.dal ? p.dal : '—');
   if (o) { $('crProje').textContent = o.proje; $('crDal').textContent = o.dal || '—'; }
   else { $('crProje').textContent = p ? p.ad : '—'; $('crDal').textContent = p && p.dal ? p.dal : '—'; }
-  $('sOturum').textContent = `${S.oturumlar.filter((x) => x.canli).length}/${S.oturumlar.length} oturum`;
+  $('sOturum').textContent = `${S.oturumlar.filter((x) => x.canli).length}/${S.oturumlar.length} sekme`;
   sureYaz();
   baglamYaz();
 }
@@ -1051,12 +1464,10 @@ async function baglamYaz() {
     : 'Tur sayacı kayıt yazılınca başlar';
 }
 function sekmeSec(id) {
-  const izlemedeydi = !!seciliOturumGecmisi;
   seciliOturumGecmisi = null;
-  if (izlemedeydi) sohbetToggle(false);
-  else if (id != null && !$('sohbetPanel').hidden) sohbetToggle(false); // tam ekran panel sekme geçişinde terminali örtmesin
+  S.sohbetAcik = false; // ana ekranda panel yalnız elle (Ctrl+Shift+H) açılır; oturumlarda görünüm kuralı belirler
+  sohbetSonAnahtar = '';
   sohbetIgneDurumGuncelle();
-  if ($('sohbetForkBtn')) $('sohbetForkBtn').hidden = true;
   S.aktif = id;
   const o = aktifOturum();
   if (o) o.yeni = false;
@@ -1065,8 +1476,8 @@ function sekmeSec(id) {
   if (o) oturumModeliTara(o);
   sekmeleriCiz();
   gecmisCiz();
-  if (o && o.term) { sigdir(); setTimeout(() => o.term.focus(), 0); setTimeout(() => hizaKontrol(o), 400); }
-  if (S.sohbetAcik) sohbetYukle();
+  if (o && o.term) { sigdir(); setTimeout(() => hizaKontrol(o), 400); }
+  gorunumUygula();
 }
 function sekmeGez(yon) {
   const dizi = [null, ...S.oturumlar.map((o) => o.id)];
@@ -1077,6 +1488,7 @@ async function sekmeKapat(id) {
   const i = S.oturumlar.findIndex((o) => o.id === id);
   if (i < 0) return;
   const o = S.oturumlar[i];
+  if (o.devam) kapatilanlar.push({ devam: o.devam, dizin: o.yol, modelId: o.model });
   if (o.canli && o.pid) await window.evren.kapatOturum(o.pid);
   clearInterval(o.sayac);
   try { o.term && o.term.dispose(); } catch {}
@@ -1162,6 +1574,8 @@ async function basla(devamId, secenekler) {
       return;
     }
     o.pid = sonuc.id;
+    // pty bu boyutla doğdu; ilk sigdir aynı boyutu tekrar göndermesin.
+    o.sonBoyut = { cols: o.term.cols, rows: o.term.rows };
     if (sonuc.dizin) o.yol = sonuc.dizin;
     if (Array.isArray(sonuc.ekler)) o.ekler = sonuc.ekler;
     for (const v of bekleyenVeri.get(o.pid) || []) o.term.write(v);
@@ -1307,32 +1721,26 @@ function odakToggle(zorla) {
 let sohbetYukleniyor = false;
 let ciktiYukleniyor = false;
 let sohbetSonAnahtar = ''; // en son çizilen sohbet: 'g:<gecmis id>' | 'o:<pid>'
-function sohbetToggle(zorla) {
-  const panel = $('sohbetPanel');
-  if (!panel) return;
-  const acik = typeof zorla === 'boolean' ? zorla : panel.hidden;
-  panel.hidden = !acik;
-  S.sohbetAcik = acik;
-  sakla.yaz('sohbetPanelAcik', acik);
-  if ($('sohbetBtn')) $('sohbetBtn').classList.toggle('aktif', acik);
-  if (acik) sohbetYukle(true);
-  setTimeout(() => sigdir(), 80);
-}
 async function sohbetYukle(zorla = false) {
   const panel = $('sohbetPanel');
   if (!panel || panel.hidden) return;
-  if (S.sohbetFiltre === 'cikti') { await ciktiYukle(zorla); return; }
+  if (S.panelMod === 'dosyalar') { await ciktiYukle(zorla); return; }
   if (seciliOturumGecmisi) {
     if (sohbetYukleniyor && !zorla) return;
     sohbetYukleniyor = true;
     const anahtar = 'g:' + seciliOturumGecmisi.id;
     try {
-      const res = await window.evren.sohbetOturumKaydi({
+      let res = await window.evren.sohbetOturumKaydi({
         dizin: seciliOturumGecmisi.projeYol,
         id: seciliOturumGecmisi.id,
       });
+      // Alt iş kaydı kendi dizininde yoksa üst oturumun proje klasörüne bakılır.
+      if (seciliOturumGecmisi && seciliOturumGecmisi.yedekYol && !(res && res.girisler && res.girisler.length)) {
+        res = await window.evren.sohbetOturumKaydi({ dizin: seciliOturumGecmisi.yedekYol, id: seciliOturumGecmisi.id });
+      }
       // Dosya değişmedi ve aynı sohbet zaten çiziliyorsa okuma/çizim atlanır.
       if (res && res.degisti === false && anahtar === sohbetSonAnahtar) return;
+      if (anahtar !== sohbetSonAnahtar && $('sohbetListe')) delete $('sohbetListe').dataset.kaydirildi; // yeni sohbet dipten açılır
       const girisler = (res && res.girisler) || [];
       if (seciliOturumGecmisi) seciliOturumGecmisi.girisler = girisler;
       sohbetCiz(girisler);
@@ -1359,6 +1767,7 @@ async function sohbetYukle(zorla = false) {
     const res = await window.evren.sohbetGecmisi(o.pid);
     // Dosya değişmedi ve aynı sohbet zaten çiziliyorsa okuma/çizim atlanır.
     if (res && res.degisti === false && anahtar === sohbetSonAnahtar) return;
+    if (anahtar !== sohbetSonAnahtar && $('sohbetListe')) delete $('sohbetListe').dataset.kaydirildi;
     const girisler = (res && res.girisler) || [];
     o.sohbetGirisler = girisler;
     sohbetCiz(girisler);
@@ -1371,8 +1780,9 @@ async function sohbetYukle(zorla = false) {
   }
 }
 function sohbetCiz(girisler) {
-  const filtre = S.sohbetFiltre || 'hepsi';
-  if (filtre === 'cikti') { ciktiCiz(); return; }
+  // Süzgeç satırı kalktı (Claude/Antigravity'de yok): araçlar zaten tek özet satırına iniyor.
+  const filtre = 'hepsi';
+  if (S.panelMod === 'dosyalar') { ciktiCiz(); return; }
   sohbetBasligiGuncelle();
   const filtrelenmis = (girisler || []).filter((g) => {
     if (filtre === 'mesajlar') return g.rol === 'kullanici' || g.rol === 'asistan';
@@ -1382,8 +1792,9 @@ function sohbetCiz(girisler) {
   if ($('sohbetSayac')) $('sohbetSayac').textContent = filtrelenmis.length;
   const liste = $('sohbetListe');
   if (!liste) return;
+  delete liste.dataset.cizim;
   if (!filtrelenmis.length) {
-    liste.innerHTML = '<div class="sohbet-bos">Bu filtrede kayıt bulunamadı</div>';
+    liste.innerHTML = `<div class="sohbet-bos">${filtre === 'hepsi' ? 'Henüz konuşma kaydı yok' : 'Bu filtrede kayıt bulunamadı'}</div>`;
     return;
   }
   const zamanMetni = (ms) => {
@@ -1396,36 +1807,64 @@ function sohbetCiz(girisler) {
     asistan: 'Asistan',
     arac: 'Araç',
   };
-  const enAlttaMi = (liste.scrollHeight - liste.scrollTop - liste.clientHeight) < 60;
-  liste.innerHTML = filtrelenmis.map((g, idx) => {
+  const enAlttaMi = Gorunum.dipteMi(liste.scrollTop, liste.scrollHeight, liste.clientHeight);
+  // Okuma düzeni: tek sütun. Kullanıcı sağda hafif yüzeyde, ajan solda düz metin, araçlar arka arkaya
+  // tek satırlık mono "iz" olarak toplanır (tıklayınca açılır). Zaman ve kopyala yalnız üzerine gelince.
+  const md = (s) => esc(s)
+    .replace(/```([\s\S]*?)```/g, (_, k) => `<pre class="so-kod">${k.replace(/^\w*\n/, '')}</pre>`)
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>')
+    .replace(/^#{1,4} (.+)$/gm, '<b class="so-bas">$1</b>');
+  // Arka arkaya gelen araç adımları tek, sakin bir özet satırına iner ("3 dosya okundu · 2 komut ›");
+  // tıklayınca adımlar açılır. Yalnız Araçlar süzgecinde hep açık durur.
+  const FIIL = { Read: ['okundu', 'dosya'], Edit: ['düzenlendi', 'dosya'], MultiEdit: ['düzenlendi', 'dosya'], Write: ['yazıldı', 'dosya'], NotebookEdit: ['düzenlendi', 'dosya'], Bash: ['çalıştı', 'komut'], PowerShell: ['çalıştı', 'komut'], Grep: ['yapıldı', 'arama'], Glob: ['yapıldı', 'arama'], WebFetch: ['okundu', 'sayfa'], WebSearch: ['yapıldı', 'web araması'], Agent: ['çalıştı', 'alt ajan'], Task: ['çalıştı', 'alt ajan'] };
+  const izOzet = (adlar) => {
+    const say = new Map();
+    for (const a of adlar) { const f = FIIL[a] || ['kullanıldı', 'araç']; const k = f[1] + '|' + f[0]; say.set(k, (say.get(k) || 0) + 1); }
+    return [...say].map(([k, n]) => { const [nesne, fiil] = k.split('|'); return `${n} ${nesne} ${fiil}`; }).join(' · ');
+  };
+  const parcalar = [];
+  let iz = null; // { adlar: [], satirlar: [] }
+  const izKapat = () => {
+    if (!iz) return;
+    parcalar.push(`<div class="so-iz${filtre === 'arac' ? ' acik' : ''}"><button class="so-iz-ust" type="button"><span>${esc(izOzet(iz.adlar))}</span><i aria-hidden="true">›</i></button><div class="so-iz-govde">${iz.satirlar.join('')}</div></div>`);
+    iz = null;
+  };
+  filtrelenmis.forEach((g, idx) => {
     const rol = g.rol || 'asistan';
     const zaman = zamanMetni(g.ms);
-    const aracAd = (g.arac && g.arac.ad) ? esc(g.arac.ad) : '';
-    const icerik = esc(g.metin || '');
-    return `
-      <div class="sohbet-kart ${rol}" data-idx="${idx}">
-        <div class="sohbet-kart-ust">
-          <div class="sohbet-rol-grup">
-            <span class="sohbet-rol">${rolEtiketleri[rol] || rol}</span>
-            ${aracAd ? `<span class="mono" style="opacity:0.75">· ${aracAd}</span>` : ''}
-          </div>
-          <div style="display:flex;align-items:center;gap:6px;">
-            ${zaman ? `<span class="sohbet-zaman">${zaman}</span>` : ''}
-            <button class="sohbet-kopyala" type="button" title="Metni kopyala">kopyala</button>
-          </div>
-        </div>
-        <div class="sohbet-icerik">${icerik}</div>
-      </div>
-    `;
-  }).join('');
+    if (rol === 'arac') {
+      if (!iz) iz = { adlar: [], satirlar: [] };
+      const sonucMu = !!(g.arac && g.arac.sonuc);
+      const hamAd = sonucMu ? '↳ sonuç' : ((g.arac && g.arac.ad) || 'Araç');
+      if (!sonucMu) iz.adlar.push(hamAd); // sayıma yalnız çağrılar girer; dönüş kaydı aynı adımın parçası
+      const metin = String(g.metin || '');
+      const ilk = esc(metin.split('\n').find((x) => x.trim()) || '');
+      iz.satirlar.push(`
+        <div class="sohbet-kart arac" data-idx="${idx}">
+          <div class="so-iz-satir"><span class="so-iz-ad">${esc(hamAd)}</span><span class="so-iz-ozet">${ilk}</span>${zaman ? `<time class="sohbet-zaman">${zaman}</time>` : ''}</div>
+          <div class="sohbet-icerik">${esc(metin)}</div>
+          <button class="sohbet-kopyala" type="button" title="Metni kopyala">kopyala</button>
+        </div>`);
+      return;
+    }
+    izKapat();
+    parcalar.push(`
+      <div class="sohbet-kart ${rol}" data-idx="${idx}" aria-label="${rolEtiketleri[rol] || rol}">
+        <div class="sohbet-icerik">${md(g.metin || '')}</div>
+        <div class="so-alt">${zaman ? `<time class="sohbet-zaman">${zaman}</time>` : ''}<button class="sohbet-kopyala" type="button" title="Metni kopyala">kopyala</button></div>
+      </div>`);
+  });
+  izKapat();
+  liste.innerHTML = parcalar.join('');
   if (enAlttaMi || !liste.dataset.kaydirildi) {
     liste.scrollTop = liste.scrollHeight;
     liste.dataset.kaydirildi = '1';
   }
 }
-// ---------- çıktılar: oturumun ürettiği dosyalar ----------
-// Claude Desktop'ın "Outputs" karşılığı: Write/Edit ile yazılan dosyalar ve Bash'ın ürettiği
-// dosyalar (ekran görüntüsü vb.). Karta tıklamak dosyayı açar, "Klasör" konumunu gösterir.
+// ---------- Dosyalar: oturumun yazdığı / ürettiği dosyalar ----------
+// Write/Edit ile yazılan dosyalar ve Bash'ın ürettiği dosyalar (ekran görüntüsü vb.): görseller ızgarada, gerisi proje köküne
+// göre klasör gruplu listede. Her öğede Aç, Klasörde göster, Yolu kopyala.
 function ciktiParametresi() {
   if (seciliOturumGecmisi) {
     return {
@@ -1441,15 +1880,19 @@ async function ciktiYukle(zorla = false) {
   const panel = $('sohbetPanel');
   if (!panel || panel.hidden) return;
   const hedef = ciktiParametresi();
-  if (!hedef) { S.ciktilar = []; S.ciktiAnahtar = null; ciktiCiz(); return; }
-  if (S.ciktiAnahtar !== hedef.anahtar) { S.ciktilar = null; S.ciktiAnahtar = hedef.anahtar; }
+  if (!hedef) { S.ciktilar = []; S.ciktiAnahtar = null; S.ciktiImza = ''; ciktiCiz(); return; }
+  if (S.ciktiAnahtar !== hedef.anahtar) { S.ciktilar = null; S.ciktiAnahtar = hedef.anahtar; S.ciktiImza = ''; S.ciktiKok = ''; }
   if (ciktiYukleniyor && !zorla) return;
   ciktiYukleniyor = true;
   try {
     const res = await window.evren.oturumCikti(hedef.param);
     if (S.ciktiAnahtar === hedef.anahtar) {
-      S.ciktilar = (res && res.ciktilar) || [];
-      ciktiCiz();
+      const liste = (res && res.ciktilar) || [];
+      const imza = liste.map((c) => c.yol + '|' + c.ms + '|' + c.boyut + '|' + (c.onizleme ? 1 : 0)).join('\n') + '#' + ((res && res.kok) || '');
+      S.ciktilar = liste;
+      // Kök: okunan geçmişte oturumun asıl projesi (yol çıkarımı / elle seçim), yoksa ana süreçten gelen çalışma klasörü.
+      S.ciktiKok = (seciliOturumGecmisi && projeBilgi(seciliOturumGecmisi).yol) || (res && res.kok) || '';
+      if (imza !== S.ciktiImza) { S.ciktiImza = imza; ciktiCiz(); } else gorunumSayiGuncelle(); // değişmediyse yeniden çizme: kaydırma ve önizleme bozulmasın
     }
   } catch (e) {
     console.error('Çıktılar okunamadı:', e);
@@ -1480,7 +1923,7 @@ function kisaCiktiYolu(p, n = 56) {
   return aday.length <= n ? aday : '…\\' + parcalar.slice(-1).join('');
 }
 function ciktiIslemEtiketi(islem) {
-  if (islem === 'olusturuldu') return 'oluşturuldu';
+  if (islem === 'olusturuldu') return 'yeni';
   if (islem === 'degisti') return 'değişti';
   return 'üretildi';
 }
@@ -1489,55 +1932,146 @@ function sohbetBasligiGuncelle() {
   const panel = $('sohbetPanel');
   if (!panel) return;
   const t = panel.querySelector('.sohbet-t');
-  if (t) t.textContent = S.sohbetFiltre === 'cikti' ? 'Çıktılar' : 'Konuşma';
+  const g = seciliOturumGecmisi;
+  // Başlık görünüm değişince değişmez: hangi oturumda olduğun hep okunur (görünüm adı zaten anahtarda yazıyor).
+  if (t) t.textContent = g ? (g.baslik || 'Konuşma') : panel.classList.contains('canli') ? 'Canlı sohbet' : 'Konuşma';
+  const mod = $('sohbetMod');
+  if (mod) { mod.textContent = g ? (g.altIs ? 'alt iş · salt okunur' : 'salt okunur') : panel.classList.contains('canli') ? 'canlı' : ''; mod.hidden = !mod.textContent; mod.classList.toggle('canli', !g && panel.classList.contains('canli')); }
   const liste = $('sohbetListe');
-  if (liste) liste.classList.toggle('cikti-liste', S.sohbetFiltre === 'cikti');
+  if (liste) liste.classList.toggle('cikti-liste', S.panelMod === 'dosyalar');
 }
 function ciktiCiz() {
   sohbetBasligiGuncelle();
+  gorunumSayiGuncelle();
   const liste = $('sohbetListe');
   if (!liste) return;
   const veri = S.ciktilar;
   if (veri == null) {
-    liste.innerHTML = '<div class="sohbet-bos">Çıktılar yükleniyor...</div>';
+    liste.innerHTML = '<div class="sohbet-bos">Dosyalar yükleniyor…</div>';
     return;
   }
-  if ($('sohbetSayac')) $('sohbetSayac').textContent = veri.length;
+  const say = Gorunum.dosyaSay(veri);
+  if ($('sohbetSayac')) $('sohbetSayac').textContent = say.hepsi;
+  const ADLAR = { hepsi: 'Tümü', gorseller: 'Görseller', kod: 'Kod', diger: 'Diğer' };
+  for (const b of document.querySelectorAll('#dosyaSuz [data-dsuz]')) {
+    const k = b.dataset.dsuz;
+    b.classList.toggle('aktif', k === S.dosyaSuz);
+    b.innerHTML = `${ADLAR[k]}<span class="say mono">${say[k]}</span>`;
+  }
+  const kokEl = $('dosyaKok');
+  if (kokEl) { kokEl.textContent = S.ciktiKok ? kisaCiktiYolu(S.ciktiKok, 46) : ''; kokEl.title = S.ciktiKok || ''; }
   if (!veri.length) {
-    liste.innerHTML = '<div class="sohbet-bos">Bu oturumda henüz dosya üretilmedi</div>';
+    S.dosyaGorseller = [];
+    liste.innerHTML = '<div class="sohbet-bos">Bu oturum henüz dosya yazmadı.</div>';
     return;
   }
-  liste.innerHTML = veri.map((c) => {
-    const yol = esc(c.yol || '');
-    const ad = esc(c.ad || c.yol || '');
-    const uzanti = (/\.([a-z0-9]{1,5})$/i.exec(c.yol || '') || [null, 'dosya'])[1].toUpperCase();
-    const onizleme = c.onizleme
-      ? `<img class="cikti-resim" src="${esc(c.onizleme)}" alt="">`
-      : `<span class="cikti-simge">${esc(uzanti)}</span>`;
-    const durumSinif = c.islem === 'olusturuldu' ? 'yeni' : c.islem === 'komut' ? 'uretti' : 'degisti';
-    const saat = ciktiSaat(c.ms);
-    return `
-      <div class="cikti-kart" data-yol="${yol}" title="${yol}">
-        <div class="cikti-onizleme${c.onizleme ? ' resim' : ''}">${onizleme}</div>
-        <div class="cikti-bilgi">
-          <div class="cikti-ust">
-            <span class="cikti-ad">${ad}</span>
-            <span class="cikti-durum ${durumSinif}"><i></i>${ciktiIslemEtiketi(c.islem)}</span>
-          </div>
-          <div class="cikti-yol mono">${esc(kisaCiktiYolu(c.yol || ''))}</div>
-          <div class="cikti-alt">
-            <span>${ciktiBoyut(c.boyut)}</span>${saat ? `<span class="nokta">·</span><span>${saat}</span>` : ''}
-          </div>
+  const suz = Gorunum.dosyaSuz(veri, S.dosyaSuz);
+  const gorseller = suz.filter((c) => Gorunum.dosyaTuru(c) === 'gorsel');
+  const digerleri = suz.filter((c) => Gorunum.dosyaTuru(c) !== 'gorsel');
+  S.dosyaGorseller = gorseller;
+  if (!suz.length) { liste.innerHTML = '<div class="sohbet-bos">Bu süzgeçte dosya yok.</div>'; return; }
+  const bolum = (ad, n, mono) => `<div class="dosya-bolum"><span${mono ? ' class="mono"' : ''}>${esc(ad)}</span><b class="mono">${n}</b></div>`;
+  const uzanti = (c) => (/\.([a-z0-9]{1,5})$/i.exec(c.yol || '') || [null, 'dosya'])[1].toUpperCase();
+  const yeniN = suz.filter((c) => c.islem === 'olusturuldu').length;
+  const degN = suz.filter((c) => c.islem === 'degisti').length;
+  const ozetParca = [`${suz.length} dosya`];
+  if (yeniN) ozetParca.push(`<span class="yeni">${yeniN} yeni</span>`);
+  if (degN) ozetParca.push(`<span class="degisti">${degN} değişti</span>`);
+  let html = `<div class="dosya-ozet">${ozetParca.join(' · ')}</div>`;
+  if (gorseller.length) {
+    html += bolum('Görseller', gorseller.length) + '<div class="dosya-izgara">' + gorseller.map((c, i) => `
+      <button class="dosya-kucuk" type="button" data-i="${i}" title="${esc(c.yol || '')}">
+        ${c.onizleme ? `<img src="${esc(c.onizleme)}" alt="">` : `<span class="cikti-simge">${esc(uzanti(c))}</span>`}
+        <span class="dosya-kucuk-ad mono">${esc(c.ad || '')}</span>
+      </button>`).join('') + '</div>';
+  }
+  if (digerleri.length && gorseller.length) html += bolum('Dosyalar', digerleri.length);
+  for (const grup of Gorunum.dosyaGrupla(digerleri, S.ciktiKok)) {
+    html += grup.ogeler.map((c) => {
+      const yol = esc(c.yol || '');
+      const durumSinif = c.islem === 'olusturuldu' ? 'yeni' : c.islem === 'komut' ? 'uretti' : 'degisti';
+      const saat = ciktiSaat(c.ms);
+      const klasor = grup.klasor && grup.klasor !== '.' ? grup.klasor : '';
+      return `
+      <div class="dosya-satir" data-yol="${yol}" tabindex="0" title="${yol}">
+        <span class="dosya-simge mono ${durumSinif}" title="${ciktiIslemEtiketi(c.islem)}">${esc(uzanti(c).slice(0, 4))}</span>
+        <div class="dosya-bilgi">
+          <span class="dosya-ad">${esc(c.ad || c.yol || '')}</span>
+          ${klasor ? `<span class="dosya-yol">${esc(klasor)}</span>` : ''}
         </div>
-        <div class="cikti-eylem">
-          <button class="cikti-dugme" type="button" data-eylem="ac" title="Dosyayı aç"><svg class="ic"><use href="#i-open"/></svg></button>
-          <button class="cikti-dugme" type="button" data-eylem="klasor" title="Dosya konumunu aç"><svg class="ic"><use href="#i-folder"/></svg></button>
+        <span class="dosya-saat mono">${saat}</span>
+        <div class="dosya-eylem">
+          <button type="button" data-eylem="ac">Aç</button>
+          <button type="button" data-eylem="klasor">Klasörde göster</button>
+          <button type="button" data-eylem="kopya">Yolu kopyala</button>
         </div>
       </div>`;
-  }).join('');
+    }).join('');
+  }
+  liste.innerHTML = html;
+  if (liste.dataset.cizim !== 'dosya:' + S.ciktiAnahtar) { liste.scrollTop = 0; liste.dataset.cizim = 'dosya:' + S.ciktiAnahtar; } // yeni oturum ya da mod: en üstten başla
+}
+// ---- Büyük görsel önizleme katmanı (Esc kapatır, ←/→ gezinir) ----
+const GK = { liste: [], i: 0, ist: 0 };
+function gorselKatmanGoster() {
+  const k = $('gorselKatman');
+  const c = GK.liste[GK.i];
+  if (!k || !c) return;
+  const ist = ++GK.ist;
+  const resim = $('gkResim');
+  resim.src = c.onizleme || '';
+  resim.classList.add('yukleniyor');
+  $('gkAd').textContent = c.ad || '';
+  $('gkAd').title = c.yol || '';
+  $('gkSira').textContent = `${GK.i + 1} / ${GK.liste.length}`;
+  $('gkOnceki').hidden = $('gkSonraki').hidden = GK.liste.length < 2;
+  k.hidden = false;
+  window.evren.gorselBuyuk(c.yol).then((v) => {
+    if (GK.ist !== ist) return;
+    if (v) resim.src = v;
+    resim.classList.remove('yukleniyor');
+  });
+}
+function gorselKatmanAc(i) {
+  GK.liste = (S.dosyaGorseller || []).slice();
+  if (!GK.liste.length) return;
+  GK.i = Math.min(Math.max(0, i), GK.liste.length - 1);
+  gorselKatmanGoster();
+}
+function gorselKatmanGez(yon) {
+  if (GK.liste.length < 2) return;
+  GK.i = (GK.i + yon + GK.liste.length) % GK.liste.length;
+  gorselKatmanGoster();
+}
+function gorselKatmanKapat() {
+  const k = $('gorselKatman');
+  if (!k || k.hidden) return;
+  GK.ist++;
+  k.hidden = true;
+}
+function dosyaEylem(eylem, yol, dugme) {
+  if (!yol) return;
+  if (eylem === 'klasor') window.evren.dosyaKlasor(yol);
+  else if (eylem === 'kopya') {
+    panoYaz(yol);
+    if (dugme) { const eski = dugme.textContent; dugme.textContent = 'kopyalandı'; setTimeout(() => { dugme.textContent = eski; }, 1200); }
+  } else window.evren.dosyaAc(yol);
 }
 // ---------- komut paleti ----------
-const P = { ogeler: [], gorunen: [], aktif: 0 };
+// Tek palet, üç kip: 'komut' (eylem/model/proje), 'gecis' (Ctrl+K oturum hızlı geçişi), 'kisayol' (tablo).
+const P = { ogeler: [], gorunen: [], aktif: 0, mod: 'komut' };
+const PALET_IPUCU = { komut: 'Model, proje ya da komut ara…', gecis: 'Oturum adı ya da proje yaz…', kisayol: 'Kısayol ara…' };
+function kisayolOgeleri() {
+  return Gorunum.KISAYOLLAR.map((k) => ({ g: 'Kısayollar', ad: k.ad, alt: k.etiket, ic: 'term', yap: null }));
+}
+function gecisOgeleri(q) {
+  const acik = new Set(S.oturumlar.filter((o) => o.canli && o.devam).map((o) => o.devam));
+  return Gorunum.hizliGecis(S.gecmis, q, acilan, projeBilgi).map((g) => ({
+    g: q ? 'Eşleşen oturumlar' : 'Son açılan', ad: g.baslik || 'Oturum', ic: 'chat', idx: [],
+    alt: `${projeBilgi(g).ad || 'EVREN'} · ${acik.has(g.id) ? 'açık' : kisaZaman(g.ms)}`,
+    secili: g.id === gorunenOturumId(), yap: () => gecmisKartAc(g.id, g.projeYol),
+  }));
+}
 function paletOgeleri() {
   const kilit = false; // çoklu oturum: seçimler her zaman yeni oturum içindir
   const ao = aktifOturum();
@@ -1550,11 +2084,17 @@ function paletOgeleri() {
       { ad: 'Yeni sohbet özeti iste (/summarize)', ic: 'chat', yap: () => { window.evren.yaz(ao.pid, '/summarize\r'); } },
     ] : []),
     ...(ao ? [{ ad: 'Sekmeyi kapat', ic: 'clear', alt: 'Ctrl ⇧ W', yap: () => sekmeKapat(ao.id) }] : []),
+    { ad: 'Hızlı geçiş (oturum ara)', ic: 'search', alt: 'Ctrl K', yap: () => paletAc('gecis') },
+    { ad: 'Kısayollar', ic: 'term', alt: 'tüm kısayolları listele', yap: () => paletAc('kisayol') },
     { ad: 'Ana ekran', ic: 'term', alt: 'Ctrl ⇧ T', yap: () => sekmeSec(null) },
     { ad: 'Odak modu', ic: 'odak', alt: 'Ctrl ⇧ F', yap: () => odakToggle() },
-    { ad: 'Konuşma geçmişi', ic: 'chat', alt: 'Ctrl ⇧ H', yap: () => sohbetToggle() },
+    ...(aktifGorunum() ? [
+      { ad: 'Sohbet görünümü', ic: 'chat', alt: 'Ctrl 1', yap: () => gorunumSec('sohbet') },
+      { ad: 'Terminal görünümü', ic: 'term', alt: 'Ctrl 2', yap: () => gorunumSec('terminal') },
+      { ad: 'Dosyalar görünümü', ic: 'folder', alt: 'Ctrl 3', yap: () => gorunumSec('dosyalar') },
+    ] : []),
     { ad: 'Klasörde çalış…', ic: 'folder', yap: klasorEkle },
-    { ad: 'Kenar panelini aç / kapat', ic: 'side', alt: 'Ctrl ⇧ B', yap: sideToggle },
+    { ad: 'Oturumlar panelini aç / kapat', ic: 'side', alt: 'Ctrl ⇧ B', yap: sideToggle },
     { ad: 'Bağlantıyı yenile', ic: 'refresh', yap: apiYenile },
     { ad: 'Terminali temizle', ic: 'clear', yap: () => { const t = aktifTerm(); if (t) t.clear(); }, pasif: !aktifTerm() },
     { ad: 'Yazıyı büyüt', ic: 'plus', alt: 'Ctrl + teker', yap: () => fsDegis(1) },
@@ -1586,14 +2126,20 @@ function paletCiz() {
   const q = $('paletGiris').value.trim();
   P.gorunen = [];
   let enIyi = -1, enSkor = -Infinity;
-  for (const o of P.ogeler) {
-    let m = q ? eslesme(q, o.ad) : { skor: 0, idx: [] };
-    if (!m && q && o.alt) { const m2 = eslesme(q, o.alt); if (m2) m = { skor: m2.skor - 2, idx: [] }; }
-    if (!m) continue;
-    if (!o.pasif && m.skor > enSkor) { enSkor = m.skor; enIyi = P.gorunen.length; }
-    P.gorunen.push({ ...o, idx: m.idx });
+  if (P.mod === 'gecis') {
+    // Sıralama Gorunum.hizliGecis'te (katlama + yazım toleransı); burada yeniden puanlanmaz.
+    P.gorunen = gecisOgeleri(q);
+    P.aktif = 0;
+  } else {
+    for (const o of P.ogeler) {
+      let m = q ? eslesme(q, o.ad) : { skor: 0, idx: [] };
+      if (!m && q && o.alt) { const m2 = eslesme(q, o.alt); if (m2) m = { skor: m2.skor - 2, idx: [] }; }
+      if (!m) continue;
+      if (!o.pasif && m.skor > enSkor) { enSkor = m.skor; enIyi = P.gorunen.length; }
+      P.gorunen.push({ ...o, idx: m.idx });
+    }
+    P.aktif = q ? Math.max(0, enIyi) : Math.max(0, P.gorunen.findIndex((o) => !o.pasif));
   }
-  P.aktif = q ? Math.max(0, enIyi) : Math.max(0, P.gorunen.findIndex((o) => !o.pasif));
   const el = $('paletListe');
   if (!P.gorunen.length) { el.innerHTML = '<div class="pal-bos">Eşleşen yok</div>'; return; }
   let grup = '';
@@ -1609,9 +2155,11 @@ function paletAktif(i) {
   const a = $('paletListe').querySelector('.pal-i.aktif');
   if (a) a.scrollIntoView({ block: 'nearest' });
 }
-function paletAc() {
-  P.ogeler = paletOgeleri();
+function paletAc(mod) {
+  P.mod = typeof mod === 'string' && PALET_IPUCU[mod] ? mod : 'komut'; // düğme olayı kip sanılmasın
+  P.ogeler = P.mod === 'komut' ? paletOgeleri() : P.mod === 'kisayol' ? kisayolOgeleri() : [];
   $('palet').hidden = false;
+  $('paletGiris').placeholder = PALET_IPUCU[P.mod];
   $('paletGiris').value = '';
   paletCiz();
   $('paletGiris').focus();
@@ -1622,7 +2170,7 @@ function paletKapat() {
 }
 function paletUygula(i) {
   const o = P.gorunen[i];
-  if (!o || o.pasif) return;
+  if (!o || o.pasif || !o.yap) return; // kısayol satırları yalnız bilgi
   paletKapat();
   o.yap();
 }
@@ -2366,8 +2914,26 @@ $('durdurBtn').addEventListener('click', durdur);
 $('cevapDurdurBtn').addEventListener('click', cevapDurdur);
 $('ekleBtn').addEventListener('click', klasorEkle);
 $('yenileBtn').addEventListener('click', apiYenile);
-$('cmdkBtn').addEventListener('click', paletAc);
-$('paletBtn2').addEventListener('click', paletAc);
+$('cmdkBtn').addEventListener('click', () => paletAc());
+$('paletBtn2').addEventListener('click', () => paletAc());
+// Claude Code oturumlarını da göster: ayar ana süreçte saklanır; liste yeniden yüklenir.
+function claudeBtnCiz() {
+  const b = $('claudeBtn');
+  if (!b) return;
+  b.classList.toggle('aktif', claudeGoster());
+  b.setAttribute('aria-pressed', claudeGoster() ? 'true' : 'false');
+  b.title = claudeGoster() ? 'Claude Code oturumları listede görünüyor (kapatmak için tıkla)' : 'Claude Code oturumlarını da göster';
+}
+if ($('claudeBtn')) {
+  claudeBtnCiz();
+  $('claudeBtn').addEventListener('click', async () => {
+    const yeni = await window.evren.claudeOturumlari(!claudeGoster()).catch(() => claudeGoster());
+    S.ayar.claudeOturumlari = yeni === true;
+    claudeBtnCiz();
+    gecmisSonHtml = null;
+    gecmisYukle();
+  });
+}
 $('sideBtn').addEventListener('click', sideToggle);
 $('kucukBtn').addEventListener('click', () => fsDegis(-1));
 $('buyukBtn').addEventListener('click', () => fsDegis(1));
@@ -2414,6 +2980,113 @@ if ($('gecmisAra')) {
     e.target.value = ''; gecmisAra = ''; gecmisIcerikAra(); e.target.blur();
   });
 }
+// ---- Kart sağ tık menüsü: Sabitle / Arşivle / Projeye taşı… / Otomatiğe dön ----
+let kartMenuEl = null;
+function kartMenuKapat() {
+  if (kartMenuEl) { kartMenuEl.remove(); kartMenuEl = null; }
+  document.removeEventListener('mousedown', kartMenuDisTik, true);
+  document.removeEventListener('keydown', kartMenuTus, true);
+  window.removeEventListener('blur', kartMenuKapat);
+}
+function kartMenuDisTik(e) { if (kartMenuEl && !kartMenuEl.contains(e.target)) kartMenuKapat(); }
+function kartMenuTus(e) { if (e.key === 'Escape') { e.stopPropagation(); kartMenuKapat(); } }
+function kartMenuKonumla(x, y) {
+  const r = kartMenuEl.getBoundingClientRect();
+  kartMenuEl.style.left = Math.max(4, Math.min(x, innerWidth - r.width - 4)) + 'px';
+  kartMenuEl.style.top = Math.max(4, Math.min(y, innerHeight - r.height - 4)) + 'px';
+}
+function kartMenuAc(x, y, id) {
+  const g = S.gecmis.find((k) => k.id === id);
+  if (!g) return;
+  kartMenuKapat();
+  const sabit = ignelenenler.has(id);
+  const arsivde = arsivlenenler.has(id);
+  const etkin = gecmisAcikMi(g) || g.canli || g.turCanli || g.calisanAjan > 0 || g.calisanEvren > 0;
+  // Çıkarım ya da elle seçim, kayıtlı projeler arasında olmayan bir klasöre bağladıysa "Projeyi kaydet" sunulur.
+  const pb = projeBilgi(g);
+  const kayitsizProje = pb.yol && pb.kaynak !== 'kendi' && !projeKayitliMi(pb.yol) ? pb : null;
+  const el = document.createElement('div');
+  el.className = 'kart-menu';
+  el.setAttribute('role', 'menu');
+  el.innerHTML = `
+    <button type="button" role="menuitem" data-m="sabit"><svg class="ic"><use href="#i-pin" /></svg><span>${sabit ? 'Sabitlemeyi kaldır' : 'Sabitle'}</span></button>
+    <button type="button" role="menuitem" data-m="arsiv"${!arsivde && etkin ? ' disabled title="Etkin oturum arşivlenemez"' : ''}><svg class="ic"><use href="#i-arsiv" /></svg><span>${arsivde ? 'Arşivden çıkar' : 'Arşivle'}</span></button>
+    <button type="button" role="menuitem" data-m="tasi"><svg class="ic"><use href="#i-folder" /></svg><span>Projeye taşı…</span></button>
+    ${kayitsizProje ? `<button type="button" role="menuitem" data-m="kaydet" title="${esc(kayitsizProje.yol)}"><svg class="ic"><use href="#i-folder" /></svg><span>Projeyi kaydet: ${esc(kayitsizProje.ad || kayitsizProje.yol)}</span></button>` : ''}
+    ${elleProje[id] ? '<button type="button" role="menuitem" data-m="otomatik"><svg class="ic"><use href="#i-refresh" /></svg><span>Otomatiğe dön</span></button>' : ''}`;
+  document.body.appendChild(el);
+  kartMenuEl = el;
+  kartMenuKonumla(x, y);
+  el.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-m]');
+    if (!b || b.disabled) return;
+    const m = b.dataset.m;
+    if (m === 'tasi') { projeTasiListesi(id, x, y); return; }
+    kartMenuKapat();
+    if (m === 'sabit') oturumIgnele(id);
+    else if (m === 'arsiv') oturumArsivle(id);
+    else if (m === 'otomatik') oturumProjeTasi(id, null);
+    else if (m === 'kaydet' && kayitsizProje) projeyiKaydetVeBagla(id, kayitsizProje.yol, kayitsizProje.ad);
+  });
+  document.addEventListener('mousedown', kartMenuDisTik, true);
+  document.addEventListener('keydown', kartMenuTus, true);
+  window.addEventListener('blur', kartMenuKapat);
+  const ilk = el.querySelector('button:not([disabled])');
+  if (ilk) ilk.focus();
+}
+const yolAnahtar = (y) => String(y || '').split(String.fromCharCode(92)).join('/').replace(/\/+$/, '').toLowerCase();
+const projeKayitliMi = (yol) => (S.projeler || []).some((p) => yolAnahtar(p.yol) === yolAnahtar(yol) || (p.yollar || []).some((x) => yolAnahtar(x) === yolAnahtar(yol)));
+// Klasörü mevcut proje kayıt yoluyla (proje-kaydet) listeye ekler ve oturumu o projeye bağlar.
+async function projeyiKaydetVeBagla(id, yol, ad) {
+  const r = await window.evren.projeKaydet({ yol, ad: ad || '' }).catch((e) => ({ ok: false, hata: e.message }));
+  if (!r || !r.ok) { olay('PROJE', 'kaydedilemedi · ' + ((r && r.hata) || 'bilinmeyen hata'), 'kotu'); return; }
+  S.projeler = r.projeler || S.projeler;
+  const kayit = S.projeler.find((p) => yolAnahtar(p.yol) === yolAnahtar(yol));
+  oturumProjeTasi(id, kayit ? kayit.yol : yol);
+  projeleriCiz(); ozetYaz(); yeniOturumModalGuncelle();
+  olay('PROJE', 'kaydedildi · ' + ((kayit && kayit.ad) || ad || yol), 'iyi');
+}
+// "Projeye taşı…": bilinen projelerden, yazarak süzülebilen küçük liste.
+function projeTasiListesi(id, x, y) {
+  if (!kartMenuEl) return;
+  const mevcut = elleProje[id] || '';
+  kartMenuEl.classList.add('liste');
+  kartMenuEl.innerHTML = `
+    <input type="text" class="kart-menu-ara" placeholder="Proje ara…" spellcheck="false" autocomplete="off" aria-label="Proje ara" />
+    <div class="kart-menu-liste" role="listbox"></div>
+    <button type="button" class="kart-menu-sec" data-sec="1"><svg class="ic"><use href="#i-folder" /></svg><span>Klasör seç ve kaydet…</span></button>`;
+  const girdi = kartMenuEl.querySelector('input');
+  const liste = kartMenuEl.querySelector('.kart-menu-liste');
+  const ciz = () => {
+    const q = kucult(girdi.value.trim());
+    const p = (S.projeler || []).filter((x) => !q || kucult(x.ad).includes(q) || kucult(x.yol).includes(q));
+    liste.innerHTML = p.length ? p.map((x) => `<button type="button" role="option" class="${x.yol === mevcut ? 'sec-li' : ''}" data-yol="${esc(x.yol)}" title="${esc(x.yol)}"><span>${esc(x.ad)}</span><i class="mono">${esc(kisaYol(x.yol, 30))}</i></button>`).join('') : '<div class="bos-satir">Eşleşen proje yok.</div>';
+    kartMenuKonumla(x, y);
+  };
+  girdi.addEventListener('input', ciz);
+  girdi.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { const b = liste.querySelector('button'); if (b) b.click(); }
+  });
+  liste.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-yol]');
+    if (!b) return;
+    kartMenuKapat();
+    oturumProjeTasi(id, b.dataset.yol);
+  });
+  kartMenuEl.querySelector('[data-sec]').addEventListener('click', async () => {
+    kartMenuKapat();
+    const sec = await window.evren.klasorSec(false).catch(() => null); // false: son klasörler listesine yazma
+    if (sec && sec.yol) projeyiKaydetVeBagla(id, sec.yol, sec.ad);
+  });
+  ciz();
+  girdi.focus();
+}
+$('gecmisList').addEventListener('contextmenu', (e) => {
+  const kart = e.target.closest('.seans-kart');
+  if (!kart) return;
+  e.preventDefault();
+  kartMenuAc(e.clientX, e.clientY, kart.dataset.id);
+});
 $('gecmisList').addEventListener('click', (e) => {
   if (e.target.closest('[data-gecmis-daha]')) {
     e.stopPropagation();
@@ -2428,6 +3101,10 @@ $('gecmisList').addEventListener('click', (e) => {
     if (g) adlandirModalAc({ devam: g.id, dizin: g.projeYol, ad: g.baslik });
     return;
   }
+  const kumeBtn = e.target.closest('[data-kume]');
+  if (kumeBtn) { e.stopPropagation(); kumeBicimiSec(kumeBtn.dataset.kume); return; }
+  const arsivBtn = e.target.closest('[data-arsivle]');
+  if (arsivBtn) { e.stopPropagation(); oturumArsivle(arsivBtn.dataset.arsivle); return; }
   const igneBtn = e.target.closest('[data-igne]');
   if (igneBtn) {
     e.stopPropagation();
@@ -2443,42 +3120,78 @@ $('gecmisList').addEventListener('click', (e) => {
     gecmisCiz();
     return;
   }
+  const altEs = e.target.closest('[data-alt-is]');
+  if (altEs) { e.stopPropagation(); altIsAc(altEs.dataset.altUst, altEs.dataset.altIs); return; }
+  const altSatir = e.target.closest('.ajan.evren-is');
+  if (altSatir) {
+    const ustKart = altSatir.closest('.seans-kart');
+    if (ustKart) { e.stopPropagation(); altIsAc(ustKart.dataset.id, altSatir.dataset.evrenId); return; }
+  }
   const baslik = e.target.closest('.seans-grup-baslik');
   if (baslik) { grupKatla(baslik); return; }
   const kart = e.target.closest('.seans-kart');
   if (!kart) return;
-  const id = kart.dataset.id;
-  const yol = kart.dataset.yol;
+  gecmisKartAc(kart.dataset.id, kart.dataset.yol);
+});
+// Kart tıklaması, Ctrl+K ve Ctrl+Alt+↑/↓ aynı yolu kullanır.
+function gecmisKartAc(id, yol) {
   if (yol && yol !== S.proje) {
     projeSec(yol);
   }
+  // Etkin kart: canlı oturum açılır (varsayılan görünüm canlı sohbet; Sohbet ⇄ Terminal ile geçilir).
   const var_ = S.oturumlar.find((o) => o.canli && (o.devam === id || o.id === id));
   if (var_) {
     sekmeSec(var_.id);
     return;
   }
-  // Bu sohbet üstteki konuşma panelinde zaten açıksa ikinci kez açma; oraya yönlendir.
-  // (Eskiden karta tıklamak aynı sohbeti yeniden başlatıp panelin üstüne ikinci bir görünüm açıyordu.)
-  if (seciliOturumGecmisi && seciliOturumGecmisi.id === id) {
-    const panel = $('sohbetPanel');
-    if (panel.hidden) { panel.hidden = false; S.sohbetAcik = true; sohbetIgneDurumGuncelle(); }
-    sohbetVurgula();
+  // Geçmiş kart: orta alanda okunur, salt okunur sohbet kaydı açılır; "Devam et" terminalde sürdürür.
+  const g = S.gecmis.find((x) => x.id === id);
+  if (g) { oturumIzle(g); return; }
+  basla(id, yol ? { dizin: yol } : undefined);
+}
+// Listedeki görünür kart sırasıyla önceki/sonraki oturum (katlanmış gruplardaki kartlar sayılmaz).
+function oturumKomsu(yon) {
+  const kartlar = [...document.querySelectorAll('#gecmisList .seans-kart')].filter((k) => !k.closest('.seans-grup.kapali'));
+  const idler = [...new Set(kartlar.map((k) => k.dataset.id))];
+  const hedef = Gorunum.komsuSira(idler, gorunenOturumId(), yon);
+  if (!hedef) return;
+  const kart = kartlar.find((k) => k.dataset.id === hedef);
+  gecmisKartAc(hedef, kart && kart.dataset.yol);
+  setTimeout(() => {
+    const k2 = [...document.querySelectorAll('#gecmisList .seans-kart')].find((k) => k.dataset.id === hedef);
+    if (k2) k2.scrollIntoView({ block: 'nearest' });
+  }, 0);
+}
+// Son kapatılan sekmeyi (oturum kimliği varsa) yeniden açar; bellekte tutulur, uygulama kapanınca sıfırlanır.
+const kapatilanlar = [];
+function sonKapatilaniAc() {
+  while (kapatilanlar.length) {
+    const k = kapatilanlar.pop();
+    if (S.oturumlar.some((o) => o.canli && o.devam === k.devam)) continue;
+    basla(k.devam, { dizin: k.dizin, modelId: k.modelId });
     return;
   }
-  // Soldaki karta tıklamak her zaman terminalde açar; konuşma paneli yalnız üstteki konuşma düğmesiyle (Ctrl+Shift+H) açılır.
-  basla(id, yol ? { dizin: yol } : undefined);
+  olay('OTURUM', 'yeniden açılacak kapatılmış oturum yok', 'uyari');
+}
+$('gecmisList').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const a = e.target.closest('[data-alt-is]');
+  if (a) { e.preventDefault(); altIsAc(a.dataset.altUst, a.dataset.altIs); }
 });
 $('sekmeler').addEventListener('click', (e) => {
+  if (e.target.closest('[data-okuma-kapat]')) { e.stopPropagation(); okumaKapat(); return; }
   const x = e.target.closest('[data-kapat]');
   if (x) { e.stopPropagation(); sekmeKapat(Number(x.dataset.kapat)); return; }
   const t = e.target.closest('.tab');
+  if (t && t.dataset.id === 'okuma') return;
   if (t) sekmeSec(t.dataset.id === 'ana' ? null : Number(t.dataset.id));
 });
-$('sekmeler').addEventListener('auxclick', (e) => { const t = e.target.closest('.tab'); if (e.button === 1 && t && t.dataset.id !== 'ana') sekmeKapat(Number(t.dataset.id)); });
+$('sekmeler').addEventListener('auxclick', (e) => { const t = e.target.closest('.tab'); if (e.button === 1 && t && t.dataset.id === 'okuma') { okumaKapat(); return; }
+  if (e.button === 1 && t && t.dataset.id !== 'ana') sekmeKapat(Number(t.dataset.id)); });
 // Sekmeye çift tıklamak adlandırma penceresini açar (Claude/Antigravity'deki gibi).
 $('sekmeler').addEventListener('dblclick', (e) => {
   const t = e.target.closest('.tab');
-  if (!t || t.dataset.id === 'ana') return;
+  if (!t || t.dataset.id === 'ana' || t.dataset.id === 'okuma') return;
   e.preventDefault();
   const o = S.oturumlar.find((x) => x.id === Number(t.dataset.id));
   if (o) sekmeAdlandirAc(o);
@@ -2492,15 +3205,38 @@ $('sekmeler').addEventListener('wheel', (e) => {
   e.preventDefault();
   kutu.scrollLeft += d;
 }, { passive: false });
-$('stage').addEventListener('wheel', (e) => { if (e.ctrlKey) { e.preventDefault(); fsDegis(e.deltaY < 0 ? 1 : -1); } }, { passive: false });
+$('stage').addEventListener('wheel', (e) => { if (e.ctrlKey) { e.preventDefault(); e.stopPropagation(); fsDegis(e.deltaY < 0 ? 1 : -1); } }, { passive: false, capture: true });
+function kisayolCalistir(eylem, e) {
+  const palet = (mod) => { if ($('palet').hidden || P.mod !== mod) paletAc(mod); else paletKapat(); };
+  switch (eylem) {
+    case 'gecis': palet('gecis'); break;
+    case 'palet': palet('komut'); break;
+    case 'onceki': oturumKomsu(-1); break;
+    case 'sonraki': oturumKomsu(1); break;
+    case 'yenidenAc': sonKapatilaniAc(); break;
+    case 'ana': sekmeSec(null); break;
+    case 'sekmeKapat': if (S.aktif != null) sekmeKapat(S.aktif); break;
+    case 'sekmeGez': sekmeGez(e.shiftKey ? -1 : 1); break;
+    case 'kenar': sideToggle(); break;
+    case 'odak': odakToggle(); break;
+    case 'gorunumDon': return gorunumDon();
+    case 'gorunumSohbet': return gorunumSec('sohbet');
+    case 'gorunumTerminal': return gorunumSec('terminal');
+    case 'gorunumDosyalar': return gorunumSec('dosyalar');
+    case 'terminalAra': { const o = aktifOturum(); return !!(o && o.term && aktifGorunum() === 'terminal' && termAraAc()); }
+  }
+  return true;
+}
 window.addEventListener('keydown', (e) => {
-  if (e.ctrlKey && e.shiftKey && e.code === 'KeyP') { e.preventDefault(); $('palet').hidden ? paletAc() : paletKapat(); return; }
-  if (e.ctrlKey && e.shiftKey && e.code === 'KeyB') { e.preventDefault(); sideToggle(); return; }
-  if (e.ctrlKey && e.shiftKey && e.code === 'KeyF') { e.preventDefault(); odakToggle(); return; }
-  if (e.ctrlKey && e.shiftKey && e.code === 'KeyH') { e.preventDefault(); sohbetToggle(); return; }
-  if (e.ctrlKey && e.shiftKey && e.code === 'KeyT') { e.preventDefault(); sekmeSec(null); return; }
-  if (e.ctrlKey && e.shiftKey && e.code === 'KeyW') { e.preventDefault(); if (S.aktif != null) sekmeKapat(S.aktif); return; }
-  if (e.ctrlKey && e.code === 'Tab') { e.preventDefault(); sekmeGez(e.shiftKey ? -1 : 1); return; }
+  // Görsel önizleme katmanı açıkken Esc ve ok tuşları ona aittir.
+  if (!$('gorselKatman').hidden && !e.ctrlKey && !e.altKey) {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); gorselKatmanKapat(); return; }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); gorselKatmanGez(e.key === 'ArrowLeft' ? -1 : 1); return; }
+  }
+  // Odak terminaldeyse (ya da terminal arama kutusundaysa) terminalDisi tuşlar (Ctrl+K) terminale bırakılır.
+  const terminalda = !!(e.target && e.target.closest && e.target.closest('.terminal, .term-ara'));
+  const ks = Gorunum.kisayolBul(e, Gorunum.KISAYOLLAR, terminalda); // tuşlar tek tablodan (gorunum.js KISAYOLLAR) çözülür
+  if (ks) { if (kisayolCalistir(ks.eylem, e) !== false) e.preventDefault(); return; }
   if (!$('palet').hidden) return;
   const adm = $('adlandirModal');
   if (adm && !adm.hidden) {
@@ -2614,9 +3350,56 @@ if (window.evren && window.evren.remoteDinle) {
   window.evren.remoteDinle((bilgi) => kumandaDurumGuncelle(bilgi));
 }
 // Sohbet paneli olay dinleyicileri
-if ($('sohbetBtn')) $('sohbetBtn').addEventListener('click', () => sohbetToggle());
-if ($('sohbetKapatBtn')) $('sohbetKapatBtn').addEventListener('click', () => sohbetToggle(false));
+if ($('gorunumSeg')) $('gorunumSeg').addEventListener('click', (e) => { const b = e.target.closest('[data-g]'); if (b) gorunumSec(b.dataset.g); });
+tusSeritKur();
+// Terminal arama kutusu
+if ($('termAraGiris')) {
+  $('termAraGiris').addEventListener('input', () => termAraYap(1, true));
+  $('termAraGiris').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); termAraYap(e.shiftKey ? -1 : 1); }
+    else if (e.key === 'Escape') { e.preventDefault(); termAraKapat(); }
+  });
+  $('termAraOnce').addEventListener('click', () => termAraYap(-1));
+  $('termAraSonra').addEventListener('click', () => termAraYap(1));
+  $('termAraKapat').addEventListener('click', () => termAraKapat());
+}
+// Önizleme katmanı
+if ($('gorselKatman')) {
+  $('gkKapat').addEventListener('click', gorselKatmanKapat);
+  $('gkOnceki').addEventListener('click', () => gorselKatmanGez(-1));
+  $('gkSonraki').addEventListener('click', () => gorselKatmanGez(1));
+  $('gorselKatman').addEventListener('click', (e) => { if (e.target === $('gorselKatman')) gorselKatmanKapat(); });
+  const gkYol = () => (GK.liste[GK.i] || {}).yol;
+  $('gkAc').addEventListener('click', () => dosyaEylem('ac', gkYol()));
+  $('gkKlasor').addEventListener('click', () => dosyaEylem('klasor', gkYol()));
+  $('gkKopya').addEventListener('click', (e) => dosyaEylem('kopya', gkYol(), e.currentTarget));
+}
+// Dosya bırakılırsa pencere o dosyaya gitmesin (terminal kendi bırakmasını işler).
+window.addEventListener('dragover', (e) => e.preventDefault());
+window.addEventListener('drop', (e) => e.preventDefault());
+if ($('sohbetDevamBtn')) $('sohbetDevamBtn').addEventListener('click', okumaDevamEt);
 if ($('sohbetYenileBtn')) $('sohbetYenileBtn').addEventListener('click', () => sohbetYukle(true));
+// Sohbet yazı çubuğu: mesaj canlı oturumun PTY'sine yazılır + Enter (Claude Code mesajı kuyruğa alır).
+if ($('sohbetGonder')) $('sohbetGonder').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const o = aktifOturum();
+  const giris = $('sohbetGonderGiris');
+  const metin = Gorunum.gonderilecek(giris.value);
+  if (!o || !o.canli || !o.pid || !metin) return;
+  window.evren.yaz(o.pid, metin);
+  giris.value = '';
+  setTimeout(() => { if (S.sohbetAcik) sohbetYukle(true); }, 700); // bekleyiciyi beklemeden kendi mesajımız görünsün
+});
+// Yapıştırma: panodaki görsel/dosya tırnaklı yol olur, metin olduğu gibi imlece eklenir.
+if ($('sohbetGonderGiris')) $('sohbetGonderGiris').addEventListener('paste', async (e) => {
+  e.preventDefault();
+  const giris = e.currentTarget;
+  const ek = await window.evren.panoEkAl().catch(() => null);
+  const metin = ek && ek.yollar && ek.yollar.length ? Gorunum.yolMetni(ek.yollar) : await panoOku();
+  if (!metin) return;
+  giris.setRangeText(metin, giris.selectionStart, giris.selectionEnd, 'end');
+  giris.focus();
+});
 // Künye: tıklanınca kaynak depo tarayıcıda açılır (sürüm ve lisans aynı satırda).
 if ($('kunye')) {
   const depoAc = () => window.evren.disari('https://github.com/yusufgunay-esq/evren-desktop');
@@ -2639,25 +3422,28 @@ document.querySelectorAll('.panel-sekme').forEach((b) => b.addEventListener('cli
 panelSayfa(sakla.oku('panelSayfa', 'proje'));
 if ($('sohbetPanel')) {
   $('sohbetPanel').addEventListener('click', (e) => {
-    const f = e.target.closest('.sohbet-filtre');
+    const ds = e.target.closest('[data-dsuz]');
+    if (ds) { S.dosyaSuz = ds.dataset.dsuz; ciktiCiz(); return; }
+    const f = e.target.closest('.sohbet-filtre[data-filtre]');
     if (f) {
-      for (const b of $('sohbetPanel').querySelectorAll('.sohbet-filtre')) b.classList.remove('aktif');
+      for (const b of $('sohbetPanel').querySelectorAll('.sohbet-filtre[data-filtre]')) b.classList.remove('aktif');
       f.classList.add('aktif');
       S.sohbetFiltre = f.dataset.filtre;
-      if (S.sohbetFiltre === 'cikti') { ciktiYukle(true); return; }
       const o = aktifOturum();
       const kayit = seciliOturumGecmisi ? seciliOturumGecmisi.girisler : (o && o.sohbetGirisler);
       if (kayit) sohbetCiz(kayit);
       return;
     }
-    const ciktiKart = e.target.closest('.cikti-kart');
-    if (ciktiKart) {
-      const yol = ciktiKart.dataset.yol;
-      const dugme = e.target.closest('.cikti-dugme');
-      if (dugme && dugme.dataset.eylem === 'klasor') window.evren.dosyaKlasor(yol);
-      else window.evren.dosyaAc(yol);
+    const kucuk = e.target.closest('.dosya-kucuk');
+    if (kucuk) { gorselKatmanAc(Number(kucuk.dataset.i) || 0); return; }
+    const satir = e.target.closest('.dosya-satir');
+    if (satir) {
+      const dugme = e.target.closest('[data-eylem]');
+      dosyaEylem(dugme ? dugme.dataset.eylem : 'ac', satir.dataset.yol, dugme);
       return;
     }
+    const izUst = e.target.closest('.so-iz-ust');
+    if (izUst) { izUst.parentElement.classList.toggle('acik'); return; }
     const aracKart = e.target.closest('.sohbet-kart.arac');
     if (aracKart && !e.target.closest('.sohbet-kopyala')) { aracKart.classList.toggle('acik'); return; }
     const k = e.target.closest('.sohbet-kopyala');
@@ -2678,7 +3464,7 @@ setInterval(() => {
   if (S.sohbetAcik && (S.aktif != null || seciliOturumGecmisi)) {
     sohbetYukle();
   }
-}, 3000);
+}, 1500);
 $('fsMetin').textContent = S.fs;
 yukle().then(() => {
   if (new URLSearchParams(location.search).get('palet')) paletAc();
@@ -2700,14 +3486,12 @@ yukle().then(() => {
       // Geçmiş listesi arka planda yüklenir; hazır olana dek kısa süre bekle.
       const basla = Date.now();
       while ((!S.gecmis || !S.gecmis.length) && Date.now() - basla < 4000) await bekle(100);
-      S.sohbetFiltre = 'cikti';
-      for (const b of document.querySelectorAll('.sohbet-filtre')) b.classList.toggle('aktif', b.dataset.filtre === 'cikti');
       const secim = new URLSearchParams(location.search).get('cikti');
       const hedef = secim && secim !== '1' && Array.isArray(S.gecmis)
         ? (S.gecmis.find((x) => String(x.id).startsWith(secim)) || S.gecmis[0])
         : (Array.isArray(S.gecmis) ? S.gecmis[0] : null);
       if (!seciliOturumGecmisi && hedef) await oturumIzle(hedef);
-      else await sohbetToggle(true);
+      gorunumSec('dosyalar');
     }, 500);
   }
   if (new URLSearchParams(location.search).get('sef')) {

@@ -1,8 +1,7 @@
 // أَعُوذُ بِاللَّهِ مِنَ الشَّيْطَانِ الرَّجِيمِ
 // بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
-/* This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
- * If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/.
- * Copyright (c) 2026 Yusuf Günay. */
+/* Copyright (c) 2026 Yusuf Günay.
+ * This program is free software under the GNU GPL v3 or later; see LICENSE and LICENSE-EK.md. */
 // EVREN Desktop — ana süreç: IPC, çoklu pty (ConPTY), EVREN API ölçümü. Model/ayar/kasa mantığı motor.js'te.
 const { app, BrowserWindow, ipcMain, dialog, shell, screen, nativeImage, clipboard, powerSaveBlocker } = require('electron');
 const path = require('node:path');
@@ -12,7 +11,10 @@ const { Worker } = require('node:worker_threads');
 const oturumKarar = require('./oturum-karar');
 const pty = require('@homebridge/node-pty-prebuilt-multiarch');
 const motor = require('./motor');
+const gorunumYardim = require('./gorunum');
 const gecmis = require('./gecmis');
+const tercih = require('./tercih');
+const projeCikarim = require('./proje-cikarim');
 const sohbet = require('./sohbet');
 const RemoteSunucu = require('./remote-sunucu');
 const SURUM = require('./package.json').version;
@@ -192,6 +194,7 @@ async function yerelDurum() {
     sonKlasorler: sonKlasorListesi(),
     serbestDizin: SERBEST_DIZIN,
     uyku: ham.uykuEngelle !== false,
+    claudeOturumlari: ham.claudeOturumlari === true, // varsayılan kapalı: yalnız EVREN oturumları görünür
   };
 }
 
@@ -394,6 +397,7 @@ async function oturumBaslat({ modelId, dizin, ekDizinler, projeAd, cols, rows, d
     kodYazma: yazma,
     efor: eforDeger,
     baslangic: Date.now(),
+    sonBoyut: { cols: olcu.cols, rows: olcu.rows }, // pty bu boyutla doğdu; ilk bildirim değişim sayılmasın
   };
   oturumBilgi.set(id, bilgi);
   // Kayıt kimliği yoksa: PTY açıldıktan sonra dizinde oluşan en yeni jsonl bu oturumun kaydıdır.
@@ -893,6 +897,12 @@ ipcMain.handle('durum', async () => {
   catch (e) { return { anahtarVar: false, modeller: [], projeler: [], hata: e.message }; }
 });
 ipcMain.handle('anahtar-kaydet', async (_e, deger) => anahtarKaydet(deger));
+// "Claude Code oturumlarını da göster" anahtarı (ayar: claudeOturumlari, varsayılan false).
+ipcMain.handle('claude-oturumlari', (_e, deger) => {
+  const d = deger === true;
+  ayarYaz({ claudeOturumlari: d });
+  return d;
+});
 // Uyku engeli ayarı: açıksa çalışan oturum varken sistem uyumaz.
 ipcMain.handle('uyku-engelle', async (_e, deger) => {
   ayarYaz({ uykuEngelle: !!deger });
@@ -1020,6 +1030,20 @@ function gecmisAraOku(turler, sorgu) {
     catch { gecmisBekleyen.delete(id); coz({}); }
   });
 }
+// Panel tercihleri (sabit / arşiv / elle proje / kümeleme): userData altında tek küçük JSON, atomik yazılır.
+const tercihDosyasi = () => path.join(app.getPath('userData'), tercih.DOSYA_ADI);
+ipcMain.handle('tercih-oku', () => tercih.oku(tercihDosyasi()));
+ipcMain.handle('tercih-yaz', (_e, ham) => {
+  try { return tercih.yaz(tercihDosyasi(), ham); } catch (e) { console.error('[tercih] yazılamadı:', e && e.message); return null; }
+});
+// Klasörsüz oturumların asıl projesi: kayıttaki Write/Edit yollarının çoğunluğundan (dosya damgasıyla önbellekli).
+ipcMain.handle('proje-cikar', async (_e, oturumlar) => {
+  try {
+    const liste = (Array.isArray(oturumlar) ? oturumlar : []).slice(0, 300)
+      .filter((o) => o && gecmis.OTURUM_KIMLIK.test(String(o.id || '')) && typeof o.projeYol === 'string');
+    return await projeCikarim.cikar(liste, projeleriOku());
+  } catch { return {}; }
+});
 ipcMain.handle('gecmis-ara', async (_e, turler, sorgu) => (await gecmisAraOku(turler, sorgu)) || {});
 
 
@@ -1142,15 +1166,23 @@ function ciktiDosyasi({ id, dizin } = {}) {
 }
 // Görsel çıktılar için küçük resim. Yol+mtime anahtarıyla önbelleklenir; çok büyüyünce sıfırlanır.
 // Windows'ta createThumbnailFromPath kabuk önbelleğine takılabiliyor; doğrudan okuyup ölçekliyoruz.
+// SVG nativeImage ile okunamaz: dosya doğrudan data URL olur (CSP img-src data: izin verir); büyük dosya atlanır.
+function svgVeri(yol, sinir) {
+  try {
+    if (fs.statSync(yol).size > sinir) return null;
+    return 'data:image/svg+xml;base64,' + fs.readFileSync(yol).toString('base64');
+  } catch { return null; }
+}
 async function onizlemeOku(yol, mtime) {
   const k = onizlemeOnbellek.get(yol);
   if (k && k.mtime === mtime) return k.veri;
+  if (/\.svg$/i.test(yol)) return svgVeri(yol, 200 * 1024);
   try {
     let img = nativeImage.createFromPath(yol);
     if (img.isEmpty()) return null;
     const { width, height } = img.getSize();
     if (!width || !height) return null;
-    const olcek = Math.min(96 / width, 96 / height, 1);
+    const olcek = Math.min(160 / width, 160 / height, 1);
     img = img.resize({
       width: Math.max(1, Math.round(width * olcek)),
       height: Math.max(1, Math.round(height * olcek)),
@@ -1172,13 +1204,113 @@ ipcMain.handle('oturum-cikti', async (_e, param) => {
   // Küçük resim yalnız ilk birkaç görsel için ve aşırı büyük dosyalarda atlanır:
   // ana süreci uzun süre kilitlememek için sınırlı tutulur (sonrası dosya simgesiyle görünür).
   for (const c of liste) {
-    if (!c.resim || resimSayisi >= 12) continue;
+    if (!c.resim || resimSayisi >= 40) continue;
     if (c.boyut > 3 * 1024 * 1024) { c.onizleme = null; continue; }
     resimSayisi++;
     const veri = await onizlemeOku(c.yol, c.degisimMs);
     if (veri) c.onizleme = veri;
   }
-  return { ciktilar: liste };
+  return { ciktilar: liste, kok: param && param.dizin ? param.dizin : ((oturumBilgi.get(param && param.id) || {}).dizin || '') };
+});
+// Büyük önizleme katmanı: görsel en çok 1800 px kenara küçültülür, data URL olarak gider (CSP yalnız data: görsele izin verir).
+ipcMain.handle('gorsel-buyuk', (_e, yol) => {
+  if (typeof yol !== 'string' || !yol) return null;
+  try {
+    if (!fs.statSync(yol).isFile()) return null;
+    if (/\.svg$/i.test(yol)) return svgVeri(yol, 2 * 1024 * 1024);
+    let img = nativeImage.createFromPath(yol);
+    if (img.isEmpty()) return null;
+    const { width, height } = img.getSize();
+    const olcek = Math.min(1800 / width, 1800 / height, 1);
+    if (olcek < 1) img = img.resize({ width: Math.max(1, Math.round(width * olcek)), height: Math.max(1, Math.round(height * olcek)), quality: 'best' });
+    return img.toDataURL();
+  } catch { return null; }
+});
+// Terminale görsel yapıştırma: panodaki görsel <veri dizini>/yapistir/YYYYMMDD-HHMMSS.png olarak saklanır.
+function yapistirYoluUret() {
+  const dir = path.join(motor.VERI_DIZINI, 'yapistir');
+  fs.mkdirSync(dir, { recursive: true });
+  const t = new Date();
+  for (let sira = 1; sira < 100; sira++) {
+    const yol = path.join(dir, gorunumYardim.yapistirAdi(t, sira));
+    if (!fs.existsSync(yol)) return yol;
+  }
+  return path.join(dir, gorunumYardim.yapistirAdi(t, Date.now()));
+}
+function kucukOnizleme(img) {
+  const { width, height } = img.getSize();
+  const o = Math.min(120 / width, 120 / height, 1);
+  return img.resize({ width: Math.max(1, Math.round(width * o)), height: Math.max(1, Math.round(height * o)) }).toDataURL();
+}
+// Panodaki görsel: önce senkron readImage(), boş kalırsa async clipboard.read()'in image/* tipleri
+// (bazı uygulamalar görseli yalnız oraya koyar). İkisi de boşsa yoktur.
+async function panoGorseli() {
+  try {
+    if (typeof clipboard.readImage === 'function') { const i = clipboard.readImage(); if (i && !i.isEmpty()) return i; }
+    for (const oge of await clipboard.read()) {
+      const tip = (oge.types || []).find((t) => /^image\//.test(t));
+      if (!tip) continue;
+      const blob = await oge.getType(tip);
+      const img = nativeImage.createFromBuffer(Buffer.from(await blob.arrayBuffer()));
+      if (!img.isEmpty()) return img;
+    }
+  } catch {}
+  return null;
+}
+// Explorer'da kopyalanan dosyalar: Chromium pano köprüsü bunları text/uri-list (file:///…) olarak taşır.
+// Yalnız diskte var olan dosya yolları döner; web adresleri (http…) yok sayılır.
+function uriYoldan(u) {
+  try {
+    const h = new URL(String(u).trim());
+    if (h.protocol !== 'file:') return '';
+    // file:///C:/alt/ust.png -> C:\alt\ust.png (sürükle-bırak da ters eğik çizgi verir; ajan onu bekler)
+    return decodeURIComponent(h.pathname.replace(/^\/([A-Za-z]:)/, '$1').replace(/\//g, '\\'));
+  } catch { return ''; }
+}
+async function panoDosyalari() {
+  try {
+    for (const oge of await clipboard.read()) {
+      if (!(oge.types || []).includes('text/uri-list')) continue;
+      const metin = await (await oge.getType('text/uri-list')).text();
+      const yollar = metin.split(/\r?\n/).filter((s) => s && !s.startsWith('#')).map(uriYoldan).filter((y) => y && fs.existsSync(y));
+      if (yollar.length) return yollar.slice(0, 32);
+    }
+  } catch {}
+  return [];
+}
+// Panodan terminale eklenecek şey: panodaki görsel (yapistir/ altına PNG yazılır) ya da
+// kopyalanan dosyalar (yolları terminale yazılır). İkisi de yoksa null; yapıştırma metne kalır.
+ipcMain.handle('pano-ek-al', async () => {
+  try {
+    const img = await panoGorseli();
+    if (img) {
+      const yol = yapistirYoluUret();
+      fs.writeFileSync(yol, img.toPNG());
+      return { yollar: [yol], onizleme: kucukOnizleme(img) };
+    }
+    const yollar = await panoDosyalari();
+    if (yollar.length) {
+      let onizleme = null;
+      try { const g = nativeImage.createFromPath(yollar[0]); if (!g.isEmpty()) onizleme = kucukOnizleme(g); } catch {}
+      return { yollar, onizleme };
+    }
+  } catch {}
+  return null;
+});
+// "Görsel ekle": dosya seçici; seçilen yollar aynı biçimde terminale yazılır. Küçük önizleme ilk görselden.
+ipcMain.handle('gorsel-sec', async () => {
+  const r = await dialog.showOpenDialog(pencere, {
+    title: 'Terminale eklenecek görsel ya da dosya',
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'Görseller', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'] }, { name: 'Tüm dosyalar', extensions: ['*'] }],
+  });
+  if (r.canceled || !r.filePaths.length) return null;
+  let onizleme = null;
+  try { const img = nativeImage.createFromPath(r.filePaths[0]); if (!img.isEmpty()) onizleme = kucukOnizleme(img); } catch {}
+  return { yollar: r.filePaths, onizleme };
+});
+ipcMain.handle('dosya-onizleme', (_e, yol) => {
+  try { const img = nativeImage.createFromPath(yol); return img.isEmpty() ? null : kucukOnizleme(img); } catch { return null; }
 });
 ipcMain.handle('dosya-ac', async (_e, yol) => {
   if (typeof yol !== 'string' || !yol) return 'gecersiz';
@@ -1200,7 +1332,12 @@ ipcMain.handle('yaz', (_e, id, veri) => {
 ipcMain.handle('boyut', (_e, id, { cols, rows }) => {
   const k = kabuklar.get(id);
   if (!k || !(cols > 0) || !(rows > 0)) return;
+  // Aynı boyutu yeniden göndermek pty'de SIGWINCH üretir; Claude Code TUI'nin transkripti baştan basılır.
+  const b = oturumBilgi.get(id);
+  const yeni = { cols, rows };
+  if (b && gorunumYardim.boyutAyni(b.sonBoyut, yeni)) return;
   try { k.resize(cols, rows); } catch {}
+  if (b) b.sonBoyut = yeni;
 });
 ipcMain.handle('kapat-oturum', (_e, id) => { kabukKapat(id); });
 // Renderer'ın oturum kimliğini (jsonl) öğrenmesi: Şef kartını geçmişte işaretlemek ve

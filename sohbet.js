@@ -1,8 +1,7 @@
 // أَعُوذُ بِاللَّهِ مِنَ الشَّيْطَانِ الرَّجِيمِ
 // بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
-/* This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
- * If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/.
- * Copyright (c) 2026 Yusuf Günay. */
+/* Copyright (c) 2026 Yusuf Günay.
+ * This program is free software under the GNU GPL v3 or later; see LICENSE and LICENSE-EK.md. */
 // Claude Code oturum kayıtlarını (~/.claude/projects/<dizin>/<kimlik>.jsonl) okunabilir sohbete çevirir.
 // İlk abonelikte son 50 giriş dosyanın SONUNDAN geriye okunur; sonrası artımlıdır (dosya baştan okunmaz).
 'use strict';
@@ -550,6 +549,13 @@ class CiktiIzleyici {
       return;
     }
     this.harita.set(anahtar, { yol, islem, ms: ms || 0 });
+  }
+
+  // Yazılan/değiştirilen dosya yolları (Write/Edit/NotebookEdit); diske bakmaz. Proje çıkarımı bunu kullanır.
+  yazilanYollar() {
+    const yollar = [];
+    for (const v of this.harita.values()) if (v.islem !== 'komut') yollar.push(v.yol);
+    return yollar;
   }
 
   liste() {
