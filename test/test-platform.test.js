@@ -166,7 +166,9 @@ test('EVREN.command: zsh başlatıcı LF ile durur, README macOS anlatır', () =
   const komut = fs.readFileSync(path.join(KOK, 'EVREN.command'), 'utf8');
   assert.ok(komut.startsWith('#!/bin/zsh'), 'shebang zsh olmalı');
   assert.ok(!komut.includes('\r'), 'CRLF olmamalı (sheang bozulur)');
-  assert.ok(komut.includes('node_modules/.bin/electron'), 'electron . çalıştırmalı');
+  assert.ok(komut.includes('basla.js'), 'ortak başlatıcıyı çağırmalı');
+  const basla = fs.readFileSync(path.join(KOK, 'basla.js'), 'utf8');
+  assert.ok(basla.includes("['.'") || basla.includes("['.'],"), "basla.js electron'u '.' ile açmalı");
   const readme = fs.readFileSync(path.join(KOK, 'README.md'), 'utf8');
   assert.ok(readme.includes('macOS'), 'README macOS kurulumunu anlatmalı');
   assert.ok(readme.includes('chmod +x EVREN.command'), 'README chmod notu içermeli');
