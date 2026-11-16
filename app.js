@@ -282,7 +282,13 @@ function akimCizgiTetikle() {
 let gecmisSonHtml = null; // son yazılan liste HTML'i; aynıysa DOM'a dokunulmaz
 const GECMIS_IDLE_GORUNEN = 8; // boştaki oturumlar önce kısa listelenir; gerisi tek düğmeyle açılır
 let gecmisIdleTumu = false;
-const gecmisAcikMi = (g) => S.oturumlar.some((o) => o.canli && o.devam === g.id); // sekme açık; çalıştığı anlamına gelmez
+const gecmisAcikMi = (g) => S.oturumlar.some((o) => o.canli && (o.devam === g.id || (g.atalar || []).includes(o.devam))); // sekme açık; çalıştığı anlamına gelmez
+// Kart kimliğinden canlı sekmeyi bulur: --resume çatallanmasında kart uç kimlikte, sekme ata kimlikte kalabilir.
+function canliSekmeBul(id) {
+  const g = S.gecmis.find((x) => x.id === id);
+  const adlar = new Set([id, ...((g && g.atalar) || [])]);
+  return S.oturumlar.find((o) => o.canli && (adlar.has(o.devam) || adlar.has(o.id)));
+}
 const kucult = (s) => String(s || '').toLocaleLowerCase('tr');
 // EVREN işi durumuna göre satır/nokta sınıfı: çalışan yeşil, kesilen turuncu, hatalı kırmızı.
 const evrenSinif = (durum) => durum === 'calisiyor' ? ' canli' : durum === 'kesildi' ? ' kesik' : durum === 'hata' ? ' hata' : '';
@@ -362,7 +368,7 @@ function gecmisCiz() {
   }
   const kartHtml = (g, calisiyor, idx = 0) => {
     const secili = aktifDevam === g.id || (!!seciliOturumGecmisi && seciliOturumGecmisi.id === g.id);
-    const sef = S.sefOturumlar.has(g.id) || S.oturumlar.some((o) => o.orkestrator && o.devam === g.id);
+    const sef = S.sefOturumlar.has(g.id) || (g.atalar || []).some((a) => S.sefOturumlar.has(a)) || S.oturumlar.some((o) => o.orkestrator && (o.devam === g.id || (g.atalar || []).includes(o.devam)));
     const tumAjanlar = Array.isArray(g.altAjanlar) ? g.altAjanlar : [];
     const tumIsler = Array.isArray(g.evrenIsleri) ? g.evrenIsleri : [];
     const dalVar = tumAjanlar.length + tumIsler.length > 0;
@@ -658,7 +664,7 @@ function okumaKapat() {
 function okumaDevamEt() {
   const g = seciliOturumGecmisi;
   if (!g || !g.id) return;
-  const var_ = S.oturumlar.find((o) => o.canli && (o.devam === g.id || o.id === g.id));
+  const var_ = canliSekmeBul(g.id);
   if (var_) { gorunumKur(var_, 'terminal'); sekmeSec(var_.id); return; }
   S.gorunumler = Gorunum.yaz(S.gorunumler, 'd:' + g.id, 'terminal');
   sakla.yaz('gorunumler', S.gorunumler);
@@ -708,7 +714,7 @@ async function gecmisYukle() {
   }
 }
 function gecmisAc(id) {
-  const var_ = S.oturumlar.find((o) => o.canli && o.devam === id);
+  const var_ = canliSekmeBul(id);
   if (var_) { sekmeSec(var_.id); return; }
   // Oturum kendi klasöründe sürsün; proje seçili olması şart değil.
   const g = S.gecmis.find((x) => x.id === id);
@@ -1554,7 +1560,8 @@ async function basla(devamId, secenekler) {
   // (ölü) sekme varsa yeni sekme açmak yerine o sekmeyi tazele.
   let oluSekme = -1;
   if (devam) {
-    const canli = S.oturumlar.find((o) => o.canli && (o.devam === devam || o.id === devam));
+    // Aynı sohbetin ikinci kopyasını açma: sekme kimliği --resume ile atada kalmış olabilir (atalar zinciri).
+    const canli = canliSekmeBul(devam);
     if (canli) { sekmeSec(canli.id); return; }
     oluSekme = S.oturumlar.findIndex((o) => o.devam === devam && !o.canli);
   }
@@ -1631,7 +1638,7 @@ function sekmeAdIzle(o) {
     if (!o.canli || o.ad || !o.pid || n++ > 60) { durdur(); return; }
     const b = await window.evren.oturumKimlik(o.pid).catch(() => null);
     if (!b) return;
-    if (b.devam && !o.devam) { o.devam = b.devam; gecmisCiz(); } // soldaki kart aktif sekme olarak işaretlenir
+    if (b.devam && o.devam !== b.devam) { o.devam = b.devam; gecmisCiz(); } // soldaki kart aktif sekme olarak işaretlenir (--resume sonrası yeni kimliğe de bağlanır)
     if (b.baslik) {
       const ad = temizSekmeAdi(b.baslik);
       if (ad) {
@@ -1667,6 +1674,7 @@ async function aiSekmeAdi(o, metin) {
   else { o.ad = ad; sekmeleriCiz(); }
 }
 // Şef oturumunun jsonl kimliğini öğrenir; kenar panelde kalıcı olarak işaretler.
+// Sürdürülen oturumda kimlik --resume ile değişebilir: bir süre izlenir, değişince yeni kimlik işaretlenir.
 function sefKimligiIzle(o) {
   const kaydet = (devam) => {
     if (!devam) return false;
@@ -1678,12 +1686,12 @@ function sefKimligiIzle(o) {
     gecmisCiz();
     return true;
   };
-  if (kaydet(o.devam)) return;
+  kaydet(o.devam);
   let n = 0;
   const t = setInterval(async () => {
-    if (!o.canli || n++ > 40) { clearInterval(t); return; }
+    if (!o.canli || o._forkAdopte || n++ > 40) { clearInterval(t); return; }
     const b = await window.evren.oturumKimlik(o.pid).catch(() => null);
-    if (b && kaydet(b.devam)) clearInterval(t);
+    if (b && b.devam && b.devam !== o.devam) { kaydet(b.devam); clearInterval(t); }
   }, 1500);
   if (t.unref) t.unref();
 }
@@ -2972,8 +2980,22 @@ $('anahtarForm').addEventListener('submit', async (e) => {
 $('odakIpucu').addEventListener('click', () => odakToggle(false));
 if (window.evren.uykuDinle) window.evren.uykuDinle((acik) => { S.uykuAktif = !!acik; uykuDugmeCiz(); });
 if (window.evren.hedefDinle) window.evren.hedefDinle((id, sayi) => {
-  const o = S.oturumlar.find((x) => x.id === Number(id));
+  // ana süreç PTY kimliğini gönderir; sekmelerde bu kimlik pid'dir (id yerel sayaçtır, karıştırılmamalı).
+  const o = S.oturumlar.find((x) => x.pid === id);
   olay('SİSTEM', `hedef durakladı · otomatik devam gönderildi (${sayi}/3)${o ? ' · ' + (o.ad || o.proje) : ''}`, 'iyi');
+});
+// Çatallanma: --resume sohbeti yeni kimliğe taşıdıysa sekmeyi ve şef işaretini yeni kimliğe bağla.
+// Sekme eski kimlikte kalırsa kart iki kez görünüyordu (çalışan kopya + "açık" ata).
+if (window.evren.forkDinle) window.evren.forkDinle((pid, kimlik) => {
+  const o = S.oturumlar.find((x) => x.pid === pid && x.canli);
+  if (!o || !kimlik || o.devam === kimlik) return;
+  o.devam = kimlik;
+  o._forkAdopte = true; // şef kimliği izleyicisi boşuna dönmesin
+  if (o.orkestrator && !S.sefOturumlar.has(kimlik)) {
+    S.sefOturumlar.add(kimlik);
+    sakla.yaz('sefOturumlar', [...S.sefOturumlar].slice(-300));
+  }
+  gecmisCiz(); sekmeleriCiz();
 });
 
 if ($('uykuBtn')) $('uykuBtn').addEventListener('click', async () => {
@@ -3156,7 +3178,7 @@ function gecmisKartAc(id, yol) {
     projeSec(yol);
   }
   // Etkin kart: canlı oturum açılır (varsayılan görünüm canlı sohbet; Sohbet ⇄ Terminal ile geçilir).
-  const var_ = S.oturumlar.find((o) => o.canli && (o.devam === id || o.id === id));
+  const var_ = canliSekmeBul(id);
   if (var_) {
     sekmeSec(var_.id);
     return;

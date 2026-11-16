@@ -420,6 +420,33 @@ async function oturumBaslat({ modelId, dizin, ekDizinler, projeAd, cols, rows, d
       if (remoteSunucu) remoteSunucu.oturumListesiGuncelle();
     }, 1500);
     if (ara.unref) ara.unref();
+  } else {
+    // Sürdürülen oturum çatallanabilir: Claude Code `--resume` sohbeti YENİ kimlikli bir dosyada sürdürür
+    // (kopya; ilk kullanıcı mesajının uuid'si taşınır). Yeni kimliği benimse: kart, sekme adı, şef işareti
+    // ve canlı sohbet eski kimlikte kalmasın; eski kopyayı geçmiş kendisi süzer (kokUuid).
+    let atKok = '';
+    try { atKok = (gecmis.baslikOku(sohbet.dosyaYolu(hedefDizin, bilgi.devam), true) || {}).kokUuid || ''; } catch {}
+    if (atKok) {
+      let deneme = 0;
+      const elek = new Set(); // kokUuid'i uymayan adaylar bir daha denenmez
+      const ara = setInterval(() => {
+        if (!kabuklar.has(id) || deneme++ > 120) { clearInterval(ara); return; }
+        const sahipli = new Set(elek);
+        sahipli.add(bilgi.devam);
+        for (const [baskaId, baska] of oturumBilgi) if (baskaId !== id && baska.devam) sahipli.add(baska.devam);
+        const dosya = sohbet.oturumDosyasiBul({ dizin: hedefDizin, baslangicMs: bilgi.baslangic, haric: sahipli });
+        if (!dosya) return;
+        const kimlik = path.basename(dosya, '.jsonl');
+        let kok = '';
+        try { kok = (gecmis.baslikOku(dosya, true) || {}).kokUuid || ''; } catch {}
+        if (!kok || kok !== atKok) { elek.add(kimlik); return; } // başka sohbetin kaydı: benimsemeyiz
+        bilgi.devam = kimlik;
+        clearInterval(ara);
+        if (pencere && !pencere.isDestroyed()) pencere.webContents.send('oturum:fork', id, kimlik);
+        if (remoteSunucu) remoteSunucu.oturumListesiGuncelle();
+      }, 1500);
+      if (ara.unref) ara.unref();
+    }
   }
   bu.onData((veri) => { bilgi.sonCikti = Date.now(); ptyTamponla(id, veri); hedefDuraklamaTara(bilgi, veri); });
   bu.onExit(({ exitCode }) => {

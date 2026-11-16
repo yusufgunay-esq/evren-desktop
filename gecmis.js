@@ -62,7 +62,7 @@ function baslikOnbellekTemizle(id) { baslikOnbellek.delete(id); }
 // Üst veri değişmediyse başlık yeniden okunmaz; uygulama açılışında 100 oturumun 6 MB'lık
 // kafalarını taramak yerine diskten gelir. Kimlik anahtarı: dosya mtime + boyut + ad damgası.
 // Test/demo (EVREN_PROJE_DIZINI) altında varsayılan olarak kapalıdır; gerçek ~/.claude taranmaz.
-const KALICI_SURUM = 1;
+const KALICI_SURUM = 3; // 3: anlamlı başlık + kokUuid (ata kopyası ayrımı); eski önbellek okunmaz, yeniden dolar.
 let kaliciOnbellek = null; // { id: { ms, boyut, damga, baslik, kaynak } }
 let kaliciZaman = null;
 
@@ -107,8 +107,10 @@ function kaliciOnbellekYaz(id, kayit) {
   if (kaliciZaman.unref) kaliciZaman.unref();
 }
 
+// İlk gerçek kullanıcı mesajının uuid'si (kokUuid) `--resume` kopyalarında aynen taşınır:
+// aynı sohbetin ana/çocuk kayıt dosyaları bu kimlikle tanınır (bkz. ataKopyalariniAyikla).
 function baslikOku(dosya, yalnizBaslik, anlamli) {
-  let fd, baslik = '', kaynak = '';
+  let fd, baslik = '', kaynak = '', kokUuid = '', ilk = '';
   try {
     fd = fs.openSync(dosya, 'r');
     const tampon = Buffer.alloc(512 * 1024);
@@ -125,9 +127,14 @@ function baslikOku(dosya, yalnizBaslik, anlamli) {
       for (const satir of satirlar) {
         let j; try { j = JSON.parse(satir); } catch { continue; }
         if (!j || !j.message) continue;
-        if (!baslik && j.type === 'user' && !j.isMeta) {
-          const m = metinCikar(j.message.content).replace(/<[^>]+>[\s\S]*?<\/[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-          if (m && !m.startsWith('Caveat:') && !m.startsWith('[Request interrupted') && !(anlamli && oturumKarar.baslikAnlamsiz(m))) baslik = m.slice(0, 90);
+        if (j.type === 'user' && !j.isMeta) {
+          // Etiket artıkları başlık olmaz: önce eşli bloklar (task-notification, command-name…), sonra tek başına
+          // kalan etiket parçaları (</task-notification>) silinir; geriye harf/dijital bir şey kalmazsa mesaj
+          // atlanır, başlık sonraki kullanıcı mesajından gelir.
+          const m = metinCikar(j.message.content).replace(/<[^>]+>[\s\S]*?<\/[^>]+>/g, ' ').replace(/<\/?[a-z][^>]*>/gi, ' ').replace(/\s+/g, ' ').trim();
+          if (m && !ilk && !m.startsWith('Caveat:') && !m.startsWith('[Request interrupted')) ilk = m.slice(0, 90);
+          if (!kokUuid && m && typeof j.uuid === 'string') kokUuid = j.uuid;
+          if (!baslik && m && !m.startsWith('Caveat:') && !m.startsWith('[Request interrupted') && !(anlamli && oturumKarar.baslikAnlamsiz(m))) baslik = m.slice(0, 90);
         } else if (!kaynak && j.type === 'assistant' && typeof j.message.model === 'string' && j.message.model !== '<synthetic>') {
           kaynak = /^(claude|opus|sonnet|haiku)/i.test(j.message.model) ? 'claude' : 'evren';
         }
@@ -135,7 +142,8 @@ function baslikOku(dosya, yalnizBaslik, anlamli) {
       }
     }
   } catch {} finally { if (fd != null) try { fs.closeSync(fd); } catch {} }
-  return { baslik, kaynak };
+  // Anlamlı mesaj yoksa ilk gerçek mesaj yedektir: "devam"la başlayan oturum başlıksız kalıp listeden düşmesin.
+  return { baslik: baslik || ilk, kaynak, kokUuid };
 }
 
 // Ajanların aralarda attığı yoklama/deneme oturumları ("echo test", "node -v", "--yardim"): kısa, komut/bayrak biçimli başlık,
@@ -158,16 +166,17 @@ function oturumBilgisi(dosya, id, seansDizin, olcu) {
   if (c && c.damga === damga && c.ms === ms && c.boyut === boyut) return c.bilgi;
   const disk = kaliciOnbellekOku()[id];
   if (disk && disk.damga === damga && disk.ms === ms && disk.boyut === boyut && disk.baslik && disk.kaynak) {
-    const b = { baslik: disk.baslik, kaynak: disk.kaynak };
+    const b = { baslik: disk.baslik, kaynak: disk.kaynak, kokUuid: disk.kokUuid || '' };
     baslikOnbellek.set(id, { bilgi: b, damga, ms, boyut });
     return b;
   }
   const ozel = seansDizin ? ozelBaslikOku(seansDizin) : '';
-  const b = baslikOku(dosya);
+  // Anlamlı başlık: "devam", "tamam" gibi tek sözcükler kart adı olmaz; ilk gerçek istek taranır.
+  const b = baslikOku(dosya, false, true);
   if (ozel) b.baslik = ozel;
   if (b.baslik && b.kaynak) {
     baslikOnbellek.set(id, { bilgi: b, damga, ms, boyut });
-    kaliciOnbellekYaz(id, { ms, boyut, damga, baslik: b.baslik, kaynak: b.kaynak });
+    kaliciOnbellekYaz(id, { ms, boyut, damga, baslik: b.baslik, kaynak: b.kaynak, kokUuid: b.kokUuid || '' });
   }
   return b;
 }
@@ -366,7 +375,7 @@ function evrenIsiOku(kayit, klasor, simdi) {
   try { kayitMs = fs.statSync(kayit.kayitDosyasi).mtimeMs; } catch {}
   const durum = evrenDurumu(kayit, jsonl, kayitMs, simdi);
   const baslikKayit = typeof kayit.baslik === 'string' ? kayit.baslik.trim() : '';
-  const baslik = baslikKayit || (jsonl ? baslikOku(jsonl.yol).baslik : '') || 'EVREN işi';
+  const baslik = baslikKayit || (jsonl ? baslikOku(jsonl.yol, false, true).baslik : '') || 'EVREN işi';
   return {
     id: kayit.id,
     baslik,
@@ -377,6 +386,44 @@ function evrenIsiOku(kayit, klasor, simdi) {
     canli: durum === 'calisiyor',
     ...(kayit.ust ? { ust: String(kayit.ust) } : {}),
   };
+}
+
+// `claude --resume` aynı sohbeti YENİ kimlikli bir dosyaya kopyalar: ilk kullanıcı mesajının uuid'si
+// (kokUuid) kopyaya aynen taşınır. Ölü ata kopya listede bir daha görünmez; zincirin en son DOĞAN
+// dosyası sohbetin devamıdır. Ataya bağlı alt ajanlar en yeni kopyaya taşınır, EVREN işleri devir
+// haritasıyla bağlanır — böylece her yeniden açılışta "ikinci kart" oluşmaz.
+// Bir kopya yalnız ŞU KOŞULLA gizlenir: kendi canlı değil, ondan sonra doğan bir kopya var ve o kopya
+// en az ata kadar içerik taşıyor. Yaşayan dallar ve ata içeriğini tam taşımayan uçlar asla gizlenmez;
+// hiçbir sohbet kaybolmaz.
+function ataKopyalariniAyikla(oturumlar) {
+  const yas = (o) => o.dogumMs || o.ms || 0;
+  const uc = new Map(); // kokUuid -> en son doğan kopya
+  for (const o of oturumlar) {
+    if (!o.kokUuid) continue;
+    const e = uc.get(o.kokUuid);
+    if (!e || yas(o) > yas(e)) uc.set(o.kokUuid, o);
+  }
+  const devir = new Map(); // gizlenen atanın kimliği -> en yeni kopyanın kaydı
+  const kalan = [];
+  for (const o of oturumlar) {
+    const u = o.kokUuid ? uc.get(o.kokUuid) : null;
+    const ucYeterli = u && (u.boyut || 0) >= (o.boyut || 0);
+    if (u && u !== o && !o.canli && yas(u) >= yas(o) && ucYeterli) {
+      devir.set(o.id, u);
+      // Şeflik ve sabitleme ata kimliğine yazılmış olabilir: uç kopyaya devredilir, kart kimliğini kaybetmez.
+      u.atalar = u.atalar || [];
+      if (!u.atalar.includes(o.id)) u.atalar.push(o.id);
+      for (const e of o.atalar || []) if (!u.atalar.includes(e)) u.atalar.push(e);
+      // Alt ajan klasörü oturum kimliğine bağlıdır; kopyaya devrederken ata klasöründeki ajanlar kaybolmasın.
+      u.altAjanlar = u.altAjanlar || [];
+      for (const a of o.altAjanlar || []) if (!u.altAjanlar.some((x) => x.id === a.id)) u.altAjanlar.push(a);
+      u.altAjanlar.sort((x, y) => x.ms - y.ms);
+      u.calisanAjan = (u.altAjanlar || []).filter((a) => a.canli).length;
+      u.ajanCalisiyor = u.calisanAjan > 0;
+      u.canli = !!(u.turCanli || u.calisanAjan > 0);
+    } else kalan.push(o);
+  }
+  return { kalan, devir };
 }
 
 function oturumGecmisi(dizin, secenekler) {
@@ -394,7 +441,7 @@ function oturumGecmisi(dizin, secenekler) {
 
   const oturumlar = adlar
     .filter((a) => a.endsWith('.jsonl') && OTURUM_KIMLIK.test(a.slice(0, -6)))
-    .map((a) => { const d = path.join(klasor, a); try { const s = fs.statSync(d); return { id: a.slice(0, -6), dosya: d, ms: s.mtimeMs, boyut: s.size }; } catch { return null; } })
+    .map((a) => { const d = path.join(klasor, a); try { const s = fs.statSync(d); return { id: a.slice(0, -6), dosya: d, ms: s.mtimeMs, boyut: s.size, dogumMs: s.birthtimeMs || s.ctimeMs || s.mtimeMs }; } catch { return null; } })
     .filter((x) => x && x.boyut > 0)
     .sort((a, b) => b.ms - a.ms)
     .filter((x) => !isKimlikleri.has(x.id)) // EVREN işinin kendi Claude kaydı ayrı satır olmaz
@@ -409,6 +456,7 @@ function oturumGecmisi(dizin, secenekler) {
         ...oturumBilgisi(x.dosya, x.id, seansDizin, { ms: x.ms, boyut: x.boyut }),
         ms: x.ms,
         boyut: x.boyut,
+        dogumMs: x.dogumMs,
         turCanli,
         ajanCalisiyor: calisanAjan > 0,
         calisanAjan,
@@ -420,12 +468,14 @@ function oturumGecmisi(dizin, secenekler) {
     })
     .filter((x) => x.baslik && !denemeOturumu(x.baslik, x.boyut, x.altAjanlar.length, x.canli)); // kullanıcı mesajı olmayan (yalnız açılış kaydı) ve ajan yoklama oturumları listelenmez
 
-  const ustHarita = new Map(oturumlar.map((o) => [o.id, o]));
+  const { kalan, devir } = ataKopyalariniAyikla(oturumlar); // yeniden açılan sohbet tek kart kalır
+  const ustHarita = new Map(kalan.map((o) => [o.id, o]));
   const kayitsizlar = []; // üstü bulunamayan EVREN işleri üst düzeyde "EVREN işi" olarak kalır
   for (const k of evrenKayitlari) {
     const is = evrenIsiOku(k, klasor, simdi);
     if (denemeOturumu(is.baslik || '', 0, 0, is.canli)) continue; // ajan yoklama işi
-    const ust = is.ust ? ustHarita.get(is.ust) : null;
+    // Ataya bağlı iş, listede kalan en yeni kopyaya (devir) bağlanır; ata artık görünmüyor.
+    const ust = is.ust ? (ustHarita.get(is.ust) || devir.get(is.ust) || null) : null;
     if (ust) ust.evrenIsleri.push(is);
     else if (is.canli) {
       // Üst oturum yok: iş yalnız canlıyken kendi satırında görünür (bitmiş iş listeyi kirletmez).
@@ -449,7 +499,7 @@ function oturumGecmisi(dizin, secenekler) {
     }
   }
 
-  const tumu = [...oturumlar, ...kayitsizlar].sort((a, b) => b.ms - a.ms);
+  const tumu = [...kalan, ...kayitsizlar].sort((a, b) => b.ms - a.ms);
   for (const o of tumu) {
     const calisanEvren = (o.evrenIsleri || []).filter((e) => e.canli).length;
     o.calisanEvren = calisanEvren;
@@ -561,6 +611,7 @@ function tumOturumlariTara(secenekler) {
         id,
         ...bilgi,
         ms: s.mtimeMs,
+        dogumMs: s.birthtimeMs || s.ctimeMs || s.mtimeMs,
         projeAd,
         projeYol,
         turCanli,
@@ -574,12 +625,14 @@ function tumOturumlariTara(secenekler) {
     }
   }
 
-  const ustHarita = new Map(oturumlar.map((o) => [o.id, o]));
+  const { kalan, devir } = ataKopyalariniAyikla(oturumlar); // yeniden açılan sohbet tek kart kalır
+  const ustHarita = new Map(kalan.map((o) => [o.id, o]));
   const kayitsizlar = [];
   for (const k of evrenKayitlari) {
     const is = evrenIsiOku(k, '', simdi);
     if (denemeOturumu(is.baslik || '', 0, 0, is.canli)) continue; // ajan yoklama işi
-    const ust = is.ust ? ustHarita.get(is.ust) : null;
+    // Ataya bağlı iş, listede kalan en yeni kopyaya (devir) bağlanır; ata artık görünmüyor.
+    const ust = is.ust ? (ustHarita.get(is.ust) || devir.get(is.ust) || null) : null;
     if (ust) ust.evrenIsleri.push(is);
     else if (is.canli && is.dizin && !tempMi(is.dizin) && !arsivMi(is.dizin) && fs.existsSync(is.dizin)) {
       const projeAd = (is.dizin ? path.basename(is.dizin) : 'EVREN') || 'EVREN';
@@ -605,7 +658,7 @@ function tumOturumlariTara(secenekler) {
     }
   }
 
-  const tumu = [...oturumlar, ...kayitsizlar].sort((a, b) => b.ms - a.ms);
+  const tumu = [...kalan, ...kayitsizlar].sort((a, b) => b.ms - a.ms);
   for (const o of tumu) {
     const calisanEvren = (o.evrenIsleri || []).filter((e) => e.canli).length;
     o.calisanEvren = calisanEvren;
@@ -705,4 +758,4 @@ function icerikAraListe(turler, sorgu) {
   return sonuc;
 }
 
-module.exports = { oturumGecmisi, tumOturumlariTara, cwdOku, tempMi, oturumSayilari, altAjanlariOku, turDevamEdiyor, sonDurumOku, baslikOku, ozelBaslikOku, ozelBaslikYaz, baslikOnbellekTemizle, evrenKayitlariOku, icerikAra, icerikAraListe, aramaMetni, katla, adEslesir, birFark, okunurMetin, OTURUM_KIMLIK, CANLI_ESIK_MS };
+module.exports = { oturumGecmisi, tumOturumlariTara, cwdOku, tempMi, oturumSayilari, altAjanlariOku, turDevamEdiyor, sonDurumOku, baslikOku, ozelBaslikOku, ozelBaslikYaz, baslikOnbellekTemizle, evrenKayitlariOku, ataKopyalariniAyikla, icerikAra, icerikAraListe, aramaMetni, katla, adEslesir, birFark, okunurMetin, OTURUM_KIMLIK, CANLI_ESIK_MS };

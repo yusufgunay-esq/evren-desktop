@@ -25,6 +25,18 @@ test('anlamsız mesaj ad olmaz', () => {
   assert.ok(!baslikAnlamsiz('Sekme adlarını düzelt'));
 });
 
+test('etiket artığı başlık olmaz: </task-notification> sonrası gerçek mesaj gelir', (t) => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'evren-baslik-'));
+  t.after(() => fs.rmSync(d, { recursive: true, force: true }));
+  const dosya = path.join(d, 'x.jsonl');
+  fs.writeFileSync(dosya, [
+    JSON.stringify({ type: 'user', message: { role: 'user', content: '</task-notification>' } }),
+    JSON.stringify({ type: 'user', message: { role: 'user', content: '<task-notification>kuyruk çıktısı</task-notification>' } }),
+    JSON.stringify({ type: 'user', message: { role: 'user', content: 'kuyruk durum makinesini düzelt' } }),
+  ].join('\n') + '\n');
+  assert.strictEqual(baslikOku(dosya, true).baslik, 'kuyruk durum makinesini düzelt');
+});
+
 test('ilk mesaj "devam" ise sekme adı ilk anlamlı mesajdan gelir', (t) => {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'evren-baslik-'));
   t.after(() => fs.rmSync(d, { recursive: true, force: true }));

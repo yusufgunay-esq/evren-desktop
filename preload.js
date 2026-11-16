@@ -35,6 +35,7 @@ contextBridge.exposeInMainWorld('evren', {
   uykuEngelle: (deger) => ipcRenderer.invoke('uyku-engelle', deger), // çalışan oturum varken uykuyu engelle
   uykuDinle: (f) => ipcRenderer.on('uyku:durum', (_e, acik) => f(acik)), // blok gerçekten devrede mi
   hedefDinle: (f) => ipcRenderer.on('hedef:devam', (_e, id, sayi) => f(id, sayi)), // hedef duraklayınca otomatik devam
+  forkDinle: (f) => ipcRenderer.on('oturum:fork', (_e, id, kimlik) => f(id, kimlik)), // --resume yeni kimliğe taşıdı
   veriDinle: (f) => ipcRenderer.on('pty:veri', (_e, id, veri) => f(id, veri)),
   cikisDinle: (f) => ipcRenderer.on('pty:cikis', (_e, id, bilgi) => f(id, bilgi)),
   remoteBilgi: () => ipcRenderer.invoke('remote:bilgi'),
