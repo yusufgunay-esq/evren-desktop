@@ -316,13 +316,21 @@
     { eylem: 'terminalAra', ad: 'Terminalde ara', ctrl: true, shift: false, alt: false, code: 'KeyF', etiket: 'Ctrl F', yalnizTerminal: true },
   ];
   // terminalda: odak xterm içindeyse true (terminalDisi tuşlar atlanır, yalnizTerminal tuşlar açılır).
-  function kisayolBul(e, tablo = KISAYOLLAR, terminalda = false) {
-    if (!e || !e.ctrlKey || e.metaKey) return null;
+  // metaKomut: macOS'ta true geçilir — Cmd (metaKey) de komut tuşu sayılır, Ctrl de çalışmaya devam eder.
+  // Varsayılan false: Windows akışı birebir korunur, metaKey'li olaylar yabancı sayılıp elenir.
+  function kisayolBul(e, tablo = KISAYOLLAR, terminalda = false, metaKomut = false) {
+    if (!e) return null;
+    if (!e.ctrlKey && !(metaKomut && e.metaKey)) return null;
+    if (!metaKomut && e.metaKey) return null; // Windows'ta Ctrl+Win karışmasın; metaKomut açıkken iki tuş da komut sayılır.
     return tablo.find((k) => k.code === e.code && !!e.altKey === k.alt && (k.shift === null || !!e.shiftKey === k.shift) &&
       !(terminalda && k.terminalDisi) && !(!terminalda && k.yalnizTerminal)) || null;
   }
+  // Kısayol etiketi macOS'te Cmd gösterir: yalnız görünüm, tablodaki davranış (ctrl: true) aynen kalır.
+  function etiketDarwin(etiket, darwin) {
+    return darwin ? String(etiket).replace(/\bCtrl\b/g, 'Cmd') : etiket;
+  }
 
-  const api = { claudeSuz, evrenMi, aramaMetni, katla, birFark, adEslesir, okunmamisMi, hizliGecis, acilanEkle, komsuSira, KISAYOLLAR, kisayolBul, HIZLI_SINIR, VARSAYILAN, TARIH_KUMELERI, tarihKumesi, tarihGrupla, projeGrupla, arsivAyir, etkinProje, anahtar, oku, yaz, karsiti, sonraki, GORUNUMLER, dipteMi, altIsBul, boyutAyni, dosyaTuru, dosyaSuz, dosyaSay, goreliYol, dosyaGrupla, yapistirAdi, yolMetni, panoKarar, gonderilecek, TERMINAL_TUSLARI };
+  const api = { claudeSuz, evrenMi, aramaMetni, katla, birFark, adEslesir, okunmamisMi, hizliGecis, acilanEkle, komsuSira, KISAYOLLAR, kisayolBul, etiketDarwin, HIZLI_SINIR, VARSAYILAN, TARIH_KUMELERI, tarihKumesi, tarihGrupla, projeGrupla, arsivAyir, etkinProje, anahtar, oku, yaz, karsiti, sonraki, GORUNUMLER, dipteMi, altIsBul, boyutAyni, dosyaTuru, dosyaSuz, dosyaSay, goreliYol, dosyaGrupla, yapistirAdi, yolMetni, panoKarar, gonderilecek, TERMINAL_TUSLARI };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else kok.Gorunum = api;
 })(typeof window !== 'undefined' ? window : globalThis);

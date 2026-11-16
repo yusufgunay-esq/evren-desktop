@@ -567,6 +567,13 @@ function hedefDuraklamaTara(bilgi, veri) {
 // olmasa da aday olur. ~/.evren/korunan-oturumlar.json'daki uuid'ler asla kapatilmaz.
 // Gecmis diskte durur, sekme ayni oturumla --resume edilebilir.
 const MCP_COCUK = new Set(['node', 'python', 'pythonw', 'cmd', 'conhost']);
+// Unix'te python ikili dosyasının adı python3, MCP sarmalayıcısı npx olarak koşar; tanınsınlar ki
+// boşta kapatma turu bitmiş oturumun MCP yığınını 'çalışan araç' sanıp açık tutmasın.
+// sh/bash/zsh BİLİNÇLİ eklenmez: ajan araçları shell'den koşar — shell eklemek çalışan oturumu boşta sanıp yanlış kapatır.
+if (process.platform !== 'win32') {
+  MCP_COCUK.add('python3');
+  MCP_COCUK.add('npx');
+}
 // Virgülle ayrılmış ek adlar: kişisel/özel MCP sunucuları boşta kapatma kararında tanınsın.
 for (const ad of String(process.env.EVREN_MCP_COCUK || '').split(',')) {
   const a = ad.trim().toLowerCase().replace(/\.exe$/i, '');

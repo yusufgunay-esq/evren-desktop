@@ -57,6 +57,10 @@ const S = {
 const claudeGoster = () => S.ayar.claudeOturumlari === true;
 // Kasa adı: platforma göre arayüz metni (Windows kasası, macOS Anahtar Zinciri).
 const kasaAdi = (p) => (p === 'win32' ? 'DPAPI' : p === 'darwin' ? 'macOS Anahtar Zinciri' : 'işletim sistemi kasası');
+// macOS bayrağı: durum IPC'sinden gelir; yüklenmeden önce false kalır (darwin olmayan güvenli varsayılan).
+const darwinMi = () => S.platform === 'darwin';
+// Komut tuşu: Windows/Linux'ta Ctrl, macOS'te Cmd. Terminalin kendi tuşları (Ctrl+C = SIGINT) bundan bağımsız korunur.
+const komutTusu = (e) => (darwinMi() ? !!(e && e.metaKey) : !!(e && e.ctrlKey));
 
 // ---------- yardımcılar ----------
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1060,38 +1064,47 @@ async function terminalOlustur(o) {
   });
   t.attachCustomKeyEventHandler((e) => {
     if (e.type !== 'keydown') return true;
+    // Ctrl+C terminalin kendisidir: seçim olsa bile macOS'te PTY'ye geçer (SIGINT korunur);
+    // Windows'ta seçim varsa kopyalar (mevcut davranış birebir).
     if (e.ctrlKey && !e.shiftKey && e.code === 'KeyC') {
-      if (t.hasSelection()) {
+      if (!darwinMi() && t.hasSelection()) {
         panoYaz(t.getSelection());
         return false;
       }
       return true;
     }
+    // Cmd+C (yalnız macOS): seçim varsa kopyalar; yoksa da tüketilir — Cmd+C terminalde SIGINT değildir, xterm'e düşmesin.
+    if (darwinMi() && e.metaKey && !e.shiftKey && e.code === 'KeyC') {
+      if (t.hasSelection()) panoYaz(t.getSelection());
+      return false;
+    }
     // Kesme: terminalde metin silinemez; seçim panoya alınır ve seçim bırakılır.
-    if (e.ctrlKey && !e.shiftKey && e.code === 'KeyX' && t.hasSelection()) {
+    if (komutTusu(e) && !e.shiftKey && e.code === 'KeyX' && t.hasSelection()) {
       panoYaz(t.getSelection());
       t.clearSelection();
       return false;
     }
-    if (e.ctrlKey && !e.shiftKey && e.code === 'KeyV') {
+    if (komutTusu(e) && !e.shiftKey && e.code === 'KeyV') {
       e.preventDefault();
       terminaleYapistir(t);
       return false;
     }
-    // Ctrl+Shift+C / V: alışılmış terminal kısayolları da aynı yolu kullanır.
-    if (e.ctrlKey && e.shiftKey && e.code === 'KeyC' && t.hasSelection()) {
+    // Ctrl/Cmd+Shift+C / V: alışılmış terminal kısayolları da aynı yolu kullanır.
+    if (komutTusu(e) && e.shiftKey && e.code === 'KeyC' && t.hasSelection()) {
       panoYaz(t.getSelection());
       return false;
     }
-    if (e.ctrlKey && e.shiftKey && e.code === 'KeyV') {
+    if (komutTusu(e) && e.shiftKey && e.code === 'KeyV') {
       e.preventDefault();
       terminaleYapistir(t);
       return false;
     }
+    // GENEL_TUS ve Ctrl+Tab yalnız Ctrl ile: Cmd'li uygulama tuşları aşağıdaki kisayolBul(metaKomut) satırında tüketilir,
+    // Cmd+Tab ise işletim sistemi düzeyinde sayfaya hiç gelmez.
     if (e.ctrlKey && e.shiftKey && GENEL_TUS.has(e.code)) return false;
     if (e.ctrlKey && e.code === 'Tab') return false;
     // Uygulama kısayolları terminale gitmez; terminalDisi olanlar (Ctrl+K: satır sonuna kadar sil) terminale gider.
-    if (Gorunum.kisayolBul(e, Gorunum.KISAYOLLAR, true)) return false;
+    if (Gorunum.kisayolBul(e, Gorunum.KISAYOLLAR, true, darwinMi())) return false;
     return true;
   });
   // Pano penceresinden (Win+V) tıklanan öğe terminale paste olayı olarak gelir, keydown gelmez.
@@ -2066,7 +2079,7 @@ function dosyaEylem(eylem, yol, dugme) {
 const P = { ogeler: [], gorunen: [], aktif: 0, mod: 'komut' };
 const PALET_IPUCU = { komut: 'Model, proje ya da komut ara…', gecis: 'Oturum adı ya da proje yaz…', kisayol: 'Kısayol ara…' };
 function kisayolOgeleri() {
-  return Gorunum.KISAYOLLAR.map((k) => ({ g: 'Kısayollar', ad: k.ad, alt: k.etiket, ic: 'term', yap: null }));
+  return Gorunum.KISAYOLLAR.map((k) => ({ g: 'Kısayollar', ad: k.ad, alt: Gorunum.etiketDarwin(k.etiket, darwinMi()), ic: 'term', yap: null }));
 }
 function gecisOgeleri(q) {
   const acik = new Set(S.oturumlar.filter((o) => o.canli && o.devam).map((o) => o.devam));
@@ -3239,7 +3252,7 @@ window.addEventListener('keydown', (e) => {
   }
   // Odak terminaldeyse (ya da terminal arama kutusundaysa) terminalDisi tuşlar (Ctrl+K) terminale bırakılır.
   const terminalda = !!(e.target && e.target.closest && e.target.closest('.terminal, .term-ara'));
-  const ks = Gorunum.kisayolBul(e, Gorunum.KISAYOLLAR, terminalda); // tuşlar tek tablodan (gorunum.js KISAYOLLAR) çözülür
+  const ks = Gorunum.kisayolBul(e, Gorunum.KISAYOLLAR, terminalda, darwinMi()); // tuşlar tek tablodan (gorunum.js KISAYOLLAR) çözülür; macOS'ta Cmd de komut sayılır
   if (ks) { if (kisayolCalistir(ks.eylem, e) !== false) e.preventDefault(); return; }
   if (!$('palet').hidden) return;
   const adm = $('adlandirModal');

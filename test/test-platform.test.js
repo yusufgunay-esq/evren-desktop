@@ -171,3 +171,31 @@ test('EVREN.command: zsh başlatıcı LF ile durur, README macOS anlatır', () =
   assert.ok(readme.includes('macOS'), 'README macOS kurulumunu anlatmalı');
   assert.ok(readme.includes('chmod +x EVREN.command'), 'README chmod notu içermeli');
 });
+
+test('app.js: komut tuşu komutTusu soyutlaması ve etiketDarwin ile macOS Cmd desteği', () => {
+  const kaynak = fs.readFileSync(path.join(KOK, 'app.js'), 'utf8');
+  assert.ok(kaynak.includes('const komutTusu = (e)'), 'komutTusu soyutlaması tanımlı olmalı');
+  assert.ok(kaynak.includes('darwinMi() ? !!(e && e.metaKey) : !!(e && e.ctrlKey)'), 'darwin Cmd, değilse Ctrl');
+  assert.ok(kaynak.includes('const darwinMi = () => S.platform === \'darwin\''), 'platform bayrağı durum IPC kaynağından');
+  // Kopyala/kes/yapıştır dalları soyutlamayı kullanmalı (Ctrl+Shift+C/V dahil).
+  const dallar = kaynak.match(/komutTusu\(e\)/g) || [];
+  assert.ok(dallar.length >= 4, `kopyala/kes/yapıştır dalları komutTusu ile: ${dallar.length}`);
+  // Her iki kisayolBul çağrı yeri darwin bayrağını almalı.
+  assert.ok(kaynak.includes('Gorunum.kisayolBul(e, Gorunum.KISAYOLLAR, true, darwinMi())'), 'terminal işleyicisi metaKomut almalı');
+  assert.ok(kaynak.includes('Gorunum.kisayolBul(e, Gorunum.KISAYOLLAR, terminalda, darwinMi())'), 'window keydown metaKomut almalı');
+  // Palet/liste etiketleri etiketDarwin ile çizilmeli.
+  assert.ok(kaynak.includes('Gorunum.etiketDarwin(k.etiket, darwinMi())'), 'kısayol etiketleri etiketDarwin ile');
+  // SIGINT korunmalı: Ctrl+C dalı darwin'de koşulsuz PTY'ye düşer, Cmd+C dalı ayrı ve tüketir.
+  assert.ok(kaynak.includes('if (!darwinMi() && t.hasSelection())'), 'Ctrl+C darwin\'de seçimliyken de PTY\'ye geçmeli');
+  assert.ok(kaynak.includes('darwinMi() && e.metaKey && !e.shiftKey && e.code === \'KeyC\''), 'Cmd+C dalı olmalı');
+});
+
+test('main.js: unix MCP çocuk adları python3 ve npx platform koşullu eklenir, shell eklenmez', () => {
+  const kaynak = fs.readFileSync(path.join(KOK, 'main.js'), 'utf8');
+  const blok = kaynak.match(/if \(process\.platform !== 'win32'\) \{\s*MCP_COCUK\.add\('python3'\);\s*MCP_COCUK\.add\('npx'\);\s*\}/);
+  assert.ok(blok, "python3/npx eklemesi 'win32' dışı platform koşuluna bağlı olmalı");
+  for (const ad of ['sh', 'bash', 'zsh']) {
+    assert.ok(!new RegExp(`MCP_COCUK\\.add\\('${ad}'\\)`).test(kaynak), `${ad} bilinçli olarak eklenmemeli (yanlış boşta kapatma riski)`);
+  }
+  assert.ok(kaynak.includes('EVREN_MCP_COCUK'), 'ortam değişkeni yolu aynen kalmalı');
+});

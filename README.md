@@ -136,6 +136,8 @@ npm run basla      # ya da EVREN.bat (konsolsuz)
 
 Kısayollar, ajanın kendi tuşlarıyla (`Ctrl+K`, `Ctrl+B`, `Ctrl+_`) çakışmayacak biçimde seçilmiştir.
 
+macOS'ta uygulama kısayollarında `Ctrl` yerine `Cmd` kullanılır (`Ctrl` de çalışmaya devam eder; terminalde `Ctrl+C` gibi PTY tuşları daima `Ctrl` ile geçer).
+
 ## Telefon kumandası (uzaktan)
 
 <p align="center">
@@ -217,7 +219,7 @@ GPLv3 bölüm 7(b) uyarınca ek atıf şartı [LICENSE-EK.md](LICENSE-EK.md) dos
 
 **EVREN Desktop** is a desktop console for Windows and macOS that connects a terminal coding agent (Claude Code CLI) to the [EVREN](https://evren.ssyz.org.tr) API — Türkiye's national AI platform serving open-weight models processed in-country. Pick a model and a project, press `Enter`, and a real terminal session (ConPTY on Windows, native PTY on macOS) opens with context window and output limits configured from the live model catalog.
 
-Highlights: live `/v1/models` catalog, connection telemetry with latency sparkline, fuzzy command palette (`Ctrl+Shift+P`), OS-keychain-encrypted key storage (Windows DPAPI / macOS Keychain), strict CSP with no remote content, and an idle-only animated background capped at 30 fps.
+Highlights: live `/v1/models` catalog, connection telemetry with latency sparkline, fuzzy command palette (`Ctrl+Shift+P`), OS-keychain-encrypted key storage (Windows DPAPI / macOS Keychain), strict CSP with no remote content, and an idle-only animated background capped at 30 fps. On macOS, app shortcuts use `Cmd` instead of `Ctrl` (`Ctrl` still works; PTY keys such as terminal `Ctrl+C` always stay on `Ctrl`).
 
 Also: multiple sessions in tabs, a focus mode that leaves only the terminal, and a per-project commit heatmap and language breakdown read from local git.
 

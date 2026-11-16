@@ -145,6 +145,44 @@ test('kısayol tablosu: Ctrl+1/2/3 görünümler, Ctrl+F yalnız terminalde, Ctr
   for (const k of G.KISAYOLLAR) assert.ok(k.etiket && k.ad, 'her kısayolun adı ve etiketi var (liste buradan beslenir)');
 });
 
+test('kisayolBul: metaKomut=false metaKey olayına null döner (Windows akışı değişmez)', () => {
+  assert.strictEqual(G.kisayolBul({ metaKey: true, code: 'KeyP', shiftKey: true }), null, 'yalnız Cmd basılı');
+  assert.strictEqual(G.kisayolBul({ metaKey: true, ctrlKey: true, code: 'KeyP', shiftKey: true }), null, 'Ctrl+Cmd bile olsa elenir');
+  assert.strictEqual(G.kisayolBul({ ctrlKey: false, metaKey: false, code: 'KeyP' }), null, 'komut tuşu yok');
+});
+
+test('kisayolBul: metaKomut=true Cmd kısayollarını bulur, Ctrl de çalışır (macOS)', () => {
+  const cmd = (o) => (G.kisayolBul({ metaKey: true, ...o }, G.KISAYOLLAR, false, true) || {}).eylem;
+  assert.strictEqual(cmd({ code: 'KeyP', shiftKey: true }), 'palet', 'Cmd+Shift+P paleti açar');
+  assert.strictEqual(cmd({ code: 'KeyT', shiftKey: true }), 'ana');
+  assert.strictEqual(cmd({ code: 'Digit2' }), 'gorunumTerminal', 'Cmd+2 görünüm değiştirir');
+  // metaKomut açıkken Ctrl de komut sayılır (Cmd klavyesi olmayan harici klavyeler).
+  assert.strictEqual((G.kisayolBul({ ctrlKey: true, code: 'KeyP', shiftKey: true }, G.KISAYOLLAR, false, true) || {}).eylem, 'palet');
+  // metaKomut kapalıysa aynı Ctrl olayı zaten eşleşiyordu: iki modda da Ctrl+K (terminal dışı) hızlı geçiştir.
+  for (const mk of [false, true]) {
+    assert.strictEqual((G.kisayolBul({ ctrlKey: true, code: 'KeyK' }, G.KISAYOLLAR, false, mk) || {}).eylem, 'gecis');
+  }
+});
+
+test('kisayolBul: Ctrl+Shift+K terminalde metaKomut farkından bağımsız çalışır, Cmd+K terminale kalır', () => {
+  for (const mk of [false, true]) {
+    assert.strictEqual((G.kisayolBul({ ctrlKey: true, shiftKey: true, code: 'KeyK' }, G.KISAYOLLAR, true, mk) || {}).eylem, 'gecis');
+  }
+  // terminalDisi korunur: Cmd+K terminal odaktayken uygulamaya ait değildir (kabuğun satır silme tuşuna düşer).
+  assert.strictEqual(G.kisayolBul({ metaKey: true, code: 'KeyK' }, G.KISAYOLLAR, true, true), null);
+  assert.strictEqual((G.kisayolBul({ metaKey: true, code: 'KeyK' }, G.KISAYOLLAR, false, true) || {}).eylem, 'gecis');
+});
+
+test('etiketDarwin: darwin etikette Ctrl → Cmd, darwin=false etiketi aynen korur', () => {
+  assert.strictEqual(G.etiketDarwin('Ctrl ⇧ P', true), 'Cmd ⇧ P');
+  assert.strictEqual(G.etiketDarwin('Ctrl Alt ↑', true), 'Cmd Alt ↑');
+  assert.strictEqual(G.etiketDarwin('Ctrl K', true), 'Cmd K');
+  assert.strictEqual(G.etiketDarwin('Ctrl ⇧ P', false), 'Ctrl ⇧ P', 'darwin değilse etiket değişmez');
+  assert.strictEqual(G.etiketDarwin('Ctrl ⇧ P'), 'Ctrl ⇧ P', 'varsayılan darwin=false');
+  // Tablodaki davranış etiketten bağımsız: ctrl bayrağı kalmalı, yalnız gösterim değişmeli.
+  for (const k of G.KISAYOLLAR) assert.ok(k.ctrl === true, 'etiket değişse bile tablo Ctrl tanımını korur');
+});
+
 test('görünümler: üç değer geçerli, sırayla döner, kayıt dosyalar değerini de saklar', () => {
   assert.deepStrictEqual(G.GORUNUMLER, ['sohbet', 'terminal', 'dosyalar']);
   assert.strictEqual(G.sonraki('sohbet'), 'terminal');
