@@ -4,7 +4,7 @@
 
 <p align="center">
   <b>Yerli yapay zekâ altyapısında çalışan kodlama ajanı için masaüstü operasyon konsolu.</b><br />
-  <sub>EVREN API · gerçek terminal · Windows</sub>
+  <sub>EVREN API · gerçek terminal · Windows · macOS</sub>
 </p>
 
 <p align="center">
@@ -13,7 +13,7 @@
 
 <p align="center">
   <a href="LICENSE"><img alt="Lisans: GPL-3.0" src="https://img.shields.io/badge/lisans-GPL--3.0-4c90f0?style=flat-square" /></a>
-  <img alt="Platform: Windows 10/11" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-1e242c?style=flat-square" />
+  <img alt="Platform: Windows | macOS" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-1e242c?style=flat-square" />
   <img alt="Electron" src="https://img.shields.io/badge/Electron-45-1e242c?style=flat-square" />
   <img alt="Sürüm" src="https://img.shields.io/badge/s%C3%BCr%C3%BCm-0.5.0-1e242c?style=flat-square" />
 </p>
@@ -41,14 +41,14 @@ Amaç, kamu ve savunma sanayii ekosistemindeki geliştiricilere yerli altyapı �
 | **Odak modu** | `Ctrl+Shift+F` ile kenar paneli, sekmeler ve durum çubuğu kaybolur; ekranda yalnız terminal kalır. |
 | **Oturum geçmişi** | Kenar panelindeki *Geçmiş* bölümü, seçili projenin Claude Code kayıtlarını (`~/.claude/projects`) listeler: başlık, zaman, *çalışıyor* / *bitti*. Tıklayınca `claude --resume` ile aynı sohbet yeni sekmede sürer; zaten açık olan sekmeye geçer. |
 | **Tek tık oturum** | Model ve proje seç, `Enter`. Ortam değişkenleri, bağlam penceresi ve çıktı sınırı modele göre otomatik ayarlanır. |
-| **Esnek çalışma alanı** | Proje = ad + bir ya da daha çok klasör; ad ve klasörler düzenlenebilir, ek klasörler oturuma `--add-dir` ile bağlanır. Proje seçmeden (**Projesiz**, `%USERPROFILE%\EVREN`) ya da tek seferlik bir klasörde çalışılabilir. Proje çoğalınca arama ve *Tümünü göster* devreye girer. |
+| **Esnek çalışma alanı** | Proje = ad + bir ya da daha çok klasör; ad ve klasörler düzenlenebilir, ek klasörler oturuma `--add-dir` ile bağlanır. Proje seçmeden (**Projesiz**, ev dizinindeki `EVREN`) ya da tek seferlik bir klasörde çalışılabilir. Proje çoğalınca arama ve *Tümünü göster* devreye girer. |
 | **Canlı model kataloğu** | Liste `/v1/models` uç noktasından gelir; her modelin bağlam boyutu ve çıktı sınırı API'nin bildirdiği değerdir. |
-| **Gerçek terminal** | Windows ConPTY + xterm.js; renkler, imleç, kopyala/yapıştır ve yeniden boyutlandırma yerel terminal gibi çalışır. |
+| **Gerçek terminal** | ConPTY (Windows) ya da yerel PTY (macOS) + xterm.js; renkler, imleç, kopyala/yapıştır ve yeniden boyutlandırma yerel terminal gibi çalışır. |
 | **Proje özeti** | Seçili deponun son 26 haftalık commit ısı haritası, dil dağılımı, dosya ve değişiklik sayısı, son commit; yalnız yerel git, ağ yok. |
 | **Durum görünümleri** | Son 24 ölçümün gecikme grafiği ve terminal biçimli canlı olay günlüğü (kasa, API, model, oturum). |
 | **Canlı akış grafiği** | Geniş ekranda seçili model → EVREN → proje bağlantısı üzerinde akan veri paketleri; düğüme tıklayarak seçim. |
 | **Komut paleti** | `Ctrl+Shift+P` ile model, proje ve eylemler arasında bulanık arama. |
-| **Güvenli anahtar** | API anahtarı Windows DPAPI ile şifreli kasada tutulur; diske düz metin yazılmaz, yalnız oturum sürecine aktarılır. |
+| **Güvenli anahtar** | API anahtarı işletim sistemi kasasıyla (Windows DPAPI, macOS Keychain) şifreli tutulur; diske düz metin yazılmaz, yalnız oturum sürecine aktarılır. |
 | **Hızlı ve hafif** | Açılış ağı beklemez; arka plan grafiği 30 kare/sn ile sınırlıdır ve oturum açıkken tamamen durur. |
 
 <p align="center">
@@ -78,6 +78,7 @@ Kenar panelde Şef oturumu ince, akan bir menekşe rayla işaretlenir; açtığ�
 ## Gereksinimler
 
 - Windows 10 (1809+) veya Windows 11
+- macOS 13 (Ventura) veya üzeri
 - [Node.js](https://nodejs.org) 20 veya üzeri
 - [Claude Code CLI](https://github.com/anthropics/claude-code) (`claude` komutu PATH'te)
 - EVREN hesabı ve API anahtarı — [evren.ssyz.org.tr](https://evren.ssyz.org.tr) üzerinden e-Devlet ile giriş
@@ -90,13 +91,27 @@ cd evren-desktop
 npm install
 ```
 
-İlk açılışta anahtar yoksa ana ekranda giriş alanı çıkar: anahtarı yapıştırın, uygulama EVREN API ile doğrular ve Windows DPAPI ile şifreleyerek `%USERPROFILE%.evren-desktopevren.dpapi` dosyasına yazar. Ayarlar (son model, son projeler) aynı klasördeki `ayar.json` dosyasındadır.
+```bash
+# macOS
+git clone https://github.com/yusufgunay-esq/evren-desktop.git
+cd evren-desktop
+npm install
+```
+
+İlk açılışta anahtar yoksa ana ekranda giriş alanı çıkar: anahtarı yapıştırın, uygulama EVREN API ile doğrular ve işletim sistemi kasasıyla şifreleyerek `~/.evren-desktop/evren.dpapi` (Windows DPAPI) ya da `~/.evren-desktop/evren.kasa` (macOS Keychain) dosyasına yazar. Ayarlar (son model, son projeler) aynı klasördeki `ayar.json` dosyasındadır.
 
 ## Kullanım
 
 ```powershell
 npm run basla      # ya da EVREN.bat (konsolsuz)
 ```
+
+```bash
+# macOS: bir kez chmod +x EVREN.command, sonra
+./EVREN.command    # ya da npm run basla
+```
+
+`chmod +x EVREN.command` yalnız ilk kullanımda gerekir.
 
 1. **Bağlantı** bölümünde durum yeşilse API erişilebilir.
 2. **Modeller** listesinden işe uygun modeli seç (ör. uzun bağlam için 1M, çetrefilli arayüz işleri için 512K).
@@ -130,6 +145,7 @@ Kısayollar, ajanın kendi tuşlarıyla (`Ctrl+K`, `Ctrl+B`, `Ctrl+_`) çakışm
 Aynı Wi-Fi'deki telefon, **Kumanda** panelindeki QR kod okutularak eşleşir. Masaüstü yerel ağda WebSocket açar (`remote-sunucu.js`); belirteç, port ve sunucu kimliği `kumanda.json` içinde kalıcıdır.
 
 - **Windows güvenlik duvarı:** İlk açılışta Electron için ağ erişimi sorulursa **izin ver**. Daha önce "Engelle" seçilmişse telefon hiçbir porta ulaşamaz; *Windows Güvenliği → Güvenlik duvarı ve ağ koruması → Bir uygulamanın güvenlik duvarından geçmesine izin ver* yolundan Electron satırını işaretle.
+- **macOS güvenlik duvarı:** *Sistem Ayarları → Ağ → Güvenlik Duvarı* açıksa Electron'a gelen bağlantı izni verilmelidir; kapalıysa yapılandırma gerekmez.
 - **Port değişirse:** Dolu portta sunucu bir yukarı kayar ve yeni portu kaydeder; telefon birkaç denemeden sonra komşu portları yoklayıp kaydını kendiliğinden düzeltir.
 - **Yeniden bağlanma:** Kopmada üstel geri çekilme (1→30 sn) uygulanır; Wi-Fi geri gelince ya da uygulama öne gelince beklemeden denenir. Masaüstü, pong vermeyen ölü soketleri 20 saniyede temizler.
 - **Kablolu yedek:** USB ile bağlı Android cihazda sunucu `adb reverse` kurar; telefon `localhost:<port>` üzerinden de erişebilir.
@@ -140,16 +156,17 @@ Aynı Wi-Fi'deki telefon, **Kumanda** panelindeki QR kod okutularak eşleşir. M
 flowchart LR
   UI["Arayüz<br/>(renderer · xterm.js)"] -- "IPC (contextIsolation)" --> Main["Ana süreç<br/>(Electron)"]
   Main -- "ConPTY" --> CLI["Kodlama ajanı<br/>(claude CLI)"]
-  Main -- "DPAPI" --> Kasa[("Anahtar kasası")]
+  Main -- "OS kasası" --> Kasa[("Anahtar kasası")]
   CLI -- "HTTPS" --> API["EVREN API<br/>(Türkiye)"]
   Main -- "/v1/models · gecikme" --> API
 ```
 
 | Dosya | Görev |
 | --- | --- |
-| `main.js` | Ana süreç: IPC, çoklu pty (ConPTY), API ölçümü, proje özeti, `--ekran` doğrulama modu |
+| `main.js` | Ana süreç: IPC, çoklu pty (ConPTY / yerel PTY), API ölçümü, proje özeti, `--ekran` doğrulama modu |
 | `remote-sunucu.js` · `remote-web/` | Telefon kumandası: yerel WebSocket/HTTP köprüsü, QR eşleşme, kalp atışı, oturum ve sohbet akışı |
-| `motor.js` | Model kataloğu, git dalı, ayarlar ve DPAPI anahtar kasası (ağsız) |
+| `motor.js` | Model kataloğu, git dalı, ayarlar ve OS anahtar kasası (Windows DPAPI / macOS Keychain, ağsız) |
+| `platform.js` | Çapraz platform saf yardımcıları: PTY komut planı, süreç haritası |
 | `preload.js` | Arayüze açılan dar köprü; yalnız gerekli kanallar |
 | `index.html` · `styles.css` · `app.js` | Arayüz, komut paleti, akış grafiği |
 | `logo/` | Marka işareti ve kelime işareti (SVG) |
@@ -158,7 +175,7 @@ flowchart LR
 ## Güvenlik ve gizlilik
 
 - **Ağ:** Uygulamanın kendisi yalnız EVREN API'sine bağlanır. Arayüz yerel dosyalardan yüklenir (`Content-Security-Policy: default-src 'self'`); yazı tipleri dahil hiçbir uzak içerik yoktur.
-- **Anahtar:** DPAPI ile kullanıcı hesabına bağlı şifrelenir; arayüz sürecine hiç geçmez.
+- **Anahtar:** İşletim sistemi kasasıyla (Windows DPAPI / macOS Keychain) kullanıcı hesabına bağlı şifrelenir; arayüz sürecine hiç geçmez.
 - **İzin modu:** Oturum `claude --dangerously-skip-permissions` ile açılır; ajan komutları tek tek onay istemeden çalıştırır. Yalnız güvendiğiniz ve sürüm denetimindeki klasörlerde kullanın.
 - **Telemetri:** Ajanın zorunlu olmayan ağ trafiği kapatılır (`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`). Uygulama kullanım verisi toplamaz.
 
@@ -198,13 +215,13 @@ GPLv3 bölüm 7(b) uyarınca ek atıf şartı [LICENSE-EK.md](LICENSE-EK.md) dos
 <details>
 <summary><b>English</b></summary>
 
-**EVREN Desktop** is a Windows desktop console that connects a terminal coding agent (Claude Code CLI) to the [EVREN](https://evren.ssyz.org.tr) API — Türkiye's national AI platform serving open-weight models processed in-country. Pick a model and a project, press `Enter`, and a real ConPTY terminal session opens with context window and output limits configured from the live model catalog.
+**EVREN Desktop** is a desktop console for Windows and macOS that connects a terminal coding agent (Claude Code CLI) to the [EVREN](https://evren.ssyz.org.tr) API — Türkiye's national AI platform serving open-weight models processed in-country. Pick a model and a project, press `Enter`, and a real terminal session (ConPTY on Windows, native PTY on macOS) opens with context window and output limits configured from the live model catalog.
 
-Highlights: live `/v1/models` catalog, connection telemetry with latency sparkline, fuzzy command palette (`Ctrl+Shift+P`), DPAPI-encrypted key storage, strict CSP with no remote content, and an idle-only animated background capped at 30 fps.
+Highlights: live `/v1/models` catalog, connection telemetry with latency sparkline, fuzzy command palette (`Ctrl+Shift+P`), OS-keychain-encrypted key storage (Windows DPAPI / macOS Keychain), strict CSP with no remote content, and an idle-only animated background capped at 30 fps.
 
 Also: multiple sessions in tabs, a focus mode that leaves only the terminal, and a per-project commit heatmap and language breakdown read from local git.
 
-Requirements: Windows 10/11, Node.js 20+, Claude Code CLI on PATH, an EVREN account (sign-in via e-Devlet). Install with `npm install`, run with `npm run basla`; paste your API key on first launch.
+Requirements: Windows 10/11 or macOS 13+, Node.js 20+, Claude Code CLI on PATH, an EVREN account (sign-in via e-Devlet). Install with `npm install`, run with `npm run basla` (Windows) or `chmod +x EVREN.command && ./EVREN.command` (macOS); paste your API key on first launch.
 
 This is an independent community project and is not affiliated with the Presidency of Defence Industries (SSB) or the EVREN platform. Licensed under the GNU GPL v3 or later; see [LICENSE](LICENSE) and the additional attribution terms in [LICENSE-EK.md](LICENSE-EK.md).
 

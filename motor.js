@@ -2,8 +2,8 @@
 // بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
 /* Copyright (c) 2026 Yusuf Günay.
  * This program is free software under the GNU GPL v3 or later; see LICENSE and LICENSE-EK.md. */
-// EVREN Desktop motoru: model kataloğu, git dalı, ayarlar ve DPAPI ile şifreli anahtar kasası.
-// Ağ isteği yapmaz; yalnız yerel dosya ve Windows DPAPI (PowerShell) kullanır.
+// EVREN Desktop motoru: model kataloğu, git dalı, ayarlar ve işletim sistemi kasasıyla şifreli anahtar kasası.
+// Ağ isteği yapmaz; yalnız yerel dosya ve kasa arka ucu (Windows DPAPI / macOS Keychain) kullanır.
 'use strict';
 const fs = require('node:fs');
 const os = require('node:os');
@@ -14,6 +14,8 @@ const { execFile } = require('node:child_process');
 const VERI_DIZINI = process.env.EVREN_VERI_DIZINI || path.join(os.homedir(), '.evren-desktop');
 const AYAR_DOSYASI = path.join(VERI_DIZINI, 'ayar.json');
 const ANAHTAR_DOSYASI = path.join(VERI_DIZINI, 'evren.dpapi');
+// win32 dışı platformlarda safeStorage (Keychain/libsecret) ile şifrelenen kasa dosyası.
+const KASA_DOSYASI = path.join(VERI_DIZINI, 'evren.kasa');
 // Önceki sürümlerin konumları: yalnız okunur (taşıma kolaylığı).
 const ESKI_AYAR = path.join(os.homedir(), '.gunay-studio', 'evren-panel.json');
 const ESKI_ANAHTAR = path.join(os.homedir(), '.gunay-studio', 'kasa', 'evren.dpapi');
@@ -124,8 +126,36 @@ function powershell(betik, girdi, ortam) {
   });
 }
 
+// win32 dışı kasa arka ucu: motor.js 'electron' require etmez (testler düz node --test ile
+// koşar); main.js app hazır olunca Electron safeStorage'ı buraya enjekte eder.
+// Arka uç yoksa anahtarOku '' döner, anahtarYaz anlaşılır hata atar.
+let kasaArkaUcu = null;
+function kasaKur(arkaUc) { kasaArkaUcu = arkaUc || null; }
+
+// Saf: anahtarı arka uçla şifreleyip base64 metin olarak döndürür.
+function kasaSifrele(arkaUc, anahtar) {
+  const temiz = String(anahtar || '').replace(/[^\x21-\x7e]/g, '');
+  if (!temiz) throw new Error('Boş anahtar.');
+  if (!arkaUc || typeof arkaUc.encryptString !== 'function' ||
+      (typeof arkaUc.isEncryptionAvailable === 'function' && !arkaUc.isEncryptionAvailable())) {
+    throw new Error('Bu işletim sisteminde kasa desteklenmiyor.');
+  }
+  return Buffer.from(arkaUc.encryptString(temiz)).toString('base64');
+}
+
+// Saf: base64 kasa dosyası içeriğini arka uçla çözer; olmuyorsa '' döner.
+function kasaCoz(arkaUc, icerik) {
+  try {
+    if (!arkaUc || typeof arkaUc.decryptString !== 'function') return '';
+    return arkaUc.decryptString(Buffer.from(String(icerik || '').trim(), 'base64')) || '';
+  } catch { return ''; }
+}
+
 async function anahtarOku() {
-  if (process.platform !== 'win32') return '';
+  if (process.platform !== 'win32') {
+    // darwin/linux: evren.kasa dosyasını safeStorage arka ucuyla çöz; dosya yoksa '' döner.
+    try { return kasaCoz(kasaArkaUcu, fs.readFileSync(KASA_DOSYASI, 'utf8')); } catch { return ''; }
+  }
   const oku = '$s = ConvertTo-SecureString (Get-Content -LiteralPath $env:EVREN_KASA -Raw).Trim(); [Console]::Out.Write([Runtime.InteropServices.Marshal]::PtrToStringUni([Runtime.InteropServices.Marshal]::SecureStringToBSTR($s)))';
   for (const f of [ANAHTAR_DOSYASI, ESKI_ANAHTAR]) {
     if (!fs.existsSync(f)) continue;
@@ -135,6 +165,13 @@ async function anahtarOku() {
 }
 
 async function anahtarYaz(anahtar) {
+  if (process.platform !== 'win32') {
+    // darwin/linux: safeStorage (Keychain / libsecret) ile şifrele, base64 olarak yaz.
+    const sifreli = kasaSifrele(kasaArkaUcu, anahtar);
+    fs.mkdirSync(VERI_DIZINI, { recursive: true });
+    fs.writeFileSync(KASA_DOSYASI, sifreli);
+    return KASA_DOSYASI;
+  }
   const temiz = String(anahtar || '').replace(/[^\x21-\x7e]/g, '');
   if (!temiz) throw new Error('Boş anahtar.');
   fs.mkdirSync(VERI_DIZINI, { recursive: true });
@@ -143,4 +180,4 @@ async function anahtarYaz(anahtar) {
   return ANAHTAR_DOSYASI;
 }
 
-module.exports = { MODELLER, modelleriCoz, autocompactPenceresi, EFORLAR, EFOR_VARSAYILAN, eforCoz, baglamMetni, gitDal, ayarOku, ayarYaz, anahtarOku, anahtarYaz, VERI_DIZINI };
+module.exports = { MODELLER, modelleriCoz, autocompactPenceresi, EFORLAR, EFOR_VARSAYILAN, eforCoz, baglamMetni, gitDal, ayarOku, ayarYaz, anahtarOku, anahtarYaz, kasaKur, kasaSifrele, kasaCoz, VERI_DIZINI };

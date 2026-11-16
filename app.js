@@ -51,9 +51,12 @@ const S = {
   grupKapali: sakla.oku('grupKapali', {}), // { calisiyor: true, bosta: true } — gruplar ayrı ayrı katlanır
   sefOturumlar: new Set(sakla.oku('sefOturumlar', [])), // Şef olarak açılmış oturum kimlikleri (kalıcı)
   ayar: { claudeOturumlari: false }, // ana süreçteki ayardan gelir (durum)
+  platform: 'win32', // ana süreçten gelir (durum); kasa metinleri buna göre yazılır
 };
 // Claude Code oturumları görünsün mü: tek okuma noktası (kişisel katman yalnız bu satırı değiştirebilir).
 const claudeGoster = () => S.ayar.claudeOturumlari === true;
+// Kasa adı: platforma göre arayüz metni (Windows kasası, macOS Anahtar Zinciri).
+const kasaAdi = (p) => (p === 'win32' ? 'DPAPI' : p === 'darwin' ? 'macOS Anahtar Zinciri' : 'işletim sistemi kasası');
 
 // ---------- yardımcılar ----------
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -812,7 +815,7 @@ function ozetYaz() {
   $('baslaBtn2').disabled = !hazir;
   $('uyari').hidden = S.anahtarVar;
   $('anahtarForm').hidden = S.anahtarVar || !S.yuklendi;
-  if (!S.anahtarVar && !S.anahtarHata) $('uyariMetin').innerHTML = 'EVREN API anahtarı yok. Anahtarı <a href="#" data-dis="https://evren.ssyz.org.tr">evren.ssyz.org.tr</a> üzerinden (e-Devlet ile giriş) alıp aşağıya yapıştırın. Anahtar bu Windows hesabına bağlı olarak DPAPI ile şifrelenir.';
+  if (!S.anahtarVar && !S.anahtarHata) $('uyariMetin').innerHTML = `EVREN API anahtarı yok. Anahtarı <a href="#" data-dis="https://evren.ssyz.org.tr">evren.ssyz.org.tr</a> üzerinden (e-Devlet ile giriş) alıp aşağıya yapıştırın. Anahtar ${S.platform === 'win32' ? 'bu Windows hesabına' : 'bu kullanıcı hesabına'} bağlı olarak ${kasaAdi(S.platform)} ile şifrelenir.`;
   else if (S.yuklendi && !p) { $('uyari').hidden = false; $('uyariMetin').textContent = 'Proje seçilmedi. Başlatınca klasör sorulur.'; }
   cipYaz(); // sekme çizimi durum çubuğunu da tazeler (durumYaz)
 }
@@ -835,7 +838,7 @@ function baglantiYaz() {
   sLed.className = 'led ' + sinif;
   $('apiDurum').textContent = metin;
   $('apiMs').textContent = a && a.ok ? `${a.ms} ms` : '—';
-  $('kasa').textContent = S.anahtarVar ? 'DPAPI · hazır' : 'kasa boş';
+  $('kasa').textContent = !S.anahtarVar ? 'kasa boş' : S.platform === 'win32' ? 'DPAPI · hazır' : S.platform === 'darwin' ? 'Keychain · hazır' : 'kasa · hazır';
   // Kota ve Token hesaplama
   const apiKotaEl = $('apiKota');
   const sKotaMetin = $('sKotaMetin');
@@ -909,6 +912,7 @@ async function yukle() {
     const d = await window.evren.durum();
     S.anahtarVar = !!d.anahtarVar;
     S.surum = d.surum || '';
+    S.platform = d.platform || 'win32';
     S.modeller = d.modeller || [];
     S.projeler = d.projeler || [];
     S.sonKlasorler = d.sonKlasorler || [];
@@ -932,7 +936,7 @@ async function yukle() {
   S.yuklendi = true;
   modelleriCiz(); projeleriCiz(); ozetYaz(); baglantiYaz(); uykuDugmeCiz(); claudeBtnCiz();
   olay('SİSTEM', `EVREN Desktop ${S.surum || ''} hazır`.replace('  ', ' '));
-  olay('KASA', S.anahtarVar ? 'DPAPI anahtarı yüklendi' : 'anahtar bulunamadı', S.anahtarVar ? '' : 'uyari');
+  olay('KASA', S.anahtarVar ? kasaAdi(S.platform) + ' anahtarı yüklendi' : 'anahtar bulunamadı', S.anahtarVar ? '' : 'uyari');
   olay('PROJE', `${S.projeler.length} proje · ${S.projeler.filter((p) => p.dal).length} git deposu`);
   Grafik.basla();
   projeOzetYukle();
@@ -2949,7 +2953,7 @@ $('anahtarForm').addEventListener('submit', async (e) => {
   btn.disabled = false; btn.querySelector('span').textContent = 'Doğrula ve kaydet';
   if (!r.ok) { S.anahtarHata = true; $('uyariMetin').textContent = r.hata || 'Kaydedilemedi.'; olay('KASA', r.hata || 'kayıt hatası', 'kotu'); giris.select(); return; }
   giris.value = ''; S.anahtarHata = false; S.anahtarVar = true;
-  olay('KASA', 'anahtar doğrulandı ve DPAPI ile kaydedildi', 'iyi');
+  olay('KASA', 'anahtar doğrulandı ve ' + kasaAdi(S.platform) + ' ile kaydedildi', 'iyi');
   ozetYaz(); apiYenile();
 });
 $('odakIpucu').addEventListener('click', () => odakToggle(false));

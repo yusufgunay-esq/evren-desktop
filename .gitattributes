@@ -1,0 +1,2 @@
+# macOS/Linux başlatıcıları LF ile kalsın (CRLF shebang'i bozar).
+*.command text eol=lf

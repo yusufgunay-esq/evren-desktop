@@ -3,7 +3,7 @@
 /* Copyright (c) 2026 Yusuf Günay.
  * This program is free software under the GNU GPL v3 or later; see LICENSE and LICENSE-EK.md. */
 // EVREN Desktop — ana süreç: IPC, çoklu pty (ConPTY), EVREN API ölçümü. Model/ayar/kasa mantığı motor.js'te.
-const { app, BrowserWindow, ipcMain, dialog, shell, screen, nativeImage, clipboard, powerSaveBlocker } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, screen, nativeImage, clipboard, powerSaveBlocker, safeStorage } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -11,6 +11,7 @@ const { Worker } = require('node:worker_threads');
 const oturumKarar = require('./oturum-karar');
 const pty = require('@homebridge/node-pty-prebuilt-multiarch');
 const motor = require('./motor');
+const platform = require('./platform');
 const gorunumYardim = require('./gorunum');
 const gecmis = require('./gecmis');
 const tercih = require('./tercih');
@@ -186,7 +187,7 @@ async function yerelDurum() {
   const ham = ayarOku();
   const modeller = modelOnbellek || p.MODELLER;
   return {
-    anahtarVar, modeller, surum: SURUM,
+    anahtarVar, modeller, surum: SURUM, platform: process.platform,
     sonModel: typeof ham.sonModel === 'string' ? ham.sonModel : modeller[0] && modeller[0].id,
     sonEfor: motor.eforCoz(ham.sonEfor),
     eforlar: motor.EFORLAR,
@@ -358,7 +359,8 @@ async function oturumBaslat({ modelId, dizin, ekDizinler, projeAd, cols, rows, d
     cols: Number.isFinite(Number(cols)) && Number(cols) > 20 ? Number(cols) : 120,
     rows: Number.isFinite(Number(rows)) && Number(rows) > 5 ? Number(rows) : 30,
   };
-  const secenek = { name: 'xterm-256color', cols: olcu.cols, rows: olcu.rows, cwd: hedefDizin, env, useConpty: true };
+  const secenek = { name: 'xterm-256color', cols: olcu.cols, rows: olcu.rows, cwd: hedefDizin, env };
+  if (platform.conptyKullan(process.platform)) secenek.useConpty = true; // ConPTY Windows'a özgü
   const ork = !!orkestrator;
   const yazma = ork ? kodYazma === true : true;
   let bu;
@@ -377,9 +379,12 @@ async function oturumBaslat({ modelId, dizin, ekDizinler, projeAd, cols, rows, d
       mcpProfiliUygula(arg, ayarOku().mcpProfil ?? 'yalin');
     }
     try {
-      bu = pty.spawn('claude.exe', arg, secenek);
+      const plan = platform.spawnPlanla(process.platform, arg);
+      bu = pty.spawn(plan.dosya, plan.arglar, secenek);
     } catch {
-      bu = pty.spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'claude', ...arg], secenek);
+      // Birincil komut açılmadı: win32 cmd sarmalayıcısı, darwin/linux login shell (-l, PATH için).
+      const yedek = platform.spawnYedek(process.platform, process.env, arg);
+      bu = pty.spawn(yedek.dosya, yedek.arglar, secenek);
     }
   }
   const id = ++sonKimlik;
@@ -595,6 +600,14 @@ function korunanUuidleriOku() {
 }
 
 function torunHaritasi(done) {
+  if (process.platform !== 'win32') {
+    // darwin/linux: ps ile süreç ağacı; ayrıştırıcı platform.js'te (test edilebilir).
+    execFile('ps', ['-axo', 'pid=,ppid=,comm='], { timeout: 10000 }, (hata, cikti) => {
+      if (hata) return done(null);
+      done(platform.psCiktiAyristir(cikti));
+    });
+    return;
+  }
   const ps = 'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId)/$($_.ParentProcessId)/$($_.Name)" }';
   execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps],
     { windowsHide: true, timeout: 10000 }, (hata, cikti) => {
@@ -786,6 +799,7 @@ function pencereOlustur() {
 
 app.whenReady().then(() => {
 if (!tekKilit) return; // ikinci örnek: pencere/sunucu açma, mevcut örneğe odaklan
+motor.kasaKur(safeStorage); // win32 dışı: Electron safeStorage (macOS Keychain / Linux libsecret) arka ucu
 function remoteSunucuBaslat() {
   remoteSunucu = new RemoteSunucu({
     veriDizini: app.getPath('userData'), // kumanda.json (token, port, IP) burada kalıcı tutulur
