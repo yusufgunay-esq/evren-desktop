@@ -93,6 +93,33 @@ test('resume çatallanması: ölü ana kopya gizlenir, işler ve alt ajanlar ça
   assert.strictEqual(zincir.evrenIsleri.toplam, 1, 'atanın EVREN işi zincirle sayılır');
 });
 
+test('özel ad çatallanmada devrolur: ata klasöründeki custom-title uçta yoksa kartta atanınki görünür', (t) => {
+  const kok = geciciKok(t, 'evren-ad-');
+  const dizin = 'D:\\Projelerim\\ad-proje';
+  const klasor = path.join(kok, dizin.replace(/[^a-zA-Z0-9]/g, '-'));
+  fs.mkdirSync(path.join(klasor, ATA), { recursive: true });
+  fs.mkdirSync(path.join(klasor, COPUC), { recursive: true });
+  fs.writeFileSync(path.join(klasor, ATA + '.jsonl'), sohbetSatirlari());
+  fs.writeFileSync(path.join(klasor, ATA, 'custom-title.json'), JSON.stringify({ customTitle: 'Elle verilen ad' }));
+  const eski = new Date(Date.now() - 30 * 60 * 1000);
+  fs.utimesSync(path.join(klasor, ATA + '.jsonl'), eski, eski);
+  const carp = Date.now() + 50; while (Date.now() < carp) { /* doğum sırası ayrışsın */ }
+  fs.writeFileSync(path.join(klasor, COPUC + '.jsonl'), sohbetSatirlari());
+
+  const liste = gecmis.oturumGecmisi(dizin);
+  const copuk = liste.find((x) => x.id === COPUC);
+  assert.ok(copuk, 'uç kopya listelenir');
+  assert.strictEqual(copuk.baslik, 'Elle verilen ad', 'özel ad uç kartta görünür');
+
+  // Disk devri: ata klasöründeki ad uç klasöre kopyalanır; uçta ad varsa üzerine yazılmaz.
+  const hedef = path.join(klasor, COPUC);
+  assert.strictEqual(gecmis.ozelBaslikTasi(path.join(klasor, ATA), hedef), 'Elle verilen ad');
+  assert.strictEqual(gecmis.ozelBaslikOku(hedef), 'Elle verilen ad');
+  fs.writeFileSync(path.join(hedef, 'custom-title.json'), JSON.stringify({ customTitle: 'Ucun kendi adi' }));
+  assert.strictEqual(gecmis.ozelBaslikTasi(path.join(klasor, ATA), hedef), '', 'uçta ad varsa dokunulmaz');
+  assert.strictEqual(gecmis.ozelBaslikOku(hedef), 'Ucun kendi adi');
+});
+
 test('ataKopyalariniAyikla: canlı ana gizlenmez; uç, atadan küçükse ana da kalır', () => {
   const { ataKopyalariniAyikla } = gecmis;
   const yasli = (n) => ({ id: n, kokUuid: KOK, dogumMs: 1000, ms: 1000, boyut: 500, canli: false, altAjanlar: [] });

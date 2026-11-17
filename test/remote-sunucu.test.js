@@ -179,3 +179,67 @@ test('telefon soru aracının seçeneklerini sohbet paketinde alır', async () =
     sunucu.durdur();
   }
 });
+
+// --resume çatallanması: oturum yeni jsonl'e taşınınca sohbet izleyicisi yeni dosyaya geçmeli.
+// Eski dosyada kalırsa telefondan gönderilen mesajlar (yeni dosyaya yazılır) hiç görünmez.
+test('sohbet izleyicisi çatallanmada yeni kayıt dosyasına geçer', async () => {
+  const kok = geciciDizin();
+  const dizin = 'D:\Projelerim\ornek';
+  const klasor = path.join(kok, 'projects', dizin.replace(/[^a-zA-Z0-9]/g, '-'));
+  fs.mkdirSync(klasor, { recursive: true });
+  const ata = '11111111-1111-4111-8111-111111111111';
+  const uc = '22222222-2222-4222-8222-222222222222';
+  const satir = (rol, metin) => JSON.stringify(
+    rol === 'user'
+      ? { type: 'user', message: { role: 'user', content: metin } }
+      : { type: 'assistant', message: { model: 'glm-5.3', content: [{ type: 'text', text: metin }], stop_reason: 'end_turn' } },
+  );
+  fs.writeFileSync(path.join(klasor, ata + '.jsonl'), [satir('user', 'eski sohbet'), satir('assistant', 'eski yanıt')].join('\n') + '\n');
+
+  // Benimseme anını taklit et: sunucunun gördüğü kimlik çalışma sırasında değişir.
+  const bilgi = { dizin, devam: ata, baslangic: Date.now() - 1000 };
+  const sunucu = new RemoteSunucu({
+    veriDizini: geciciDizin(),
+    port: 0,
+    claudeKoku: path.join(kok, 'projects'),
+    oturumListesiAl: () => [{ id: 1, baslik: 'örnek' }],
+    oturumBilgisiAl: () => bilgi,
+    oturumSayilariAl: () => null,
+  });
+  await sunucu.baslat();
+  const { port, token } = sunucu.bilgi();
+
+  const paketler = [];
+  const paketBekle = (kosul) => new Promise((coz, red) => {
+    const zaman = setTimeout(() => red(new Error('beklenen sohbet paketi gelmedi')), 6000);
+    const dinle = (ham) => {
+      const p = JSON.parse(ham.toString('utf8'));
+      if (p.tip !== 'sohbet') return;
+      paketler.push(p);
+      if (kosul(p)) { clearTimeout(zaman); ws.off('message', dinle); coz(p); }
+    };
+    ws.on('message', dinle);
+  });
+
+  const { ws } = await ilkMesaj(`ws://127.0.0.1:${port}/?token=${token}`);
+  const ilkSohbet = paketBekle((p) => p.ilk === true);
+  ws.send(JSON.stringify({ tip: 'sohbet_iste', id: 1 }));
+
+  try {
+    const ilk = await ilkSohbet;
+    assert.strictEqual(ilk.girisler.at(-1).metin, 'eski yanıt');
+
+    // Çatal: sohbetin kopyası + telefondan gönderilmiş yeni mesaj. Sunucu kimliği yeni dosyaya geçer.
+    fs.writeFileSync(path.join(klasor, uc + '.jsonl'), [
+      satir('user', 'eski sohbet'), satir('assistant', 'eski yanıt'),
+      satir('user', 'yeni mesaj'), satir('assistant', 'yeni yanıt'),
+    ].join('\n') + '\n');
+    bilgi.devam = uc;
+
+    const yeniden = await paketBekle((p) => p.ilk === true && p.girisler.some((g) => g.metin === 'yeni mesaj'));
+    assert.ok(yeniden.girisler.some((g) => g.rol === 'kullanici' && g.metin === 'yeni mesaj'), 'yeni dosyadaki kullanıcı mesajı telefona ulaşır');
+  } finally {
+    ws.close();
+    sunucu.durdur();
+  }
+});

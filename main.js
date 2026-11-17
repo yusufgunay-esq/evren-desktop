@@ -441,6 +441,12 @@ async function oturumBaslat({ modelId, dizin, ekDizinler, projeAd, cols, rows, d
         try { kok = (gecmis.baslikOku(dosya, true) || {}).kokUuid || ''; } catch {}
         if (!kok || kok !== atKok) { elek.add(kimlik); return; } // başka sohbetin kaydı: benimsemeyiz
         bilgi.atalar = [...(bilgi.atalar || []), bilgi.devam]; // alt ajan klasörü atada kalmış olabilir: sayaçlar zinciri sayar
+        // Özel ad ata klasöründe kalmış olabilir: uç klasöre devret (Claude Desktop de aynı adı görsün).
+        try {
+          const kokDizin = path.dirname(sohbet.dosyaYolu(hedefDizin, bilgi.devam));
+          gecmis.ozelBaslikTasi(path.join(kokDizin, bilgi.devam), path.join(kokDizin, kimlik));
+          gecmisBaslikOnbellekTemizle(kimlik);
+        } catch {}
         bilgi.devam = kimlik;
         clearInterval(ara);
         if (pencere && !pencere.isDestroyed()) pencere.webContents.send('oturum:fork', id, kimlik);

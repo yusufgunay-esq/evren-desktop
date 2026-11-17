@@ -58,6 +58,17 @@ function ozelBaslikYaz(seansDizin, ad) {
 
 function baslikOnbellekTemizle(id) { baslikOnbellek.delete(id); }
 
+// --resume çatallanmasında özel ad (custom-title.json) ata klasöründe kalır; uç klasöre kopyalanır.
+// Uçta kendi adı varsa dokunulmaz; kaynakta ad yoksa bir şey yazılmaz. Kopyalanan adı döner.
+function ozelBaslikTasi(kaynakSeansDizini, hedefSeansDizini) {
+  try {
+    if (!kaynakSeansDizini || !hedefSeansDizini || kaynakSeansDizini === hedefSeansDizini) return '';
+    const ad = ozelBaslikOku(kaynakSeansDizini);
+    if (!ad || ozelBaslikOku(hedefSeansDizini)) return '';
+    return ozelBaslikYaz(hedefSeansDizini, ad);
+  } catch { return ''; }
+}
+
 // ---------- Kalıcı başlık önbelleği ----------
 // Üst veri değişmediyse başlık yeniden okunmaz; uygulama açılışında 100 oturumun 6 MB'lık
 // kafalarını taramak yerine diskten gelir. Kimlik anahtarı: dosya mtime + boyut + ad damgası.
@@ -414,6 +425,8 @@ function ataKopyalariniAyikla(oturumlar) {
       u.atalar = u.atalar || [];
       if (!u.atalar.includes(o.id)) u.atalar.push(o.id);
       for (const e of o.atalar || []) if (!u.atalar.includes(e)) u.atalar.push(e);
+      // Elle/ajanla verilen özel ad ata klasöründe kalmış olabilir: uçta ad yoksa atanınki gösterilir.
+      if (!u.ozelAd && o.ozelAd) { u.ozelAd = o.ozelAd; u.baslik = o.ozelAd; }
       // Alt ajan klasörü oturum kimliğine bağlıdır; kopyaya devrederken ata klasöründeki ajanlar kaybolmasın.
       u.altAjanlar = u.altAjanlar || [];
       for (const a of o.altAjanlar || []) if (!u.altAjanlar.some((x) => x.id === a.id)) u.altAjanlar.push(a);
@@ -457,6 +470,7 @@ function oturumGecmisi(dizin, secenekler) {
         ms: x.ms,
         boyut: x.boyut,
         dogumMs: x.dogumMs,
+        ozelAd: seansDizin ? ozelBaslikOku(seansDizin) : '', // çatallanmada ada devrolur
         turCanli,
         ajanCalisiyor: calisanAjan > 0,
         calisanAjan,
@@ -619,6 +633,7 @@ function tumOturumlariTara(secenekler) {
         ...bilgi,
         ms: s.mtimeMs,
         dogumMs: s.birthtimeMs || s.ctimeMs || s.mtimeMs,
+        ozelAd: ozelBaslikOku(seansDizin), // çatallanmada ada devrolur
         projeAd,
         projeYol,
         turCanli,
@@ -765,4 +780,4 @@ function icerikAraListe(turler, sorgu) {
   return sonuc;
 }
 
-module.exports = { oturumGecmisi, tumOturumlariTara, cwdOku, tempMi, oturumSayilari, altAjanlariOku, turDevamEdiyor, sonDurumOku, baslikOku, ozelBaslikOku, ozelBaslikYaz, baslikOnbellekTemizle, evrenKayitlariOku, ataKopyalariniAyikla, icerikAra, icerikAraListe, aramaMetni, katla, adEslesir, birFark, okunurMetin, OTURUM_KIMLIK, CANLI_ESIK_MS };
+module.exports = { oturumGecmisi, tumOturumlariTara, cwdOku, tempMi, oturumSayilari, altAjanlariOku, turDevamEdiyor, sonDurumOku, baslikOku, ozelBaslikOku, ozelBaslikYaz, ozelBaslikTasi, baslikOnbellekTemizle, evrenKayitlariOku, ataKopyalariniAyikla, icerikAra, icerikAraListe, aramaMetni, katla, adEslesir, birFark, okunurMetin, OTURUM_KIMLIK, CANLI_ESIK_MS };

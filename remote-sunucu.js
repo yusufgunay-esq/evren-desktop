@@ -683,6 +683,21 @@ class RemoteSunucu {
       }
       // Artımlı okuma: dosya büyüdükçe yalnız yeni satırlar.
       const yenileri = () => {
+        // Çatallanma: --resume oturumu YENİ kimlikli dosyaya taşımış olabilir (kokUuid aynı sohbet).
+        // İzleyici eski dosyada kalırsa telefondan gönderilen mesajlar hiç görünmez; yeni dosyaya geçilir
+        // ve sohbet son 50 girişle baştan kurulur (yeni dosya sohbetin tam kopyasıdır).
+        const guncel = this.oturumBilgisiAl(id) || {};
+        if (guncel.devam && guncel.dizin) {
+          const beklenen = sohbet.dosyaYolu(guncel.dizin, guncel.devam, this.claudeKoku);
+          if (iz.dosya && path.resolve(beklenen) !== path.resolve(iz.dosya) && fs.existsSync(beklenen)) {
+            iz.dosya = beklenen;
+            iz.girisler = iz.okuyucu.sifirla(beklenen);
+            for (const ws of this.sohbetAboneleri.get(id) || []) {
+              this.wsGonder(ws, { tip: 'sohbet', id, girisler: iz.girisler, ilk: true });
+            }
+            return; // sıfırlama tüm girişleri zaten gönderdi
+          }
+        }
         const yeni = iz.okuyucu.oku(iz.dosya);
         if (yeni.length) {
           iz.girisler = iz.girisler.concat(yeni).slice(-500);
