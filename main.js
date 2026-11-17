@@ -680,13 +680,30 @@ function agactaCalismaVar(ebeveyn, kok) {
   return false;
 }
 
+// Sessizlik suresi: yalniz gercek sohbet etkinligi sayilir (girdi, baslangic, jsonl mtime).
+function bostaSessizlikMs({ sonGirdi, baslangic, jsonlMtime, simdi }) {
+  return simdi - Math.max(sonGirdi || 0, baslangic || 0, jsonlMtime || 0);
+}
+
+// Bosta esigi: normalde bostaKapatDk (varsayilan 20 dk; oturum ayni --resume ile acildigindan
+// uyutmak ucuz). Bos RAM bostaBaskiMb'nin (varsayilan 4096) altindaysa esik 5 dk'ya iner.
+// Donus: { sinir (ms), baski } ya da kapaliysa null.
+function bostaEsikMs({ ayar, bosMb }) {
+  const a = ayar || {};
+  const dk = Number(a.bostaKapatDk ?? 20);
+  if (!Number.isFinite(dk) || dk <= 0) return null;
+  const baskiMb = Number(a.bostaBaskiMb ?? 4096);
+  const baski = Number.isFinite(baskiMb) && baskiMb > 0 && Number.isFinite(bosMb) && bosMb < baskiMb;
+  return { sinir: (baski ? Math.min(5, dk) : dk) * 60000, baski };
+}
+
 const bostaKontrol = setInterval(() => {
   const ayar = ayarOku();
-  const dk = Number(ayar.bostaKapatDk ?? 60);
-  if (!Number.isFinite(dk) || dk <= 0) return;
+  const esik = bostaEsikMs({ ayar, bosMb: os.freemem() / 1048576 });
+  if (!esik) return;
   const korunan = korunanUuidleriOku();
   if (!korunan) return;   // dosya bozuk/okunamadi: bu turu atla
-  const sinir = dk * 60000;
+  const sinir = esik.sinir;
   const zorlaDk = Number(ayar.bostaZorlaDk ?? 240);
   const zorlaSinir = Number.isFinite(zorlaDk) && zorlaDk > 0 ? zorlaDk * 60000 : 0;
   const simdi = Date.now();
@@ -694,9 +711,6 @@ const bostaKontrol = setInterval(() => {
   const zorlaKume = new Set();
   for (const [id, bilgi] of oturumBilgi) {
     if (!kabuklar.has(id)) continue;
-    const son = Math.max(bilgi.sonCikti || 0, bilgi.sonGirdi || 0, bilgi.baslangic || 0);
-    const sessiz = simdi - son;
-    if (sessiz < sinir) continue;
     let dosya = null;
     try {
       dosya = bilgi.devam
@@ -704,6 +718,12 @@ const bostaKontrol = setInterval(() => {
         : sohbet.oturumDosyasiBul({ dizin: bilgi.dizin, baslangicMs: bilgi.baslangic });
     } catch {}
     if (!dosya) continue;
+    // Etkinlik = gercek sohbet: kullanici girdisi, oturum baslangici, jsonl yazimi.
+    // sonCikti (her pty baytı) kullanilmaz: TUI bosta da periyodik yeniden cizer.
+    let jsonlMtime = 0;
+    try { jsonlMtime = fs.statSync(dosya).mtimeMs || 0; } catch {}
+    const sessiz = bostaSessizlikMs({ sonGirdi: bilgi.sonGirdi, baslangic: bilgi.baslangic, jsonlMtime, simdi });
+    if (sessiz < sinir) continue;
     const kimlik = String(bilgi.devam || path.basename(dosya, '.jsonl')).toLowerCase();
     if (korunan.has(kimlik)) continue;   // korunan oturum asla kapatilmaz
     let durum = 'bilinmiyor';
@@ -716,13 +736,14 @@ const bostaKontrol = setInterval(() => {
       } catch {}
     }
     if (durum !== 'bitti' && !zorlaAday) continue;  // calisiyor/bilinmiyor: yalniz uzun sessizlikte kapat
-    adaylar.push(id);
+    adaylar.push({ id, sessiz });
     if (zorlaAday) zorlaKume.add(id); // zorla eşiğini geçen oturumda süreç ağacı bahane değil
   }
   if (!adaylar.length) return;
+  adaylar.sort((x, y) => y.sessiz - x.sessiz);   // en uzun bosta kalan once
   torunHaritasi((ebeveyn) => {
     if (!ebeveyn) return;   // agac okunamadiysa temkinli davran
-    for (const id of adaylar) {
+    for (const { id } of adaylar) {
       const k = kabuklar.get(id);
       if (!k || !kabuklar.has(id)) continue;
       if (!zorlaKume.has(id) && agactaCalismaVar(ebeveyn, k.pid)) continue;

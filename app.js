@@ -1063,6 +1063,7 @@ async function terminalOlustur(o) {
     }
   }
   t.onData((veri) => {
+    if (o.uyuyor) { uyandir(o, veri); return; }   // boşta uyutulmuş sekme: yazınca aynı sekmede sürer
     if (o.pid) window.evren.yaz(o.pid, veri);
     // Uzun süre boş bekleyen oturumda ilk mesaj sonradan yazılabilir: ad aramasını yeniden başlat.
     if (!o.ad && !o.orkestrator) sekmeAdIzle(o);
@@ -1715,6 +1716,20 @@ async function cevapDurdur() {
   olay('OTURUM', 'yanıt durduruldu · oturum açık', 'uyari');
   if (o.term) o.term.focus();
 }
+// Uyuyan sekmede ilk yazı: aynı oturumu --resume ile aynı sekmede açar, yazıyı yeni pty hazır olunca bir kez iletir.
+async function uyandir(o, veri) {
+  if (o._uyaniyor) { o._bekleyenGirdi = (o._bekleyenGirdi || '') + veri; return; }
+  o._uyaniyor = true; o._bekleyenGirdi = veri || '';
+  const devam = o.devam;
+  try {
+    await basla(devam, { dizin: o.yol, modelId: o.model, orkestrator: o.orkestrator, kodYazma: o.kodYazma });
+    const yeni = S.oturumlar.find((x) => x.canli && x.devam === devam);
+    if (yeni && yeni.pid && o._bekleyenGirdi) {
+      await bekle(900);   // TUI girdiyi alabilsin
+      window.evren.yaz(yeni.pid, o._bekleyenGirdi);
+    }
+  } finally { o._uyaniyor = false; o._bekleyenGirdi = ''; }
+}
 function oturumBitti(pid, bilgi) {
   const o = S.oturumlar.find((x) => x.pid === pid);
   if (!o || !o.canli) return;
@@ -1722,6 +1737,15 @@ function oturumBitti(pid, bilgi) {
   o.bitti = Date.now();
   o.kod = bilgi && bilgi.kod != null ? bilgi.kod : null;
   clearInterval(o.sayac);
+  if (bilgi && bilgi.bosta && o.devam) {
+    // Boşta uyutuldu: ekran korunur, bir tuşla aynı oturum aynı sekmede sürer.
+    o.uyuyor = true;
+    olay('OTURUM', `${o.proje} boşta uyutuldu`, '');
+    if (o.term) o.term.writeln('\r\n\x1b[38;2;108;119;131m  Boşta uyutuldu · yazınca kaldığı yerden sürer\x1b[0m');
+    sekmeleriCiz();
+    gecmisYukle();
+    return;
+  }
   olay('OTURUM', `${o.proje} kapandı · çıkış ${o.kod ?? '—'} · ${sureMetni(o.bitti - (o.basladi || o.bitti))}`, o.kod ? 'uyari' : '');
   if (o.term) o.term.writeln(`\r\n\x1b[38;2;108;119;131m  [oturum kapandı${o.kod != null ? ' · çıkış ' + o.kod : ''} · Ctrl+Shift+W sekmeyi kapat · Ctrl+Shift+T yeni oturum]\x1b[0m`);
   sekmeleriCiz();
