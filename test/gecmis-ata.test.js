@@ -83,6 +83,14 @@ test('resume çatallanması: ölü ana kopya gizlenir, işler ve alt ajanlar ça
   assert.deepStrictEqual((copuk.evrenIsleri || []).map((i) => i.id), [IS], 'atanın EVREN işi çatala bağlanır');
   assert.deepStrictEqual((copuk.altAjanlar || []).map((a) => a.id), ['agent-' + COPUC], 'atanın alt ajanı çatala devrolur');
   assert.ok(idler.includes(YABANCI), 'ilgisiz oturum etkilenmez');
+
+  // Uçtan kumanda sayıları: uç klasör boş kalır; atalar zinciri verilince ajan ve işler Again sayılır.
+  const bosSayim = gecmis.oturumSayilari(dizin, COPUC, { kayitDizini });
+  assert.strictEqual(bosSayim.altAjanlar.toplam, 0, 'uç klasöründe ajan yok');
+  assert.strictEqual(bosSayim.evrenIsleri.toplam, 0, 'iş atanın üst kimliğine bağlı');
+  const zincir = gecmis.oturumSayilari(dizin, COPUC, { kayitDizini, atalar: [ATA] });
+  assert.strictEqual(zincir.altAjanlar.toplam, 1, 'ata klasöründeki ajan zincirle sayılır');
+  assert.strictEqual(zincir.evrenIsleri.toplam, 1, 'atanın EVREN işi zincirle sayılır');
 });
 
 test('ataKopyalariniAyikla: canlı ana gizlenmez; uç, atadan küçükse ana da kalır', () => {

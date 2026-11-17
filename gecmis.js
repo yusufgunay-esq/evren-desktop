@@ -511,18 +511,25 @@ function oturumGecmisi(dizin, secenekler) {
 
 // Tek oturumun alt ajan / EVREN işi sayıları (uçtan kumanda listesi için hafif yol).
 // Ağır tam liste (oturumGecmisi) okunmaz; yalnız bu oturumun klasörü ve kayıtları taranır.
+// secenekler.atalar: --resume çatallanmasında uç kimliğin klasörü boş kalabilir (ajanlar ata klasöründe
+// yaşar); sayaçlar zincir boyunca tekilleştirilerek toplanır.
 function oturumSayilari(dizin, kimlik, secenekler) {
   const bos = { altAjanlar: { calisan: 0, toplam: 0 }, evrenIsleri: { calisan: 0, toplam: 0 } };
   if (!dizin || !kimlik || !OTURUM_KIMLIK.test(String(kimlik))) return bos;
   const klasorAdi = dizin.replace(/[^a-zA-Z0-9]/g, '-');
   const klasor = path.join(claudeKokDizini(), klasorAdi);
-  const ajanlar = altAjanlariOku(path.join(klasor, String(kimlik)));
+  const zincir = [String(kimlik), ...(Array.isArray(secenekler && secenekler.atalar) ? secenekler.atalar : [])
+    .filter((a) => OTURUM_KIMLIK.test(String(a))).map(String)];
+  const ustKume = new Set(zincir);
+  const ajanlar = new Map();
+  for (const id of zincir) for (const a of altAjanlariOku(path.join(klasor, id))) if (!ajanlar.has(a.id)) ajanlar.set(a.id, a);
   const simdi = Date.now();
   const isler = evrenKayitlariOku(evrenKayitDizini(secenekler))
-    .filter((k) => k.ust === String(kimlik) && evrenKaydiBuProjede(k, klasor, klasorAdi))
+    .filter((k) => ustKume.has(String(k.ust || '')) && evrenKaydiBuProjede(k, klasor, klasorAdi))
     .map((k) => evrenIsiOku(k, klasor, simdi));
+  const ajanDizisi = [...ajanlar.values()];
   return {
-    altAjanlar: { calisan: ajanlar.filter((a) => a.canli).length, toplam: ajanlar.length },
+    altAjanlar: { calisan: ajanDizisi.filter((a) => a.canli).length, toplam: ajanDizisi.length },
     evrenIsleri: { calisan: isler.filter((i) => i.canli).length, toplam: isler.length },
   };
 }

@@ -440,6 +440,7 @@ async function oturumBaslat({ modelId, dizin, ekDizinler, projeAd, cols, rows, d
         let kok = '';
         try { kok = (gecmis.baslikOku(dosya, true) || {}).kokUuid || ''; } catch {}
         if (!kok || kok !== atKok) { elek.add(kimlik); return; } // başka sohbetin kaydı: benimsemeyiz
+        bilgi.atalar = [...(bilgi.atalar || []), bilgi.devam]; // alt ajan klasörü atada kalmış olabilir: sayaçlar zinciri sayar
         bilgi.devam = kimlik;
         clearInterval(ara);
         if (pencere && !pencere.isDestroyed()) pencere.webContents.send('oturum:fork', id, kimlik);
@@ -864,7 +865,10 @@ function remoteSunucuBaslat() {
     },
     oturumBilgisiAl: (id) => oturumBilgi.get(id) || {},
     oturumSayilariAl: (dizin, devam) => {
-      try { return gecmis.oturumSayilari(dizin, devam); } catch { return null; }
+      try {
+        const b = [...oturumBilgi.values()].find((x) => x.devam === devam);
+        return gecmis.oturumSayilari(dizin, devam, { atalar: b && b.atalar });
+      } catch { return null; }
     },
     modellerAl: () => kumandaModelleri(),
     projelerAl: () => kumandaProjeleri(),
