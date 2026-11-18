@@ -3,3 +3,6 @@ _ekran/
 _demo/
 _ekran_*.png
 .claude/
+# Kişisel çalışma klasörleri: iş emirleri, raporlar ve devir notları depoya girmez.
+_claude/
+_rea_*/
