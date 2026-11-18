@@ -243,3 +243,140 @@ test('sohbet izleyicisi çatallanmada yeni kayıt dosyasına geçer', async () =
     sunucu.durdur();
   }
 });
+
+// ---- mesaj iletim sözleşmesi: telefon gönderdiğinin gerçekten vardığını bilmeli ----
+
+test('komut canlı oturumda pty’ye yazılır ve komut_sonuc onayı döner', async () => {
+  const yazilan = [];
+  const sunucu = new RemoteSunucu({
+    veriDizini: geciciDizin(),
+    port: 0,
+    onPtyYaz: (id, veri) => yazilan.push({ id, veri }),
+    oturumDurumuAl: () => 'canli',
+  });
+  await sunucu.baslat();
+  const { port, token } = sunucu.bilgi();
+  const { ws } = await ilkMesaj(`ws://127.0.0.1:${port}/?token=${token}`);
+
+  const sonucBekle = new Promise((coz) => {
+    ws.on('message', (ham) => {
+      const p = JSON.parse(ham.toString('utf8'));
+      if (p.tip === 'komut_sonuc') coz(p);
+    });
+  });
+  ws.send(JSON.stringify({ tip: 'komut', id: 7, komut: 'merhaba', mid: 'm-1' }));
+  const sonuc = await sonucBekle;
+
+  assert.deepStrictEqual(yazilan, [{ id: 7, veri: 'merhaba\r' }]);
+  assert.strictEqual(sonuc.ok, true);
+  assert.strictEqual(sonuc.durum, 'iletildi');
+  assert.strictEqual(sonuc.mid, 'm-1');
+
+  ws.close();
+  sunucu.durdur();
+});
+
+test('canlı komut onKomutYaz ile yazılır: metin ve Enter ayrı gider', async () => {
+  const yazilan = [];
+  const sunucu = new RemoteSunucu({
+    veriDizini: geciciDizin(),
+    port: 0,
+    onPtyYaz: () => {},
+    onKomutYaz: (id, metin) => { yazilan.push({ id, metin }); return true; },
+    oturumDurumuAl: () => 'canli',
+  });
+  await sunucu.baslat();
+  const { port, token } = sunucu.bilgi();
+  const { ws } = await ilkMesaj(`ws://127.0.0.1:${port}/?token=${token}`);
+
+  const sonucBekle = new Promise((coz) => {
+    ws.on('message', (ham) => {
+      const p = JSON.parse(ham.toString('utf8'));
+      if (p.tip === 'komut_sonuc') coz(p);
+    });
+  });
+  ws.send(JSON.stringify({ tip: 'komut', id: 8, komut: 'uzun mesaj', mid: 'm-3' }));
+  const sonuc = await sonucBekle;
+
+  assert.deepStrictEqual(yazilan, [{ id: 8, metin: 'uzun mesaj' }]);
+  assert.strictEqual(sonuc.ok, true);
+  assert.strictEqual(sonuc.durum, 'iletildi');
+
+  ws.close();
+  sunucu.durdur();
+});
+
+test('uyuyan oturuma yazınca uyandırılır, mesaj yeni kimliğe iletilir', async () => {
+  const uyandirilan = [];
+  const sunucu = new RemoteSunucu({
+    veriDizini: geciciDizin(),
+    port: 0,
+    oturumDurumuAl: () => 'uyuyor',
+    onOturumUyandir: async (id, metin) => { uyandirilan.push({ id, metin }); return { id: 12 }; },
+  });
+  await sunucu.baslat();
+  const { port, token } = sunucu.bilgi();
+  const { ws } = await ilkMesaj(`ws://127.0.0.1:${port}/?token=${token}`);
+
+  const beklenen = new Promise((coz) => {
+    const gorulen = {};
+    ws.on('message', (ham) => {
+      const p = JSON.parse(ham.toString('utf8'));
+      if (p.tip === 'komut_sonuc') gorulen.sonuc = p;
+      if (p.tip === 'oturum_uyandi') gorulen.uyandi = p;
+      if (gorulen.sonuc && gorulen.uyandi) coz(gorulen);
+    });
+  });
+  ws.send(JSON.stringify({ tip: 'komut', id: 4, komut: 'devam et', mid: 'm-2' }));
+  const { sonuc, uyandi } = await beklenen;
+
+  assert.deepStrictEqual(uyandirilan, [{ id: 4, metin: 'devam et' }]);
+  assert.strictEqual(sonuc.ok, true);
+  assert.strictEqual(sonuc.durum, 'uyandirildi');
+  assert.strictEqual(sonuc.yeniId, 12);
+  assert.strictEqual(uyandi.eski, 4);
+  assert.strictEqual(uyandi.yeni, 12);
+
+  ws.close();
+  sunucu.durdur();
+});
+
+test('kapanmış oturuma yazınca sessiz yutulmaz, hata onayı döner', async () => {
+  const sunucu = new RemoteSunucu({
+    veriDizini: geciciDizin(),
+    port: 0,
+    oturumDurumuAl: () => 'yok',
+  });
+  await sunucu.baslat();
+  const { port, token } = sunucu.bilgi();
+  const { ws } = await ilkMesaj(`ws://127.0.0.1:${port}/?token=${token}`);
+
+  const sonucBekle = new Promise((coz) => {
+    ws.on('message', (ham) => {
+      const p = JSON.parse(ham.toString('utf8'));
+      if (p.tip === 'komut_sonuc') coz(p);
+    });
+  });
+  ws.send(JSON.stringify({ tip: 'komut', id: 99, komut: 'selam', mid: 'm-3' }));
+  const sonuc = await sonucBekle;
+
+  assert.strictEqual(sonuc.ok, false);
+  assert.ok(sonuc.hata && sonuc.hata.includes('açık değil'), 'neden açıkça söylenmeli');
+  assert.strictEqual(sonuc.mid, 'm-3');
+
+  ws.close();
+  sunucu.durdur();
+});
+
+test('uyuyan oturum listede "uyuyor" durumuyla kalır', () => {
+  const sunucu = new RemoteSunucu({
+    veriDizini: geciciDizin(),
+    port: 0,
+    oturumListesiAl: () => [{ id: 3, baslik: 'uyuyan', durum: 'uyuyor', devam: 'abc' }],
+    oturumBilgisiAl: () => ({}),
+    oturumSayilariAl: () => null,
+  });
+  const liste = sunucu.oturumListesiHazirla();
+  assert.strictEqual(liste[0].durum, 'uyuyor');
+  sunucu.durdur();
+});

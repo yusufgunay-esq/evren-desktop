@@ -748,7 +748,11 @@ const bostaKontrol = setInterval(() => {
       if (!k || !kabuklar.has(id)) continue;
       if (!zorlaKume.has(id) && agactaCalismaVar(ebeveyn, k.pid)) continue;
       kabukKapat(id);
+      // Boşta uyutulan oturum listede kalır: telefondan gelen mesaj onu --resume ile uyandırır.
+      const b = oturumBilgi.get(id);
+      if (b && b.devam) { b.uyuyor = true; b.sonGirdi = Date.now(); }
       if (pencere && !pencere.isDestroyed()) pencere.webContents.send('pty:cikis', id, { kod: 0, bosta: true });
+      if (remoteSunucu) remoteSunucu.oturumListesiGuncelle();
     }
   });
 }, 60000);
@@ -865,18 +869,71 @@ motor.kasaKur(safeStorage); // win32 dışı: Electron safeStorage (macOS Keycha
 function remoteSunucuBaslat() {
   remoteSunucu = new RemoteSunucu({
     veriDizini: app.getPath('userData'), // kumanda.json (token, port, IP) burada kalıcı tutulur
+    // Telefon komutu: metin önce, Enter kısa bir beklemeden sonra AYRI yazılır.
+    // Claude Code TUI, aynı pakette gelen \r karakterini gönderim olarak saymıyor;
+    // kullanıcı metni kutuda görüp "gitmedi" diyordu.
+    onKomutYaz: (id, metin) => {
+      const k = kabuklar.get(id);
+      if (!k) return false;
+      try {
+        k.write(metin);
+      } catch {
+        return false;
+      }
+      setTimeout(() => { try { k.write('\r'); } catch {} }, 250);
+      return true;
+    },
     onPtyYaz: (id, veri) => {
       const k = kabuklar.get(id);
       const b = oturumBilgi.get(id);
       if (b) { b.sonGirdi = Date.now(); hedefDevral(b); } // telefondan yazan da devralır
       if (k) { try { k.write(veri); } catch {} }
     },
+    oturumDurumuAl: (id) => {
+      if (kabuklar.has(id)) return 'canli';
+      const b = oturumBilgi.get(id);
+      return b && b.uyuyor && b.devam ? 'uyuyor' : 'yok';
+    },
+    // Telefon uyuyan oturuma yazdı: aynı sohbeti --resume ile aç, mesajı hazır olunca ilet.
+    onOturumUyandir: async (id, metin) => {
+      const b = oturumBilgi.get(id);
+      if (!b || !b.devam) return { hata: 'Oturum kaydı bulunamadı; sürdürülemez.' };
+      let yeni;
+      try {
+        yeni = await oturumBaslat({
+          modelId: b.modelId,
+          dizin: b.dizin,
+          ekDizinler: b.ekler,
+          orkestrator: b.orkestrator,
+          kodYazma: b.kodYazma,
+          efor: b.efor,
+          devam: b.devam,
+        });
+      } catch (hata) {
+        return { hata: hata.message || 'Oturum uyandırılamadı.' };
+      }
+      b.uyuyor = false; // eski kimlik listeden düşer; yeni oturum kendi kimliğiyle görünür
+      const k = kabuklar.get(yeni.id);
+      if (k && typeof metin === 'string' && metin) {
+        setTimeout(() => {
+          try {
+            k.write(metin);
+            setTimeout(() => { try { k.write('\r'); } catch {} }, 250);
+          } catch {}
+          const nb = oturumBilgi.get(yeni.id);
+          if (nb) nb.sonGirdi = Date.now();
+        }, 1100); // TUI girdiyi alabilsin (masaüstü uyandırmasıyla aynı bekleme)
+      }
+      return { id: yeni.id };
+    },
     onYeniOturum: (secim) => oturumBaslat(secim),
     onOturumKapat: (id) => kabukKapat(id),
     oturumListesiAl: () => {
       const list = [];
-      for (const [id] of kabuklar.entries()) {
-        const b = oturumBilgi.get(id) || {};
+      for (const [id, b] of oturumBilgi.entries()) {
+        const canli = kabuklar.has(id);
+        // Uyuyan (boşta kapatılmış, sürdürülebilir) oturumlar da listede: telefondan yazınca uyanır.
+        if (!canli && !(b.uyuyor && b.devam)) continue;
         list.push({
           id,
           baslik: b.proje ? `${b.proje} · oturum #${id}` : `Oturum #${id}`,
@@ -885,6 +942,7 @@ function remoteSunucuBaslat() {
           dizin: b.dizin || '',
           proje: b.proje || '',
           devam: b.devam || null,
+          durum: canli ? undefined : 'uyuyor',
           orkestrator: !!b.orkestrator,
         });
       }

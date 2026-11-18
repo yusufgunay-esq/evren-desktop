@@ -73,8 +73,15 @@ class RemoteSunucu {
 
     // Masaüstü geri çağrımları (callbacks)
     this.onPtyYaz = opsiyonlar.onPtyYaz || (() => {});
+    // Metni yazıp Enter'ı ayrı gönderir; TUI aynı paketteki CR'yi yutabiliyor.
+    this.onKomutYaz = opsiyonlar.onKomutYaz || null;
     this.onYeniOturum = opsiyonlar.onYeniOturum || (() => {});
     this.onOturumKapat = opsiyonlar.onOturumKapat || (() => {});
+    // Telefonun gönderdiği mesajın gerçekten bir yere vardığını bilmesi için:
+    // 'canli' (pty açık), 'uyuyor' (boşta uyutuldu, sürdürülebilir) ya da 'yok'.
+    this.oturumDurumuAl = opsiyonlar.oturumDurumuAl || (() => 'canli');
+    // Uyuyan oturumu --resume ile açar; { id: yeniOturumId } ya da { hata } döner.
+    this.onOturumUyandir = opsiyonlar.onOturumUyandir || null;
     this.onDurumDegisti = opsiyonlar.onDurumDegisti || (() => {});
     this.oturumListesiAl = opsiyonlar.oturumListesiAl || (() => []);
     this.uygulamaDurumuAl = opsiyonlar.uygulamaDurumuAl || (() => ({}));
@@ -456,12 +463,56 @@ class RemoteSunucu {
         }
         break;
 
-      case 'komut':
-        if (mesaj.id && typeof mesaj.komut === 'string') {
-          this.onayCevabiTemizle(mesaj.id);
-          this.onPtyYaz(mesaj.id, mesaj.komut + '\r');
+      case 'komut': {
+        if (!mesaj.id || typeof mesaj.komut !== 'string') break;
+        this.onayCevabiTemizle(mesaj.id);
+        // mid: istemcinin ürettiği mesaj kimliği; sonuç paketi aynı kimlikle döner.
+        const mid = typeof mesaj.mid === 'string' ? mesaj.mid : '';
+        const durum = this.oturumDurumuAl(mesaj.id);
+        if (durum === 'canli') {
+          try {
+            // Metni yaz, Enter'ı ayrı gönder: Claude Code TUI aynı yazımda gelen \r'yi gönderim saymıyor.
+            const yazildi = typeof this.onKomutYaz === 'function'
+              ? this.onKomutYaz(mesaj.id, mesaj.komut)
+              : (this.onPtyYaz(mesaj.id, mesaj.komut + '\r'), true);
+            if (yazildi === false) throw new Error('pty yok');
+            this.wsGonder(ws, { tip: 'komut_sonuc', id: mesaj.id, mid, ok: true, durum: 'iletildi' });
+          } catch (hata) {
+            this.wsGonder(ws, {
+              tip: 'komut_sonuc', id: mesaj.id, mid, ok: false,
+              hata: 'Mesaj terminale yazılamadı.',
+            });
+          }
+        } else if (durum === 'uyuyor' && typeof this.onOturumUyandir === 'function') {
+          // Boşta uyutulmuş oturum: mesajı kaybetme, oturumu sürdür ve yazıyı ilet.
+          Promise.resolve(this.onOturumUyandir(mesaj.id, mesaj.komut)).then((sonuc) => {
+            if (sonuc && sonuc.id) {
+              this.wsGonder(ws, {
+                tip: 'komut_sonuc', id: mesaj.id, mid, ok: true,
+                durum: 'uyandirildi', yeniId: sonuc.id,
+              });
+              // Telefonun açık detay ekranı yeni kimliği izlesin.
+              this.tumuneYayinla({ tip: 'oturum_uyandi', eski: mesaj.id, yeni: sonuc.id });
+            } else {
+              this.wsGonder(ws, {
+                tip: 'komut_sonuc', id: mesaj.id, mid, ok: false,
+                hata: (sonuc && sonuc.hata) || 'Oturum uyandırılamadı.',
+              });
+            }
+          }).catch((hata) => {
+            this.wsGonder(ws, {
+              tip: 'komut_sonuc', id: mesaj.id, mid, ok: false,
+              hata: (hata && hata.message) || 'Oturum uyandırılamadı.',
+            });
+          });
+        } else {
+          this.wsGonder(ws, {
+            tip: 'komut_sonuc', id: mesaj.id, mid, ok: false,
+            hata: 'Oturum masaüstünde açık değil. Yeni oturum açıp yeniden dene.',
+          });
         }
         break;
+      }
 
       case 'durdur':
         if (mesaj.id) {
@@ -583,7 +634,8 @@ class RemoteSunucu {
         modelAd: bilgi.modelAd || '',
         dizin: bilgi.dizin || '',
         proje: bilgi.proje || '',
-        durum: this.durumHesapla(o.id),
+        // Uyuyan oturum da listede kalır: telefondan mesaj yazınca uyanır.
+        durum: o.durum === 'uyuyor' ? 'uyuyor' : this.durumHesapla(o.id),
         sonSatir: this.sonSatirlar.get(o.id) || '',
         onay: onay ? { metin: onay.metin || onay.soru || '', secenekler: onay.secenekler || [] } : null,
         devam: bilgi.devam || null,

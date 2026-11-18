@@ -48,7 +48,7 @@ bağlanan istemci bildirimi tekrar görür.
 }
 ```
 
-- `durum`: `calisiyor` (son 4 sn içinde çıktı) · `onay_bekliyor` · `bosta` · `kapandi`.
+- `durum`: `calisiyor` (son 4 sn içinde çıktı) · `onay_bekliyor` · `bosta` · `uyuyor` (boşta uyutuldu; mesaj yazınca sürdürülür) · `kapandi`.
 - `onay`: yoksa `null`; `metin` onay metni, `secenekler` düğme etiketleri.
 - `devam`: oturumun Claude kayıt kimliği (uuid); yeni oturum sürdürmek için kullanılır.
 - `orkestrator`: oturum masaüstünde şef (orkestratör) rolüyle açıldıysa `true`; istemci yalnız bu oturumları "ŞEF" etiketiyle ayırır.
@@ -66,6 +66,31 @@ bağlanan istemci bildirimi tekrar görür.
 | `hata` | `mesaj` | genel hata |
 | `pong` | `zaman` | ping yanıtı |
 | `sohbet` | `id`, `girisler`, `ilk?` | gerçek sohbet girişleri (aşağıda) |
+| `komut_sonuc` | `id`, `mid`, `ok`, `durum`, `yeniId?`, `hata?` | telefondan gönderilen mesajın sonucu (aşağıda) |
+| `oturum_uyandi` | `eski`, `yeni` | uyuyan oturum sürdürüldü; açık detay yeni kimliği izler |
+
+### `komut_sonuc` — mesaj gerçekten iletildi mi?
+
+Telefon her `komut` mesajına kendi ürettiği `mid` kimliğini koyar; sunucu aynı
+kimlikle sonucu döner. Böylece istemci mesajın sessizce kaybolmasını engeller ve
+durumu sohbette gösterir.
+
+```json
+{ "tip": "komut_sonuc", "id": 7, "mid": "m-3f2a", "ok": true, "durum": "iletildi" }
+```
+
+- `durum: "iletildi"` — oturum açıktı, yazı PTY'ye gitti.
+- `durum: "uyandirildi"` + `yeniId` — oturum boşta uyutulmuştu; `--resume` ile
+  sürdürüldü, mesaj yeni oturuma iletildi. Ayrıca `oturum_uyandi` paketi yayınlanır.
+- `ok: false` + `hata` — oturum masaüstünde yok/kapanmış; istemci "gönderilemedi"
+  durumunu ve yeniden deneme seçeneğini gösterir.
+- İstemci `mid` göndermezse alan boş döner; eski masaüstü hiç `komut_sonuc` göndermez.
+
+`iletildi` yalnız metnin terminale yazıldığını söyler. Claude Code TUI, metinle
+aynı yazımda gelen `\r` karakterini gönderim saymayabiliyor (metin kutuda
+kalır). Masaüstü bu yüzden metni yazar, kısa bir beklemeden sonra Enter'ı ayrı
+gönderir; istemci de emniyet için onaydan sonra ayrı bir `yaz`
+(`veri: "\r"`) yollar. Boş kutuda ikinci Enter etkisizdir.
 
 ### `sohbet`
 
@@ -120,7 +145,7 @@ gelir; istemci bunu seçenek düğmeleri olarak çizer. Araç dönüş kayıtlar
 | `ping` | — | bağlantı canlılığı |
 | `yaz` | `id`, `veri` | ham terminal girdisi (`\r`, ESC vb. dahil) |
 | `onay` | `id`, `secim` | `e`/`y` → `y\r`, `h`/`n` → `n\r`, `1`/`2`, diğer → `\r` |
-| `komut` | `id`, `komut` | komut + `\r` |
+| `komut` | `id`, `komut`, `mid?` | komut + `\r`; `mid` ile sonuç `komut_sonuc` olarak döner |
 | `durdur` | `id` | Ctrl+C |
 | `oturum_sec` | `id` | tamponu iste |
 | `oturum_kapat` | `id` | PTY'yi sonlandır |
