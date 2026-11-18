@@ -41,6 +41,26 @@ test('son yanıtın token toplamını, modelini ve tur sayacını verir', () => 
   assert.strictEqual(sonuc.yanit, 2, 'yalnızca usage taşıyan asistan kayıtları sayılır');
 });
 
+test('sentetik tur gerçek modeli ve kullanımı gölgelemez, sayaca eklenmez', () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'evren-baglam-'));
+  const f = path.join(d, 'x.jsonl');
+  // CLI kesilen tur için modeli "<synthetic>" olan sıfır kullanımlı kayıt yazar.
+  const sentetik = {
+    type: 'assistant',
+    message: { model: '<synthetic>', usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } },
+  };
+  fs.writeFileSync(f, [
+    asistan({ input: 20, okuma: 2000, cikti: 70 }, 'zai/glm-5.3-fp8'),
+    sentetik,
+  ].map(JSON.stringify).join('\n') + '\n');
+
+  const iz = new sohbet.BaglamIzleyici();
+  const sonuc = iz.oku(f);
+  assert.strictEqual(sonuc.model, 'zai/glm-5.3-fp8', 'gerçek turun modeli görünür');
+  assert.strictEqual(sonuc.token, 2090, 'sentetik sıfır kullanım bağlamı sıfırlamaz');
+  assert.strictEqual(sonuc.yanit, 1, 'sentetik tur sohbet sayacına eklenmez');
+});
+
 test('artımlı okur: eklenen kayıt yeniden taranmadan sayaca eklenir', () => {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'evren-baglam-'));
   const f = path.join(d, 'x.jsonl');

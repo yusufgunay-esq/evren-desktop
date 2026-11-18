@@ -1214,14 +1214,14 @@ ipcMain.handle('oturum-baglam', (_e, id) => {
     if (!iz) { iz = new sohbet.BaglamIzleyici(); baglamIzleyiciler.set(id, iz); }
     try { d = iz.oku(dosya); } catch { d = null; }
   }
-  // Kayıttaki model kimliği sağlayıcı önekli olabilir (deepseek/deepseek-v4.1-flash);
-  // katalogdaki kimlikle eşleştirilir ki pencere (bağlam sınırı) doğru bulunsun.
-  const hamModel = (d && d.model) || b.modelId;
+  // Kayıttaki model kimliği sağlayıcı önekli ve sürüm eklidir (zai/glm-5.3-fp8);
+  // katalog kimliğine çevrilir ki pencere (bağlam sınırı) doğru bulunsun.
   const liste = modelOnbellek || motor.MODELLER;
-  const m = liste.find((x) => x.id === hamModel)
-    || liste.find((x) => hamModel.endsWith('/' + x.id) || x.id.endsWith('/' + hamModel))
-    || liste.find((x) => x.id === b.modelId) || null;
-  const modelId = (m && m.id) || hamModel;
+  const kayitModel = motor.modelKatalogId(d && d.model, liste);
+  // Kayıttaki ad katalogda yoksa ham ad gösterilir: başlatma modelini gerçek modelin
+  // yerine koymak yanıltıcı olur (kullanıcı /model ile değiştirdiyse kayıt doğrudur).
+  const modelId = kayitModel || motor.modelKatalogId(b.modelId, liste) || (d && d.model) || b.modelId;
+  const m = (modelId && liste.find((x) => x.id === modelId)) || null;
   return {
     token: d ? d.token : null,
     cikti: d ? d.cikti : null,

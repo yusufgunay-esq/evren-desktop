@@ -69,6 +69,21 @@ function modelleriCoz(veri) {
   }));
 }
 
+// Sohbet kaydındaki model kimliğini katalog kimliğine çevirir. Kayıt, vekilin döndürdüğü
+// adı yazar: sağlayıcı öneki ve donanım sürümü eki taşır ("zai/glm-5.3-fp8",
+// "deepseek/deepseek-v4.1-flash"). düz ("glm-5.3") veya kısa ("glm-5.3-fp8") hâliyle eşleştirilir.
+function modelKatalogId(ham, liste) {
+  if (!ham || !Array.isArray(liste) || !liste.length) return null;
+  const s = String(ham).toLowerCase().trim();
+  const kisa = s.includes('/') ? s.slice(s.lastIndexOf('/') + 1) : s;
+  if (!kisa || kisa === '<synthetic>') return null;
+  const id = (x) => String((x && x.id) || '').toLowerCase();
+  const bul = (es) => { const m = liste.find((x) => id(x) && es(id(x))); return (m && m.id) || null; };
+  return bul((i) => i === s || i === kisa)
+    || bul((i) => kisa.startsWith(i + '-') || kisa.startsWith(i + '.') || i.startsWith(kisa + '-'))
+    || bul((i) => kisa.includes(i));
+}
+
 // Güvenli auto-compact penceresi: API "istem + çıktı tavanı ≤ bağlam penceresi" şartını
 // arar (aşarsa 400 döner), Claude Code ise pencereyi tam dolduracak kadar büyümeye izin
 // verip geç sıkıştırıyor. Çıktı tavanı + pay kadar erken tetiklenen pencere taşmayı
@@ -180,4 +195,4 @@ async function anahtarYaz(anahtar) {
   return ANAHTAR_DOSYASI;
 }
 
-module.exports = { MODELLER, modelleriCoz, autocompactPenceresi, EFORLAR, EFOR_VARSAYILAN, eforCoz, baglamMetni, gitDal, ayarOku, ayarYaz, anahtarOku, anahtarYaz, kasaKur, kasaSifrele, kasaCoz, VERI_DIZINI };
+module.exports = { MODELLER, modelleriCoz, modelKatalogId, autocompactPenceresi, EFORLAR, EFOR_VARSAYILAN, eforCoz, baglamMetni, gitDal, ayarOku, ayarYaz, anahtarOku, anahtarYaz, kasaKur, kasaSifrele, kasaCoz, VERI_DIZINI };

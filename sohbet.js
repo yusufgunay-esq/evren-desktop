@@ -359,6 +359,9 @@ function oturumDurumu(dosya) {
 // Son asistan yanıtının usage alanı gerçek bağlamı verir: input + cache_creation + cache_read + output.
 // Dosyanın yalnız sonu taranır; sayaç artımlıdır, büyük kayıtlar (60 MB+) baştan okunmaz.
 const KULLANIM_IMZA = '"cache_read_input_tokens"';
+// CLI, kesilen/boş turlar için modeli "<synthetic>" olan sıfır kullanımlı kayıt yazar.
+// Bunlar gerçek bir model ya da token taşımaz: model göstergesini ve sohbet sayacını şişirmemeli.
+const SENTETIK_IMZA = '"model":"<synthetic>"';
 
 function sonKullanim(dosya) {
   let boyut, fd;
@@ -375,6 +378,7 @@ function sonKullanim(dosya) {
       let j; try { j = JSON.parse(s); } catch { continue; }
       const u = j && j.type === 'assistant' && j.message && j.message.usage;
       if (!u || typeof u !== 'object') continue;
+      if (j.message.model === '<synthetic>') continue; // sentetik tur: gerçek model/kullanım yok
       const token = (Number(u.input_tokens) || 0) + (Number(u.cache_creation_input_tokens) || 0) +
         (Number(u.cache_read_input_tokens) || 0) + (Number(u.output_tokens) || 0);
       return {
@@ -391,12 +395,16 @@ class BaglamIzleyici {
   constructor() { this.dosya = null; this.konum = 0; this.yanit = 0; this.kalan = ''; this.son = null; }
 
   // Yeni baytlarda asistan yanıtı imzasını sayar (JSON ayrıştırmadan, 1:1 latin1 bayt eşlemesi).
+  // Sentetik turlar da usage bloğu taşır; imzaları çıkarılarak yalnız gerçek turlar sayılır.
   _say(parca) {
     const metin = this.kalan + parca.toString('latin1');
     let i = 0, n = 0;
     while ((i = metin.indexOf(KULLANIM_IMZA, i)) >= 0) { n++; i += KULLANIM_IMZA.length; }
-    this.kalan = metin.slice(-(KULLANIM_IMZA.length - 1)); // blok sınırında bölünen imza
-    return n;
+    let j = 0, s = 0;
+    while ((j = metin.indexOf(SENTETIK_IMZA, j)) >= 0) { s++; j += SENTETIK_IMZA.length; }
+    const enUzun = Math.max(KULLANIM_IMZA.length, SENTETIK_IMZA.length);
+    this.kalan = metin.slice(-(enUzun - 1)); // blok sınırında bölünen imza
+    return Math.max(0, n - s);
   }
 
   oku(dosya) {

@@ -1342,13 +1342,18 @@ function fsDegis(d) {
   }
   sigdir();
 }
-// Model adı / etiketinden EVREN model kimliğini çözer
+// Model adı / etiketinden EVREN model kimliğini çözer. Terminal de kayıt da sağlayıcı
+// önekli ad yazabilir (zai/glm-5.3-fp8): öneki atılıp katalog kimliğiyle eşleştirilir.
 function modelKimligiCoz(metin) {
   if (!metin) return null;
   const s = String(metin).toLowerCase().trim();
+  const kisa = s.includes('/') ? s.slice(s.lastIndexOf('/') + 1) : s;
   for (const m of S.modeller || []) {
-    if (m.id && s === m.id.toLowerCase()) return m.id;
-    if (m.ad && (s === m.ad.toLowerCase() || s.includes(m.ad.toLowerCase()))) return m.id;
+    const id = (m.id || '').toLowerCase();
+    if (!id) continue;
+    if (s === id || kisa === id) return m.id;
+    if (kisa.startsWith(id + '-') || kisa.startsWith(id + '.')) return m.id;
+    if (m.ad && (s === m.ad.toLowerCase() || kisa === m.ad.toLowerCase() || s.includes(m.ad.toLowerCase()))) return m.id;
   }
   if (s.includes('qwen') && (s.includes('3.8') || s.includes('flash') || s.includes('next'))) return 'qwen3.8-flash-next';
   if (s.includes('qwen') && s.includes('vl')) return 'qwen3-vl-30b';
@@ -1359,6 +1364,22 @@ function modelKimligiCoz(metin) {
   if (s.includes('sonnet')) return 'claude-sonnet-5-5';
   if (s.includes('haiku')) return 'claude-haiku-5-5';
   return null;
+}
+// Terminalden okunan model seçimi: kullanıcı /model ile modeli değiştirdiği anda alt çubuk
+// bunu göstermeli. Sohbet kaydı ancak YENİ bir asistan turu yazıldığında gerçek modeli
+// kanıtlar; o ana kadar kayıttaki (eski tura ait) model taze seçimin üzerine yazılmaz.
+// modelKayitYanit = seçimin doğrulandığı tur sayacı. Çözülen model yoksa false döner.
+function modelSecimiYaz(o, cozulen) {
+  if (!cozulen) return false;
+  if (cozulen !== o.model) {
+    o.model = cozulen;
+    // Taban henüz bilinmiyorsa damga vurulmaz: açılışta alınacak taban uygulanır.
+    if (o.sonYanit != null) o.modelKayitYanit = o.sonYanit;
+    if (o.pid && window.evren && window.evren.modelGuncelle) window.evren.modelGuncelle(o.pid, cozulen);
+    sekmeleriCiz();
+    durumYaz();
+  }
+  return true;
 }
 // Oturumun terminal tamponunu geriye doğru tarayarak gerçekte çalışan modeli tespit eder
 function oturumModeliTara(o) {
@@ -1374,31 +1395,11 @@ function oturumModeliTara(o) {
     // 1. "Set model to `?Model Adı`?"
     const mSet = str.match(/Set model to [`'\"]?([^`'\"\r\n()]+)/i);
     if (mSet) {
-      const cozulen = modelKimligiCoz(mSet[1]);
-      if (cozulen) {
-        if (cozulen !== o.model) {
-          o.model = cozulen;
-          if (o.pid && window.evren && window.evren.modelGuncelle) window.evren.modelGuncelle(o.pid, cozulen);
-          sekmeleriCiz();
-          durumYaz();
-        }
-        return;
-      }
+      if (modelSecimiYaz(o, modelKimligiCoz(mSet[1]))) return;
     }
     // 2. "Model Adı (hizli...) • API/Subscription Usage Billing"
     const mHeader = str.match(/(?:^|\r|\n)\s*([^\r\n•·]+?)\s*[•·]\s*(?:API|Subscription)\s*Usage/i);
-    if (mHeader) {
-      const cozulen = modelKimligiCoz(mHeader[1]);
-      if (cozulen) {
-        if (cozulen !== o.model) {
-          o.model = cozulen;
-          if (o.pid && window.evren && window.evren.modelGuncelle) window.evren.modelGuncelle(o.pid, cozulen);
-          sekmeleriCiz();
-          durumYaz();
-        }
-        return;
-      }
-    }
+    if (mHeader && modelSecimiYaz(o, modelKimligiCoz(mHeader[1]))) return;
   }
 }
 function oturumModeliTaraGecikmeli(o) {
@@ -1463,7 +1464,20 @@ async function baglamYaz() {
   let d = null;
   try { d = await window.evren.oturumBaglam(o.pid); } catch {}
   if (ister !== baglamIster || aktifOturum() !== o) return;
-  const modelId = (d && d.model) || o.model || '—';
+  // Kayıt modeli yalnız YENİ bir asistan turu yazıldıktan sonra güvenilir; aksi hâlde
+  // /model ile taze seçilen modeli, önceki turun modeliyle ezerdi. modelKayitYanit,
+  // oturum açılışındaki tur sayacıdır (taban); üzerine yeni tur eklenince kayıt kazanır.
+  const yanit = (d && d.yanit) || 0;
+  const kayitModel = d && d.model ? modelKimligiCoz(d.model) || d.model : null;
+  const kayitTaze = kayitModel && (o.modelKayitYanit == null || yanit > o.modelKayitYanit);
+  if (kayitTaze) o.modelKayitYanit = yanit;
+  o.sonYanit = yanit;
+  if (kayitTaze && kayitModel !== o.model) {
+    o.model = kayitModel;
+    if (o.pid && window.evren && window.evren.modelGuncelle) window.evren.modelGuncelle(o.pid, kayitModel);
+    sekmeleriCiz();
+  }
+  const modelId = o.model || kayitModel || '—';
   const katalog = S.modeller.find((x) => x.id === modelId) || S.modeller.find((x) => modelId.endsWith('/' + x.id)) || {};
   const pn = (d && d.pencere) || katalog.baglamSayisi || 0;
   $('sModel').textContent = modelId;
@@ -1599,6 +1613,14 @@ async function basla(devamId, secenekler) {
       return;
     }
     o.pid = sonuc.id;
+    // Model tabanı: açılıştaki tur sayacı. Kayıttaki model ancak bundan SONRAKİ yeni bir
+    // turda geçerli sayılır; böylece --resume'da önceki sohbetin modeli taze seçimi ezmez.
+    window.evren.oturumBaglam(o.pid).then((d) => {
+      if (o.modelKayitYanit == null) {
+        o.modelKayitYanit = (d && d.yanit) || 0;
+        o.sonYanit = o.modelKayitYanit;
+      }
+    }).catch(() => {});
     // pty bu boyutla doğdu; ilk sigdir aynı boyutu tekrar göndermesin.
     o.sonBoyut = { cols: o.term.cols, rows: o.term.rows };
     if (sonuc.dizin) o.yol = sonuc.dizin;
