@@ -19,6 +19,11 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/yusufgunay-esq/evren-desktop/releases/latest"><b>Windows için indir</b></a>
+  <sub> · yükleyici kod imzalı değildir; SmartScreen "Bilinmeyen yayımcı" diyebilir</sub>
+</p>
+
+<p align="center">
   <img src="docs/ekran-ana.png" alt="EVREN Desktop ana ekranı: solda oturum geçmişi, ortada yeni oturum kartı ve model–proje akış grafiği, sağda günlük token kotası ve proje özeti" width="920" />
 </p>
 
