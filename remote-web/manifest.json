@@ -1,6 +1,6 @@
 {
-  "name": "EVREN Kumanda",
-  "short_name": "Kumanda",
+  "name": "OpCon",
+  "short_name": "OpCon",
   "description": "EVREN Desktop Uzaktan Operasyon Konsolu",
   "start_url": "./",
   "display": "standalone",

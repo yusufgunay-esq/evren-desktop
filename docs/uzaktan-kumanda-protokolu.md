@@ -1,6 +1,6 @@
 # Uzaktan Kumanda Protokolü
 
-`remote-sunucu.js` telefonla (EVREN Kumanda) WebSocket üzerinden konuşur. Tüm
+`remote-sunucu.js` telefonla (OpCon) WebSocket üzerinden konuşur. Tüm
 mesajlar UTF-8 JSON'dur; her pakette `tip` alanı vardır. Terminal çıktısı
 standart olarak `\r\n` satır sonuyla gönderilir (ConPTY). Bilinmeyen alanlar ve
 tipler yok sayılır; yeni alanlar isteğe bağlıdır (eski istemciler çalışmaya devam eder).

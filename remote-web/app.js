@@ -1,6 +1,6 @@
 // أَعُوذُ بِاللَّهِ مِنَ الشَّيْطَانِ الرَّجِيمِ
 // بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
-/* EVREN Kumanda — İstemci Mantığı */
+/* OpCon — İstemci Mantığı */
 (() => {
   let ws = null;
   let baglantiZamanlayici = null;
