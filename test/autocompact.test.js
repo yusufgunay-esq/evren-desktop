@@ -26,3 +26,29 @@ test('yedek model listesindeki her pencere güvenli auto-compact üretir', () =>
     assert.ok(p < m.baglamSayisi, `${m.id}: pencere bağlamdan küçük olmalı`);
   }
 });
+
+test('sikistirmaEsigi: ayardaki model eşiği güvenli pencereyi aşmıyorsa kazanır, env verilmez', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { sikistirmaEsigi, sikistirmaEnvDegeri, kullaniciEsigi } = require('../motor');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'esik-'));
+  const yol = path.join(dir, 'settings.json');
+  try {
+    fs.writeFileSync(yol, JSON.stringify({ modelSettings: {
+      'deepseek-v4.1-flash': { autoCompactWindow: 600000 },
+      'glm-5.3': { autoCompactWindow: 800000 },   // bayat: güvenli pencereden büyük
+      'qwen': { autoCompactWindow: 5000 },         // geçersiz: 100K altı
+    } }));
+    // Ayar geçerli: eşik ayardan, env yok (Claude Code ayarı okur, /model değişince de doğru kalır).
+    assert.strictEqual(sikistirmaEsigi('deepseek-v4.1-flash', 1048576, 65536, yol), 600000);
+    assert.strictEqual(sikistirmaEnvDegeri('deepseek-v4.1-flash', 1048576, 65536, yol), null);
+    // Ayar güvenli pencereden büyük: güvenli pencere hem eşik hem env (taşmayı önler).
+    assert.strictEqual(sikistirmaEsigi('glm-5.3', 524288, 65536, yol), 442368);
+    assert.strictEqual(sikistirmaEnvDegeri('glm-5.3', 524288, 65536, yol), 442368);
+    // Ayar yok ya da geçersiz: eski davranış.
+    assert.strictEqual(kullaniciEsigi('qwen', yol), null);
+    assert.strictEqual(sikistirmaEnvDegeri('yok', 262144, null, yol), 180224);
+    assert.strictEqual(sikistirmaEnvDegeri('yok', 262144, null, path.join(dir, 'olmayan.json')), 180224);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

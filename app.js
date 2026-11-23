@@ -1479,7 +1479,10 @@ async function baglamYaz() {
   }
   const modelId = o.model || kayitModel || '—';
   const katalog = S.modeller.find((x) => x.id === modelId) || S.modeller.find((x) => modelId.endsWith('/' + x.id)) || {};
-  const pn = (d && d.pencere) || katalog.baglamSayisi || 0;
+  const pencere = (d && d.pencere) || katalog.baglamSayisi || 0;
+  // Payda sıkıştırma eşiğidir (oturum o noktada kendini özetler); model penceresi ipucunda.
+  // Pencereyi payda yapmak "1M" gibi, hiç ulaşılmayacak bir sınırı gösteriyordu.
+  const pn = (d && d.esik) || pencere;
   $('sModel').textContent = modelId;
   const token = d ? d.token : null;
   if (token != null) {
@@ -1488,7 +1491,7 @@ async function baglamYaz() {
       ? `${tokenFormatla(token)} / ${kisaBaglam(pn)} · %${yuzde < 10 ? yuzde.toFixed(1) : Math.round(yuzde)}`
       : tokenFormatla(token);
     $('sBaglamSeg').title = pn
-      ? `Son yanıt: ${token.toLocaleString('tr-TR')} token · pencere ${pn.toLocaleString('tr-TR')} · %${yuzde.toFixed(1)}`
+      ? `Son yanıt: ${token.toLocaleString('tr-TR')} token · ${d && d.esik ? `${d.esik.toLocaleString('tr-TR')} tokende kendini sıkıştırır · model penceresi ${pencere.toLocaleString('tr-TR')}` : `pencere ${pn.toLocaleString('tr-TR')}`} · %${yuzde.toFixed(1)}`
       : `Son yanıt: ${token.toLocaleString('tr-TR')} token · pencere bilinmiyor`;
     $('sBaglamSeg').classList.toggle('dolu', pn ? token / pn >= 0.85 : false);
   } else {

@@ -100,6 +100,35 @@ function autocompactPenceresi(baglamSayisi, cikti) {
   return tavan >= AUTOCOMPACT_ALT_SINIR ? tavan : null;
 }
 
+// Kullanıcının Claude Code ayarındaki model başı sıkıştırma eşiği
+// (~/.claude/settings.json → modelSettings[model].autoCompactWindow). Bu değer modele göre
+// seçilmiş "tatlı eşik"tir (ör. büyük bağlamda yavaşlayan model için daha erken sıkıştırma);
+// güvenli pencereyi aşmıyorsa o kazanır. Env yalnız ayarda değer yoksa verilir, çünkü env
+// hem ayardaki eşiği ezer hem de /model ile model değişince eski modelin değerinde kalır.
+function claudeAyarYolu() {
+  return path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'settings.json');
+}
+function kullaniciEsigi(modelId, yol = claudeAyarYolu()) {
+  if (!modelId) return null;
+  try {
+    const ms = JSON.parse(fs.readFileSync(yol, 'utf8')).modelSettings || {};
+    const v = ms[modelId] && ms[modelId].autoCompactWindow;
+    return Number.isFinite(v) && v >= AUTOCOMPACT_ALT_SINIR ? v : null;
+  } catch { return null; }
+}
+// Oturumun gerçek sıkıştırma eşiği: ayardaki eşik güvenli pencereyi aşmıyorsa o, yoksa güvenli pencere.
+function sikistirmaEsigi(modelId, baglamSayisi, cikti, yol) {
+  const guvenli = autocompactPenceresi(baglamSayisi, cikti);
+  const kullanici = kullaniciEsigi(modelId, yol);
+  if (kullanici != null && (guvenli == null || kullanici <= guvenli)) return kullanici;
+  return guvenli;
+}
+// Oturum açılırken env'e yazılacak değer: ayardaki eşik geçerliyse null (Claude Code ayarı okur).
+function sikistirmaEnvDegeri(modelId, baglamSayisi, cikti, yol) {
+  const esik = sikistirmaEsigi(modelId, baglamSayisi, cikti, yol);
+  return esik != null && esik === kullaniciEsigi(modelId, yol) ? null : esik;
+}
+
 // ---- Git dalı (git çalıştırmadan, .git/HEAD okunarak; worktree destekli) ----
 function gitDal(dizin) {
   try {
@@ -195,4 +224,4 @@ async function anahtarYaz(anahtar) {
   return ANAHTAR_DOSYASI;
 }
 
-module.exports = { MODELLER, modelleriCoz, modelKatalogId, autocompactPenceresi, EFORLAR, EFOR_VARSAYILAN, eforCoz, baglamMetni, gitDal, ayarOku, ayarYaz, anahtarOku, anahtarYaz, kasaKur, kasaSifrele, kasaCoz, VERI_DIZINI };
+module.exports = { MODELLER, modelleriCoz, modelKatalogId, autocompactPenceresi, kullaniciEsigi, sikistirmaEsigi, sikistirmaEnvDegeri,EFORLAR, EFOR_VARSAYILAN, eforCoz, baglamMetni, gitDal, ayarOku, ayarYaz, anahtarOku, anahtarYaz, kasaKur, kasaSifrele, kasaCoz, VERI_DIZINI };

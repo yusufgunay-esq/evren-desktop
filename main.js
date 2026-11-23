@@ -351,7 +351,8 @@ async function oturumBaslat({ modelId, dizin, ekDizinler, projeAd, cols, rows, d
   if (model.cikti) env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(model.cikti);
   // Claude Code kendi eşiğinde (~pencerenin %90'ı) sıkıştırıyor; bu, çıktı tavanı payı
   // bırakmadığı için "istem + tavan > pencere" 400'üne düşüyordu. Pencereyi erkene al.
-  const otoPencere = motor.autocompactPenceresi(model.baglamSayisi, model.cikti);
+  // Ayarda (settings.json modelSettings) bu model için eşik varsa env verilmez: o eşik kazanır.
+  const otoPencere = motor.sikistirmaEnvDegeri(model.id, model.baglamSayisi, model.cikti);
   if (otoPencere) env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(otoPencere);
 
 
@@ -1287,6 +1288,8 @@ ipcMain.handle('oturum-baglam', (_e, id) => {
     model: modelId,
     ad: (m && m.ad) || b.modelAd || modelId,
     pencere: (m && m.baglamSayisi) || null,
+    // Sıkıştırmanın tetikleneceği eşik: alt çubuk doluluğu buna göre gösterir.
+    esik: m ? motor.sikistirmaEsigi(m.id, m.baglamSayisi, m.cikti) : null,
     kayitVar: !!d,
   };
 });
