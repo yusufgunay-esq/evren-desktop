@@ -22,6 +22,11 @@ contextBridge.exposeInMainWorld('evren', {
   sohbetGecmisi: (id) => ipcRenderer.invoke('sohbet-gecmisi', id),
   oturumBaglam: (id) => ipcRenderer.invoke('oturum-baglam', id), // gerçek bağlam kullanımı + tur sayacı
   yaz: (id, veri) => ipcRenderer.invoke('yaz', id, veri),
+  komutYaz: (id, metin) => ipcRenderer.invoke('komut-yaz', id, metin), // metin + ayrı Enter (birleşik yazım)
+  sohbetAbone: (param) => ipcRenderer.invoke('sohbet-abone', param), // push sohbet akışı (tek etkin abonelik)
+  sohbetBirak: () => ipcRenderer.invoke('sohbet-birak'),
+  sohbetYeniDinle: (f) => ipcRenderer.on('sohbet:yeni', (_e, veri) => f(veri)), // artımlı sohbet deltaları
+  uyandiDinle: (f) => ipcRenderer.on('oturum:uyandi', (_e, veri) => f(veri)), // telefondan uyanan oturum
   boyut: (id, olcu) => ipcRenderer.invoke('boyut', id, olcu),
   kapatOturum: (id) => ipcRenderer.invoke('kapat-oturum', id),
   oturumKimlik: (id) => ipcRenderer.invoke('oturum-kimlik', id), // şef oturumunun jsonl kimliği

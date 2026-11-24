@@ -101,4 +101,23 @@ function baslikDuzelt(ham) {
   return s;
 }
 
-module.exports = { ansiTemizle, hedefDurakladi, hedefDevamIzni, hedefDevamKur, boslukTopla, baslikAnlamsiz, baslikDuzelt };
+// Gerçek kullanıcı metni mi? Saf kontrol karakterleri (Ctrl+L \x0c, Ctrl+C \x03, Esc) ya da
+// CSI/ok tuşu dizileri oturumu "kullanıcı devraldı" saymaz: bunlar TUI'ye giden tuşlardır.
+function gercekMetinGirdisiMi(veri) {
+  if (typeof veri !== 'string' || !veri) return false;
+  if (/^[\x00-\x1f\x7f]+$/.test(veri)) return false;
+  if (/^\x1b(?:\[[0-9;?]*[ -/]*[@-~]|O[A-Za-z])$/.test(veri)) return false;
+  return true;
+}
+
+// Otomatik "devam" bastırılmalı mı? Açılıştan sonraki 5 sn ve her yeniden boyutlandırmadan
+// sonraki 2 sn içinde TUI eski transkripti yeniden basar; "Goal paused" metni replay'dir,
+// gerçek duraklama değildir.
+function hedefBastirilmisMi(bilgi, simdi, { baslangicPayMs = 5000, boyutPayMs = 2000 } = {}) {
+  if (!bilgi) return true;
+  if (bilgi.baslangic && simdi - bilgi.baslangic < baslangicPayMs) return true;
+  if (bilgi.sonBoyutMs && simdi - bilgi.sonBoyutMs < boyutPayMs) return true;
+  return false;
+}
+
+module.exports = { ansiTemizle, hedefDurakladi, hedefDevamIzni, hedefDevamKur, boslukTopla, baslikAnlamsiz, baslikDuzelt, gercekMetinGirdisiMi, hedefBastirilmisMi };

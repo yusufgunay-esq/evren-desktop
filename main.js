@@ -17,13 +17,13 @@ const gecmis = require('./gecmis');
 const tercih = require('./tercih');
 const projeCikarim = require('./proje-cikarim');
 const sohbet = require('./sohbet');
+const windowState = require('./window-state');
 const RemoteSunucu = require('./remote-sunucu');
 const SURUM = require('./package.json').version;
 
 
-// Yerel dosyalar ağdan gelmiyor; önbellek eski CSS/JS servis etmesin.
-app.commandLine.appendSwitch('disable-http-cache');
-
+// HTTP önbelleği AÇIK: yerel dosyalar file:// ile yükleniyor, API çağrıları zaten kendi başlıklarını
+// taşıyor; renderer kaynaklarının (font/CSS) her açılışta yeniden indirilmesi gereksizdi.
 const EVREN_BASE_URL = 'https://evren-llmapi.ssyz.org.tr';
 const ZEMIN = '#07090b';
 
@@ -46,6 +46,9 @@ const TEST_KOMUT = process.env.EVREN_TEST_KOMUT || '';
 
 
 let pencere = null;
+// Pencere geometrisi: userData/window-state.json; ekran görüntüsü modunda (--ekran-boyut) atlanır.
+let pencereDurumIzle = null;
+const windowStateDosyasi = () => path.join(app.getPath('userData'), 'window-state.json');
 
 // Tek örnek kilidi: EVREN ikinci kez açılırsa yeni sunucu/port üretilmez; var olan pencere öne gelir.
 // Bu kilit olmadan ikinci örnek 4141'i dolu bulup portu artırıyor, telefondaki eşleşme bayatlıyordu.
@@ -602,11 +605,107 @@ function kabukKapat(id, secenek = {}) {
 }
 function tumunuKapat() { for (const id of [...kabuklar.keys()]) kabukKapat(id); }
 
+// ---------- Birleşik komut yazımı (masaüstü çubuğu, palet, telefon, otomatik devam) ----------
+// Claude Code TUI, aynı pakette gelen \r'yi gönderim saymıyor: metin önce, Enter 250 ms SONRA.
+// Tek yol olması, "gitti mi?" hatalarının üç ayrı yerde yeniden doğmasını engeller.
+function komutYaz(id, metin) {
+  const k = kabuklar.get(id);
+  if (!k) return false;
+  const temiz = String(metin == null ? '' : metin).replace(/[\r\n]+$/, '');
+  if (!temiz) return false;
+  const b = oturumBilgi.get(id);
+  if (b) { b.sonGirdi = Date.now(); hedefDevral(b); }
+  try { k.write(temiz); } catch { return false; }
+  const z = setTimeout(() => {
+    const k2 = kabuklar.get(id);
+    if (k2 === k) { try { k2.write('\r'); } catch {} }
+  }, 250);
+  if (z.unref) z.unref();
+  return true;
+}
+
+// Yeni --resume edilmiş PTY'nin istemini basmasını bekler: ilk bayttan sonra 500 ms durulma,
+// en az 1200 ms, en çok 6000 ms (Windows'ta Claude --resume 2.5-6 sn sürüyor).
+function ptyHazirBekle(id, { minMs = 1200, durulmaMs = 500, enCokMs = 6000 } = {}) {
+  return new Promise((coz) => {
+    const bas = Date.now();
+    if (!kabuklar.has(id)) { coz(false); return; }
+    let ciktiGeldi = false;
+    let sonCikti = 0;
+    const t = setInterval(() => {
+      if (!kabuklar.has(id)) { clearInterval(t); coz(false); return; }
+      const b = oturumBilgi.get(id);
+      const gecen = Date.now() - bas;
+      if (b && b.sonCikti && b.sonCikti > bas) { ciktiGeldi = true; sonCikti = b.sonCikti; }
+      if (gecen >= enCokMs || (ciktiGeldi && gecen >= minMs && Date.now() - sonCikti >= durulmaMs)) {
+        clearInterval(t);
+        coz(true);
+      }
+    }, 150);
+    if (t.unref) t.unref();
+  });
+}
+
+// ---------- Masaüstü sohbet akışı: fs.watch push (tek etkin abonelik) ----------
+// OpenCoWork runtime:patch deseni: gönderen tarafı yoksa/yıkılmışsa aboneliği kapat; olay başına
+// tek tur. 3 sn'lik güvenlik yoklaması yalnız abone varken koşar (Windows fs.watch kaçırmaları).
+let sohbetPush = null; // { anahtar, dosya, pid, okuyucu, watcher, timer, ilkGonderildi }
+function sohbetPushDurdur() {
+  if (!sohbetPush) return;
+  if (sohbetPush.watcher) { try { sohbetPush.watcher.close(); } catch {} }
+  if (sohbetPush.timer) clearInterval(sohbetPush.timer);
+  sohbetPush = null;
+}
+function sohbetPushBaslat({ anahtar, pid, dizin, id }) {
+  sohbetPushDurdur();
+  const dosyaBul = () => {
+    if (dizin && id) return sohbet.oturumDosyasiBul({ dizin, devam: id });
+    const b = oturumBilgi.get(pid);
+    if (!b) return null;
+    return sohbet.oturumDosyasiBul({ dizin: b.dizin, devam: b.devam, baslangicMs: b.baslangic });
+  };
+  const state = { anahtar, pid, dosya: null, okuyucu: new sohbet.ArtimliOkuyucu(), watcher: null, timer: null, ilkGonderildi: false };
+  sohbetPush = state;
+  const gonder = (girisler, ilk) => {
+    if (sohbetPush !== state) return;
+    if (!pencere || pencere.isDestroyed() || pencere.webContents.isCrashed()) { sohbetPushDurdur(); return; }
+    pencere.webContents.send('sohbet:yeni', { anahtar, girisler, ilk });
+  };
+  const baglaWatcher = (dosya) => {
+    if (state.watcher) { try { state.watcher.close(); } catch {} state.watcher = null; }
+    try { state.watcher = fs.watch(dosya, { persistent: false }, () => kontrol()); } catch {}
+  };
+  const kontrol = () => {
+    if (sohbetPush !== state) return;
+    const guncel = dosyaBul();
+    if (!guncel) {
+      if (!state.ilkGonderildi) { state.ilkGonderildi = true; gonder([], true); }
+      return;
+    }
+    if (guncel !== state.dosya) {
+      state.dosya = guncel;
+      const ilk = state.okuyucu.sifirla(guncel, 200);
+      state.ilkGonderildi = true;
+      baglaWatcher(guncel);
+      gonder(ilk, true);
+      return;
+    }
+    const yeni = state.okuyucu.oku(state.dosya);
+    if (yeni.length) gonder(yeni, false);
+  };
+  kontrol();
+  state.timer = setInterval(kontrol, 3000);
+  if (state.timer.unref) state.timer.unref();
+}
+
 // Uygulama kapanışı tek ve idempotent yoldan geçer: süreç ağaçları + telefondaki sunucu.
 let kapaniyor = false;
 function temizKapat() {
   if (kapaniyor) return;
   kapaniyor = true;
+  // Son pencere geometrisini diske yaz (izle zaten close'da yazar; burada erken kapanışlara karşı).
+  try { if (pencereDurumIzle) pencereDurumIzle.kaydet(); } catch {}
+  sohbetPushDurdur();
   tumunuKapat();
   if (remoteSunucu) {
     try { remoteSunucu.durdur(); } catch {}
@@ -641,6 +740,11 @@ function hedefDuraklamaTara(bilgi, veri) {
   const ham = ((bilgi.hedefKuyruk || '') + veri).slice(-HEDEF_KUYRUK);
   bilgi.hedefKuyruk = ham;
   if (ham.indexOf('Goal paused') < 0) return;
+  // Otomatik devam varsayılan KAPALI: yalnız ayar.otomatikDevam === true ise çalışır (ayar okuması
+  // her pty baytında değil, yalnız metin görülünce yapılır). Açılış (5 sn) ve yeniden boyutlandırma
+  // (2 sn) sonrası da bastırılır: TUI o an eski transkripti yeniden basar, "Goal paused" replay'dir.
+  if (ayarOku().otomatikDevam !== true) return;
+  if (oturumKarar.hedefBastirilmisMi(bilgi, Date.now())) return;
   if (!oturumKarar.hedefDurakladi(oturumKarar.ansiTemizle(ham))) return;
   const h = bilgi.hedefDevam || (bilgi.hedefDevam = { sayi: 0, son: 0 });
   const simdi = Date.now();
@@ -650,9 +754,8 @@ function hedefDuraklamaTara(bilgi, veri) {
   bilgi.hedefKuyruk = ''; // aynı satır ikinci kez tetiklemesin
   if (!bilgi.hedefSayac) bilgi.hedefSayac = oturumKarar.hedefDevamKur();
   bilgi.hedefSayac.kur(() => {
-    const k = kabuklar.get(bilgi.id);
-    if (!k) return;
-    try { k.write('devam' + String.fromCharCode(13)); } catch { return; }
+    if (!kabuklar.has(bilgi.id)) return;
+    if (!komutYaz(bilgi.id, 'devam')) return; // metin + ayrı Enter (TUI tek paketteki CR'yi yutuyor)
     if (pencere && !pencere.isDestroyed()) pencere.webContents.send('hedef:devam', bilgi.id, h.sayi);
   });
 }
@@ -871,15 +974,24 @@ function pencereOlustur() {
   const boyutIx = argv.indexOf('--ekran-boyut');
   let genislik = Math.min(1240, Math.max(820, alan.width - 100));
   let yukseklik = Math.min(800, Math.max(520, alan.height - 100));
+  let ekranBoyutVerildi = false;
   if (boyutIx >= 0 && argv[boyutIx + 1]) {
     const [wStr, hStr] = argv[boyutIx + 1].split('x');
     const bw = parseInt(wStr, 10);
     const bh = parseInt(hStr, 10);
-    if (bw > 0 && bh > 0) { genislik = bw; yukseklik = bh; }
+    if (bw > 0 && bh > 0) { genislik = bw; yukseklik = bh; ekranBoyutVerildi = true; }
   }
+  // Kayıtlı pencere durumu: görünür bir ekrana kenetlenmiş geometri (ekran değişince taşmaz).
+  // --ekran-boyut verildiyse test/demo boyutu kazanır.
+  const pencereKonum = ekranBoyutVerildi
+    ? null
+    : windowState.ekranIcinCoz(windowState.oku(windowStateDosyasi()), screen.getAllDisplays());
   pencere = new BrowserWindow({
     icon: path.join(__dirname, 'ikon.ico'),
-    width: genislik, height: yukseklik, minWidth: 760, minHeight: 480,
+    ...(pencereKonum && Number.isFinite(pencereKonum.x) && Number.isFinite(pencereKonum.y) ? { x: pencereKonum.x, y: pencereKonum.y } : {}),
+    width: pencereKonum ? pencereKonum.width : genislik,
+    height: pencereKonum ? pencereKonum.height : yukseklik,
+    minWidth: 760, minHeight: 480,
     backgroundColor: ZEMIN, show: false,
     title: 'EVREN',
     titleBarStyle: 'hidden',
@@ -888,7 +1000,7 @@ function pencereOlustur() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
       spellcheck: false,
     },
   });
@@ -921,8 +1033,13 @@ function pencereOlustur() {
     sorgu.igne = (igneIx >= 0 && argv[igneIx + 1] && !argv[igneIx + 1].startsWith('--')) ? argv[igneIx + 1] : '1';
   } // test: Yeni oturum modalını açık yakala
   pencere.loadFile(path.join(__dirname, 'index.html'), Object.keys(sorgu).length ? { query: sorgu } : undefined);
-  pencere.once('ready-to-show', () => pencere.show());
-  pencere.on('closed', () => { tumunuKapat(); pencere = null; });
+  pencereDurumIzle = windowState.izle(pencere, windowStateDosyasi(), screen);
+  pencere.once('ready-to-show', () => {
+    if (pencereKonum && pencereKonum.isMaximized) pencere.maximize();
+    else if (pencereKonum && pencereKonum.isFullScreen) pencere.setFullScreen(true);
+    pencere.show();
+  });
+  pencere.on('closed', () => { pencereDurumIzle = null; tumunuKapat(); pencere = null; });
 
 
   if (EKRAN) {
@@ -978,17 +1095,7 @@ function remoteSunucuBaslat() {
     // Telefon komutu: metin önce, Enter kısa bir beklemeden sonra AYRI yazılır.
     // Claude Code TUI, aynı pakette gelen \r karakterini gönderim olarak saymıyor;
     // kullanıcı metni kutuda görüp "gitmedi" diyordu.
-    onKomutYaz: (id, metin) => {
-      const k = kabuklar.get(id);
-      if (!k) return false;
-      try {
-        k.write(metin);
-      } catch {
-        return false;
-      }
-      setTimeout(() => { try { k.write('\r'); } catch {} }, 250);
-      return true;
-    },
+    onKomutYaz: (id, metin) => komutYaz(id, metin),
     onPtyYaz: (id, veri) => {
       const k = kabuklar.get(id);
       const b = oturumBilgi.get(id);
@@ -1019,16 +1126,14 @@ function remoteSunucuBaslat() {
         return { hata: hata.message || 'Oturum uyandırılamadı.' };
       }
       b.uyuyor = false; // eski kimlik listeden düşer; yeni oturum kendi kimliğiyle görünür
-      const k = kabuklar.get(yeni.id);
-      if (k && typeof metin === 'string' && metin) {
-        setTimeout(() => {
-          try {
-            k.write(metin);
-            setTimeout(() => { try { k.write('\r'); } catch {} }, 250);
-          } catch {}
-          const nb = oturumBilgi.get(yeni.id);
-          if (nb) nb.sonGirdi = Date.now();
-        }, 1100); // TUI girdiyi alabilsin (masaüstü uyandırmasıyla aynı bekleme)
+      // Masaüstüne haber: telefonun uyandırdığı oturum renderer'da da görünsün (çift sekme açmasın).
+      if (pencere && !pencere.isDestroyed()) pencere.webContents.send('oturum:uyandi', { eskiId: id, yeni });
+      // Mesaj teslimi bloklamaz: PTY istemini basana kadar bekle (Windows'ta 2.5-6 sn), sonra yaz.
+      // Kör 1100 ms bekleme mesajları düşürüyordu.
+      if (typeof metin === 'string' && metin) {
+        ptyHazirBekle(yeni.id)
+          .then((hazir) => { if (hazir) komutYaz(yeni.id, metin); })
+          .catch(() => {});
       }
       return { id: yeni.id };
     },
@@ -1241,7 +1346,32 @@ function gecmisBaslikOnbellekTemizle(kimlik) {
   gecmis.baslikOnbellekTemizle(kimlik);
   if (gecmisIsci) { try { gecmisIsci.postMessage({ tip: 'onbellek-temizle', kimlik }); } catch {} }
 }
+// İş parçacığına tek istek: { id, ...mesaj } gönderir, sonucu (ya da null) döndürür.
+function gecmisIsciIstek(mesaj) {
+  return new Promise((coz) => {
+    let isci;
+    try { isci = gecmisIsciAl(); } catch { coz(null); return; }
+    const id = ++gecmisSayac;
+    gecmisBekleyen.set(id, (sonuc) => coz(sonuc == null ? null : sonuc));
+    try { isci.postMessage({ id, ...mesaj }); }
+    catch { gecmisBekleyen.delete(id); coz(null); }
+  });
+}
+
+// Tam tarama eşzamanlı istenirse (panel 15 sn'de bir + pencere olayı) tek uçuş paylaşılır:
+// yüzlerce MB'lık JSONL taraması aynı anda iki kez koşmaz.
+let gecmisTumSozu = null;
 function gecmisOku(dizin) {
+  const tamTarama = !dizin || typeof dizin !== 'string';
+  if (tamTarama && gecmisTumSozu) return gecmisTumSozu;
+  const soz = gecmisOkuHam(dizin);
+  if (tamTarama) {
+    gecmisTumSozu = soz.finally(() => { gecmisTumSozu = null; });
+    return gecmisTumSozu;
+  }
+  return soz;
+}
+function gecmisOkuHam(dizin) {
   return new Promise((coz) => {
     const t0 = performance.now();
     let isci;
@@ -1285,7 +1415,9 @@ ipcMain.handle('proje-cikar', async (_e, oturumlar) => {
   try {
     const liste = (Array.isArray(oturumlar) ? oturumlar : []).slice(0, 300)
       .filter((o) => o && gecmis.OTURUM_KIMLIK.test(String(o.id || '')) && typeof o.projeYol === 'string');
-    return await projeCikarim.cikar(liste, projeleriOku());
+    // Disk okuması iş parçacığında; işçi yoksa/çöktüyse yerel yola düş.
+    const sonuc = await gecmisIsciIstek({ tip: 'proje-cikar', oturumlar: liste, projeler: projeleriOku() });
+    return sonuc || await projeCikarim.cikar(liste, projeleriOku());
   } catch { return {}; }
 });
 ipcMain.handle('gecmis-ara', async (_e, turler, sorgu) => (await gecmisAraOku(turler, sorgu)) || {});
@@ -1451,7 +1583,9 @@ ipcMain.handle('oturum-cikti', async (_e, param) => {
   while (ciktiIzleyiciler.size > 24 && ciktiIzleyiciler.keys().next().value !== dosya) {
     ciktiIzleyiciler.delete(ciktiIzleyiciler.keys().next().value);
   }
-  const liste = iz.oku(dosya) || [];
+  // JSONL taraması iş parçacığında; işçi cevap vermezse ana süreçteki izleyici yedeği koşar.
+  const isciListe = await gecmisIsciIstek({ tip: 'cikti', dosya });
+  const liste = isciListe || iz.oku(dosya) || [];
   let resimSayisi = 0;
   // Küçük resim yalnız ilk birkaç görsel için ve aşırı büyük dosyalarda atlanır:
   // ana süreci uzun süre kilitlememek için sınırlı tutulur (sonrası dosya simgesiyle görünür).
@@ -1578,9 +1712,18 @@ ipcMain.handle('dosya-klasor', (_e, yol) => {
 ipcMain.handle('yaz', (_e, id, veri) => {
   const k = kabuklar.get(id);
   const b = oturumBilgi.get(id);
-  if (b) { b.sonGirdi = Date.now(); hedefDevral(b); } // kullanıcı devraldı
+  if (b) {
+    // Gerçek metin girdisi devralır; tuş dizileri (Ctrl+L, Esc, ok tuşları) bütçeyi sıfırlamaz.
+    if (oturumKarar.gercekMetinGirdisiMi(veri)) { b.sonGirdi = Date.now(); hedefDevral(b); }
+    else if (veri === '\x03' && b.hedefSayac) b.hedefSayac.iptalEt(); // Ctrl+C: bekleyen devamı iptal et, bütçeyi koru
+  }
   if (k) { try { k.write(veri); } catch {} }
 });
+// Masaüstü çubuğu/palet: birleşik yazım (metin + ayrı Enter).
+ipcMain.handle('komut-yaz', (_e, id, metin) => komutYaz(id, metin));
+// Masaüstü sohbet paneli: push aboneliği (tek etkin); eski yoklama tamamen kalkar.
+ipcMain.handle('sohbet-abone', (_e, param) => { sohbetPushBaslat(param || {}); return true; });
+ipcMain.handle('sohbet-birak', () => { sohbetPushDurdur(); return true; });
 ipcMain.handle('boyut', (_e, id, { cols, rows }) => {
   const k = kabuklar.get(id);
   if (!k || !(cols > 0) || !(rows > 0)) return;
@@ -1589,7 +1732,10 @@ ipcMain.handle('boyut', (_e, id, { cols, rows }) => {
   const yeni = { cols, rows };
   if (b && gorunumYardim.boyutAyni(b.sonBoyut, yeni)) return;
   try { k.resize(cols, rows); } catch {}
-  if (b) b.sonBoyut = yeni;
+  if (b) {
+    b.sonBoyut = yeni;
+    b.sonBoyutMs = Date.now(); // resize sonrası 2 sn "devam" bastırma penceresi
+  }
 });
 ipcMain.handle('kapat-oturum', (_e, id) => { kabukKapat(id); });
 // Renderer'ın oturum kimliğini (jsonl) öğrenmesi: Şef kartını geçmişte işaretlemek ve

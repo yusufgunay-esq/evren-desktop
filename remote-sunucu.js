@@ -69,6 +69,7 @@ class RemoteSunucu {
     this.kapaliOturumlar = new Set();    // id -> kapandı
     this.sohbetAboneleri = new Map();    // oturum id -> Set<ws>
     this.sohbetIzleyiciler = new Map();  // oturum id -> izleyici kaydı
+    this.sayilarOnbellek = new Map();    // "dizin|devam" -> { t, veri } (oturum sayaçları 2 sn TTL)
     this.claudeKoku = opsiyonlar.claudeKoku || null; // test: ~/.claude/projects yerine
 
     // Masaüstü geri çağrımları (callbacks)
@@ -330,13 +331,19 @@ class RemoteSunucu {
         res.end(JSON.stringify({ ok: false, hata: 'Yetkisiz erişim.' }));
         return;
       }
-      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({
-        ok: true,
-        bilgi: this.bilgi(),
-        oturumlar: this.oturumListesiHazirla(),
-        durum: this.uygulamaDurumuAl()
-      }));
+      // uygulamaDurumuAl() async (yerelDurum bir Promise döner): await edilmezse durum hep {} geliyordu.
+      Promise.resolve(this.uygulamaDurumuAl()).then((durum) => {
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({
+          ok: true,
+          bilgi: this.bilgi(),
+          oturumlar: this.oturumListesiHazirla(),
+          durum: durum || {}
+        }));
+      }).catch(() => {
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ ok: true, bilgi: this.bilgi(), oturumlar: this.oturumListesiHazirla(), durum: {} }));
+      });
       return;
     }
 
@@ -624,7 +631,15 @@ class RemoteSunucu {
     return temel.map((o) => {
       const bilgi = this.oturumBilgisiAl(o.id) || {};
       const onay = this.bekleyenOnaylar.get(o.id) || null;
-      const sayilar = this.oturumSayilariAl(bilgi.dizin, bilgi.devam) || {};
+      // Sayaçlar her yayında her sekme için disk taraması yapıyordu: (dizin, devam) başına 2 sn TTL.
+      const anahtar = `${bilgi.dizin || ''}|${bilgi.devam || ''}`;
+      let sayilar = null;
+      const onbellek = this.sayilarOnbellek.get(anahtar);
+      if (onbellek && Date.now() - onbellek.t < 2000) sayilar = onbellek.veri;
+      else {
+        sayilar = this.oturumSayilariAl(bilgi.dizin, bilgi.devam) || {};
+        this.sayilarOnbellek.set(anahtar, { t: Date.now(), veri: sayilar });
+      }
       const alt = sayilar.altAjanlar || { calisan: 0, toplam: 0 };
       const evren = sayilar.evrenIsleri || { calisan: 0, toplam: 0 };
       return {
@@ -658,6 +673,13 @@ class RemoteSunucu {
     this.oturumTamponlari.delete(id);
     this.bekleyenOnaylar.delete(id);
     this.kapaliOturumlar.add(id);
+    // Kapanan oturumun son satır/zaman kaydı haritalarda sızıyordu; ayrıca sessiz sayaç önbelleği düşer.
+    this.sonSatirlar.delete(id);
+    this.sonVeriZamani.delete(id);
+    try {
+      const bilgi = this.oturumBilgisiAl(id) || {};
+      this.sayilarOnbellek.delete(`${bilgi.dizin || ''}|${bilgi.devam || ''}`);
+    } catch {}
     this.sohbetIzlemeyiDurdur(id);
     if (this.aktifOturumId === id) {
       this.aktifOturumId = null;
@@ -742,8 +764,11 @@ class RemoteSunucu {
         if (guncel.devam && guncel.dizin) {
           const beklenen = sohbet.dosyaYolu(guncel.dizin, guncel.devam, this.claudeKoku);
           if (iz.dosya && path.resolve(beklenen) !== path.resolve(iz.dosya) && fs.existsSync(beklenen)) {
+            // Eski dosyanın izleyicisi kapatılmalı; yoksa fs.watch sızıntısı birikir ve yeni dosya izlenmez.
+            if (iz.izleyici) { try { iz.izleyici.close(); } catch {} iz.izleyici = null; }
             iz.dosya = beklenen;
             iz.girisler = iz.okuyucu.sifirla(beklenen);
+            try { iz.izleyici = fs.watch(iz.dosya, { persistent: false }, () => yenileri()); } catch {}
             for (const ws of this.sohbetAboneleri.get(id) || []) {
               this.wsGonder(ws, { tip: 'sohbet', id, girisler: iz.girisler, ilk: true });
             }
