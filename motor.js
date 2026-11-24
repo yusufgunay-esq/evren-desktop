@@ -145,17 +145,96 @@ function gitDal(dizin) {
   } catch { return ''; }
 }
 
+// ---- Atomik dosya yazma ----
+// Windows'ta antivirüs / başka tutamaç rename'i geçici olarak reddedebilir (EPERM/EACCES/EBUSY).
+// Kısa bekleyip yeniden dener; rename hiç olmuyorsa yerinde yazar. Geçici dosya hiç bırakılmaz.
+const YENIDEN_KOD = new Set(['EPERM', 'EACCES', 'EBUSY']);
+const RENAME_BEKLE_MS = [50, 100, 150, 200];
+let yazmaSira = 0;
+
+function kisaBekleSync(ms) {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {
+    const bitis = Date.now() + ms;
+    while (Date.now() < bitis) {}
+  }
+}
+
+function atomikJsonYazSync(dosya, veriMetni) {
+  const dir = path.dirname(dosya);
+  fs.mkdirSync(dir, { recursive: true });
+  const gecici = `${dosya}.${process.pid}.${++yazmaSira}.tmp`;
+  fs.writeFileSync(gecici, veriMetni, 'utf8');
+  let sonHata = null;
+  for (let i = 0; i <= RENAME_BEKLE_MS.length; i++) {
+    try {
+      fs.renameSync(gecici, dosya);
+      return true;
+    } catch (e) {
+      sonHata = e;
+      if (!e || !YENIDEN_KOD.has(e.code) || i === RENAME_BEKLE_MS.length) break;
+      kisaBekleSync(RENAME_BEKLE_MS[i]);
+    }
+  }
+  // AV rename'i kilitlediyse yerinde yaz; geçici dosyayı temizle.
+  try {
+    fs.writeFileSync(dosya, veriMetni, 'utf8');
+    try { fs.unlinkSync(gecici); } catch {}
+    return true;
+  } catch {
+    try { fs.unlinkSync(gecici); } catch {}
+    throw sonHata;
+  }
+}
+
+// Bozuk dosyayı silmeden zaman damgalı yedek olarak sakla (kullanıcı verisi kaybolmasın).
+// Aynı bozuk sürüm (dosya + mtime + boyut) yalnız bir kez yedeklenir: zamanlayıcıların
+// (bostaKontrol, 60 sn) tekrarlayan okumaları çöp .bak dosyası yığmasın.
+const bozukYedeklenen = new Set();
+function bozukYedekle(dosya) {
+  try {
+    if (!fs.existsSync(dosya)) return;
+    const st = fs.statSync(dosya);
+    const anahtar = `${dosya}:${st.mtimeMs}:${st.size}`;
+    if (bozukYedeklenen.has(anahtar)) return;
+    fs.copyFileSync(dosya, `${dosya}.corrupt-${Date.now()}.bak`);
+    bozukYedeklenen.add(anahtar);
+  } catch {}
+}
+
 // ---- Ayarlar ----
+// Dosya değişmediyse (mtime + boyut aynı) diskten yeniden okumadan önbellekten döner.
+let ayarOnbellek = null; // { dosya, ms, boyut, veri }
 function ayarOku() {
-  for (const f of process.env.EVREN_VERI_DIZINI ? [AYAR_DOSYASI] : [AYAR_DOSYASI, ESKI_AYAR]) {
-    try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch {}
+  const adaylar = process.env.EVREN_VERI_DIZINI ? [AYAR_DOSYASI] : [AYAR_DOSYASI, ESKI_AYAR];
+  for (const f of adaylar) {
+    let st;
+    try { st = fs.statSync(f); } catch { continue; }
+    if (ayarOnbellek && ayarOnbellek.dosya === f && ayarOnbellek.ms === st.mtimeMs && ayarOnbellek.boyut === st.size) {
+      return { ...ayarOnbellek.veri };
+    }
+    try {
+      const parsed = JSON.parse(fs.readFileSync(f, 'utf8'));
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        ayarOnbellek = { dosya: f, ms: st.mtimeMs, boyut: st.size, veri: parsed };
+        return { ...parsed };
+      }
+      bozukYedekle(f);
+    } catch {
+      bozukYedekle(f);
+    }
   }
   return {};
 }
 function ayarYaz(yeni) {
   const birlesik = { ...ayarOku(), ...yeni };
-  try { fs.mkdirSync(VERI_DIZINI, { recursive: true }); fs.writeFileSync(AYAR_DOSYASI, JSON.stringify(birlesik, null, 2)); } catch {}
-  return birlesik;
+  try {
+    atomikJsonYazSync(AYAR_DOSYASI, JSON.stringify(birlesik, null, 2));
+    const st = fs.statSync(AYAR_DOSYASI);
+    ayarOnbellek = { dosya: AYAR_DOSYASI, ms: st.mtimeMs, boyut: st.size, veri: birlesik };
+  } catch {}
+  return { ...birlesik };
 }
 
 // ---- Anahtar kasası: Windows DPAPI (yalnız bu Windows kullanıcısı çözebilir) ----
@@ -195,15 +274,44 @@ function kasaCoz(arkaUc, icerik) {
   } catch { return ''; }
 }
 
-async function anahtarOku() {
+// secenek (yalnız test için): anahtarDosyalari / kasaDosyasi yollarını geçersiz kılar.
+async function anahtarOku(secenek = {}) {
+  const anahtarDosyalari = Array.isArray(secenek.anahtarDosyalari) ? secenek.anahtarDosyalari : [ANAHTAR_DOSYASI, ESKI_ANAHTAR];
+  const kasaDosyasi = secenek.kasaDosyasi || KASA_DOSYASI;
   if (process.platform !== 'win32') {
     // darwin/linux: evren.kasa dosyasını safeStorage arka ucuyla çöz; dosya yoksa '' döner.
-    try { return kasaCoz(kasaArkaUcu, fs.readFileSync(KASA_DOSYASI, 'utf8')); } catch { return ''; }
+    try { return kasaCoz(kasaArkaUcu, fs.readFileSync(kasaDosyasi, 'utf8')); } catch { return ''; }
+  }
+  // Hızlı yol: safeStorage (Windows'ta yerel DPAPI, süreç içi, <1 ms) ile şifrelenmiş kasa
+  // dosyası varsa ve evren.dpapi'den daha yeni/eşitse PowerShell açmadan çöz. Yalnız bir
+  // dpapi kaynağı (evren.dpapi ya da eski konum) varken kullanılır: kullanıcı anahtar
+  // dosyasını silerek oturumu kapatmışsa kasa bayat anahtar serve etmez, '' döner.
+  if (kasaArkaUcu && anahtarDosyalari.some((f) => fs.existsSync(f))) {
+    try {
+      if (fs.existsSync(kasaDosyasi)) {
+        let taze = true;
+        try {
+          const kasaMs = fs.statSync(kasaDosyasi).mtimeMs;
+          if (fs.existsSync(anahtarDosyalari[0])) taze = kasaMs >= fs.statSync(anahtarDosyalari[0]).mtimeMs;
+        } catch { taze = true; }
+        if (taze) {
+          const hizli = kasaCoz(kasaArkaUcu, fs.readFileSync(kasaDosyasi, 'utf8')).trim();
+          if (hizli) return hizli;
+        }
+      }
+    } catch {}
   }
   const oku = '$s = ConvertTo-SecureString (Get-Content -LiteralPath $env:EVREN_KASA -Raw).Trim(); [Console]::Out.Write([Runtime.InteropServices.Marshal]::PtrToStringUni([Runtime.InteropServices.Marshal]::SecureStringToBSTR($s)))';
-  for (const f of [ANAHTAR_DOSYASI, ESKI_ANAHTAR]) {
+  for (const f of anahtarDosyalari) {
     if (!fs.existsSync(f)) continue;
-    try { const k = (await powershell(oku, null, { EVREN_KASA: f })).trim(); if (k) return k; } catch {}
+    try {
+      const k = (await powershell(oku, null, { EVREN_KASA: f })).trim();
+      if (k) {
+        // Çözülen anahtarı kasa dosyasına da yansıt: sonraki açılışlar PowerShell açmasın.
+        if (kasaArkaUcu) { try { atomikJsonYazSync(kasaDosyasi, kasaSifrele(kasaArkaUcu, k)); } catch {} }
+        return k;
+      }
+    } catch {}
   }
   return '';
 }
@@ -221,6 +329,8 @@ async function anahtarYaz(anahtar) {
   fs.mkdirSync(VERI_DIZINI, { recursive: true });
   const yaz = "$k = [Console]::In.ReadToEnd().Trim(); if (-not $k) { throw 'bos' }; ConvertTo-SecureString $k -AsPlainText -Force | ConvertFrom-SecureString | Set-Content -LiteralPath $env:EVREN_KASA -Encoding ascii";
   await powershell(yaz, temiz, { EVREN_KASA: ANAHTAR_DOSYASI });
+  // evren.dpapi dış CLI araçlarıyla uyum için korunur; hızlı açılış için kasa dosyasına da yansıt.
+  if (kasaArkaUcu) { try { atomikJsonYazSync(KASA_DOSYASI, kasaSifrele(kasaArkaUcu, temiz)); } catch {} }
   return ANAHTAR_DOSYASI;
 }
 
@@ -239,4 +349,4 @@ function kimlikIstemi(modelId, efor, sef = false) {
   ].join('\n');
 }
 
-module.exports = { MODELLER, modelleriCoz, modelKatalogId, autocompactPenceresi, kullaniciEsigi, sikistirmaEsigi, sikistirmaEnvDegeri,EFORLAR, EFOR_VARSAYILAN, eforCoz, kimlikIstemi, baglamMetni, gitDal, ayarOku, ayarYaz, anahtarOku, anahtarYaz, kasaKur, kasaSifrele, kasaCoz, VERI_DIZINI };
+module.exports = { MODELLER, modelleriCoz, modelKatalogId, autocompactPenceresi, kullaniciEsigi, sikistirmaEsigi, sikistirmaEnvDegeri,EFORLAR, EFOR_VARSAYILAN, eforCoz, kimlikIstemi, baglamMetni, gitDal, ayarOku, ayarYaz, atomikJsonYazSync, bozukYedekle, anahtarOku, anahtarYaz, kasaKur, kasaSifrele, kasaCoz, VERI_DIZINI };

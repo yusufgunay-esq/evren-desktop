@@ -6,7 +6,7 @@
 // Tek küçük JSON (userData altında); bozuk ya da eksik dosyada güvenli varsayılan, yazma atomik (geçici dosya + rename).
 'use strict';
 const fs = require('node:fs');
-const path = require('node:path');
+const motor = require('./motor');
 
 const DOSYA_ADI = 'panel-tercih.json';
 const SINIR = 2000;
@@ -44,20 +44,20 @@ function temizle(ham) {
   return v;
 }
 function oku(dosya) {
-  try { return temizle(JSON.parse(fs.readFileSync(dosya, 'utf8'))); } catch { return varsayilan(); }
+  try {
+    return temizle(JSON.parse(fs.readFileSync(dosya, 'utf8')));
+  } catch (e) {
+    // Dosya varsa ama bozuksa silmeden yedekle (ENOENT'te yedek yok).
+    if (!e || e.code !== 'ENOENT') {
+      try { if (fs.existsSync(dosya)) motor.bozukYedekle(dosya); } catch {}
+    }
+    return varsayilan();
+  }
 }
-// Önce aynı klasöre geçici dosya, sonra rename: yarım yazılmış tercih dosyası oluşmaz.
+// Atomik yazma: geçici dosya + Windows EPERM/EBUSY yeniden denemeli rename; yarım dosya oluşmaz.
 function yaz(dosya, ham) {
   const v = temizle(ham);
-  const gecici = `${dosya}.${process.pid}.tmp`;
-  try {
-    fs.mkdirSync(path.dirname(dosya), { recursive: true });
-    fs.writeFileSync(gecici, JSON.stringify(v), 'utf8');
-    fs.renameSync(gecici, dosya);
-  } catch (e) {
-    try { fs.rmSync(gecici, { force: true }); } catch {}
-    throw e;
-  }
+  motor.atomikJsonYazSync(dosya, JSON.stringify(v));
   return v;
 }
 
