@@ -7,3 +7,11 @@ _ekran_*.png
 _claude/
 _rea_*/
 cikti-masaustu/
+
+# REA inceleme izleri (tescilli içerik; git dışında)
+REA.md
+REA-*.md
+rea-kutuphanesi.json
+_claude/indirmeler/
+siralama.html
+SIRALAMA.md
