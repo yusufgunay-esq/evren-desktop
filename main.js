@@ -65,6 +65,8 @@ const oturumBilgi = new Map(); // kimlik -> { modelId, modelAd, dizin, proje, de
 const baglamIzleyiciler = new Map(); // kimlik -> sohbet.BaglamIzleyici (bağlam kullanımı + tur sayacı)
 const ciktiIzleyiciler = new Map(); // oturum dosyası -> sohbet.CiktiIzleyici (üretilen dosyalar)
 const onizlemeOnbellek = new Map(); // görsel yolu -> { mtime, veri } (küçük resim)
+const uyutulanlar = new Set(); // su an bosta uykuya alinan oturum kimlikleri (cift pty:cikis yarisini onler)
+const kapananlar = new Set();  // kabukKapat ile kapatilan oturum kimlikleri (mukerrer cikis olayini onler)
 let sonKimlik = 0;
 let anahtarOnbellek = null; // kasa okuması (DPAPI) yavaş; süreç boyunca bir kez okunur
 let modelOnbellek = null;   // son canlı /v1/models çözümü
@@ -180,6 +182,17 @@ function devamDizini(kimlik) {
 }
 
 
+// Süreç belleği (MB): Electron'un kendi metriklerinden çalışma kümesi toplamı (ucuz, ağ yok).
+function uygulamaBellegiMb() {
+  try {
+    const metrikler = app.getAppMetrics();
+    let toplamKb = 0;
+    for (const m of metrikler) toplamKb += (m && m.memory && m.memory.workingSetSize) || 0;
+    return Math.round(toplamKb / 1024);
+  } catch { return 0; }
+}
+
+
 // Yerel durum: ağ beklemeden anında döner (ilk boyama hızlı olsun).
 async function yerelDurum() {
   const p = await panelModulu();
@@ -195,6 +208,7 @@ async function yerelDurum() {
     sonKlasorler: sonKlasorListesi(),
     serbestDizin: SERBEST_DIZIN,
     uyku: ham.uykuEngelle !== false,
+    bellekMb: uygulamaBellegiMb(),
     claudeOturumlari: ham.claudeOturumlari === true, // varsayılan kapalı: yalnız EVREN oturumları görünür
   };
 }
@@ -462,8 +476,21 @@ async function oturumBaslat({ modelId, dizin, ekDizinler, projeAd, cols, rows, d
   bu.onExit(({ exitCode }) => {
     ptyBosalt(id); // son çıktı, çıkış bildiriminden ÖNCE geçsin (sıra korunur)
     ptyTampon.delete(id);
+    const zatenKapandi = kapananlar.has(id);
+    const uyutuldu = uyutulanlar.has(id);
+    kapananlar.delete(id);
+    uyutulanlar.delete(id);
+    const pid = bu.pid;
+    try { bu.kill(); } catch {} // Windows'ta ConPTY tutamacını bırak
+    agacOldur(pid); // hayatta kalan çocuk süreçleri eşzamanlı olarak süpür (ana iş parçacığı donmaz)
+    if (zatenKapandi || uyutuldu) return; // kabukKapat renderer'a ve remote'a zaten bildirdi
     if (pencere && !pencere.isDestroyed()) pencere.webContents.send('pty:cikis', id, { kod: exitCode });
     kabuklar.delete(id);
+    baglamIzleyiciler.delete(id);
+    const b = oturumBilgi.get(id);
+    if (b && b.hedefSayac) b.hedefSayac.iptalEt();
+    if (b && b.devam) sekmeAdiOnbellek.delete(b.devam);
+    oturumBilgi.delete(id);
     uykuGuncelle();
     if (remoteSunucu) remoteSunucu.oturumKapandi(id, exitCode);
   });
@@ -525,30 +552,67 @@ function kumandaModelleri() {
 // Aksi halde claude.exe'nin actigi MCP sunuculari (node, python) arkada kalir;
 // her biri ~20-60 MB tutar ve birkac oturumda RAM dolar.
 function agacOldur(pid) {
-  if (!pid) return;
+  if (!pid) return Promise.resolve();
   if (process.platform === 'win32') {
-    try { execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }); } catch {}
-  } else {
-    try { process.kill(-pid, 'SIGKILL'); } catch {}
-    try { process.kill(pid, 'SIGKILL'); } catch {}
+    // taskkill eşzamanlı çağrılırsa ana iş parçacığı 200-1500 ms donar (tüm IPC/PTY/WS durur); async koşar.
+    return new Promise((coz) => {
+      execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, timeout: 8000 }, () => coz());
+    });
   }
+  try { process.kill(-pid, 'SIGKILL'); } catch {}
+  try { process.kill(pid, 'SIGKILL'); } catch {}
+  return Promise.resolve();
 }
 
-function kabukKapat(id) {
+// secenek.bosta: boşta uyutma. Oturum listede kalır (bilgi.uyuyor), tek bir pty:cikis
+// { bosta: true } gönderilir ve onExit'in ikinci (çakışan) çıkış olayı bastırılır.
+function kabukKapat(id, secenek = {}) {
+  const bosta = !!(secenek && secenek.bosta);
   const k = kabuklar.get(id);
   if (!k) return;
+  // İşaretler PTY öldürülmeden ÖNCE konur: onExit yarışı çakışan olay üretmesin.
+  if (bosta) uyutulanlar.add(id);
+  kapananlar.add(id);
+  // node-pty sert öldürmeden sonra onExit'i hiç tetiklemezse bayraklar sızmasın (10 sn yedek).
+  const temizle = setTimeout(() => { kapananlar.delete(id); uyutulanlar.delete(id); }, 10000);
+  if (temizle.unref) temizle.unref();
   const bilgiK = oturumBilgi.get(id);
   if (bilgiK && bilgiK.hedefSayac) bilgiK.hedefSayac.iptalEt();
-  agacOldur(k.pid);
-  try { k.kill(); } catch {}
+  if (bosta && bilgiK && bilgiK.devam) {
+    bilgiK.uyuyor = true;
+    bilgiK.sonGirdi = Date.now();
+  }
+  kabuklar.delete(id);
   ptyBosalt(id);
   ptyTampon.delete(id);
-  kabuklar.delete(id);
   baglamIzleyiciler.delete(id);
+  const pid = k.pid;
+  try { k.kill(); } catch {}
+  agacOldur(pid); // eşzamanlı, ana iş parçacığını dondurmaz
+  if (!bosta) {
+    if (bilgiK && bilgiK.devam) sekmeAdiOnbellek.delete(bilgiK.devam);
+    oturumBilgi.delete(id);
+    if (ciktiIzleyiciler.size > 24) ciktiIzleyiciler.clear();
+  }
   uykuGuncelle();
-  if (remoteSunucu) remoteSunucu.oturumKapandi(id, 0);
+  if (bosta) {
+    if (pencere && !pencere.isDestroyed()) pencere.webContents.send('pty:cikis', id, { kod: 0, bosta: true });
+    if (remoteSunucu) remoteSunucu.oturumListesiGuncelle();
+  } else if (remoteSunucu) remoteSunucu.oturumKapandi(id, 0);
 }
 function tumunuKapat() { for (const id of [...kabuklar.keys()]) kabukKapat(id); }
+
+// Uygulama kapanışı tek ve idempotent yoldan geçer: süreç ağaçları + telefondaki sunucu.
+let kapaniyor = false;
+function temizKapat() {
+  if (kapaniyor) return;
+  kapaniyor = true;
+  tumunuKapat();
+  if (remoteSunucu) {
+    try { remoteSunucu.durdur(); } catch {}
+    remoteSunucu = null;
+  }
+}
 
 // Çalışan oturum varken bilgisayar uykuya geçmesin (ayar: uykuEngelle, varsayılan açık).
 // prevent-app-suspension: ekran kapanabilir, sistem uyumaz; iş bitince blok kalkar.
@@ -643,27 +707,49 @@ function korunanUuidleriOku() {
   return kume;
 }
 
+// Ek boşta/çalışıyor kuralları (MCP_COCUK yama çapasıdır, değişmez):
+// 1) Çocuksuz yaprak powershell/pwsh kalıcı kabuk barındırıcısıdır, aktif iş DEĞİLDİR.
+// 2) node ile koşan orkestrasyon/worker/test betiği (sef.mjs, evren-ajan.mjs, npm, --test…)
+//    aktif iştir; boşta MCP sunucusu sanılıp Şef oturumu kapatılmaz.
+const BOSTA_YAPRAK_KABUK = new Set(['powershell', 'pwsh']);
+const AKTIF_NODE_DESEN = /(?:^|[\\/\s"'])(?:sef\.mjs|evren-ajan\.mjs|gece-vardiyasi\.mjs|vitest|jest|tsc|esbuild|vite|webpack|electron-builder)(?:$|[\s"'])|--test\b|\bnpm\b|\bpnpm\b/i;
+
 function torunHaritasi(done) {
   if (process.platform !== 'win32') {
-    // darwin/linux: ps ile süreç ağacı; ayrıştırıcı platform.js'te (test edilebilir).
+    // darwin/linux: süreç ağacı platform.js'te ayrıştırılır; ikinci sorgu komut satırını ekler
+    // (node betiği ayırt edilsin: Şef/worker boşta MCP sunucusu sanılmaz).
     execFile('ps', ['-axo', 'pid=,ppid=,comm='], { timeout: 10000 }, (hata, cikti) => {
       if (hata) return done(null);
-      done(platform.psCiktiAyristir(cikti));
+      const ebeveyn = platform.psCiktiAyristir(cikti);
+      execFile('ps', ['-axo', 'pid=,args='], { timeout: 10000, maxBuffer: 8 * 1024 * 1024 }, (hata2, cikti2) => {
+        if (hata2) return done(ebeveyn);
+        const komutlar = new Map();
+        for (const satir of String(cikti2).split(/\r?\n/)) {
+          const m = satir.match(/^\s*(\d+)\s+(\S.*)$/);
+          if (m) komutlar.set(Number(m[1]), m[2].slice(0, 240));
+        }
+        for (const liste of ebeveyn.values()) {
+          for (const c of liste) if (komutlar.has(c.id)) c.komut = komutlar.get(c.id);
+        }
+        done(ebeveyn);
+      });
     });
     return;
   }
-  const ps = 'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId)/$($_.ParentProcessId)/$($_.Name)" }';
+  // CommandLine ilk 240 karaktere kırpılır: hangi node/python betiği koşuyor, ayırt edilebilsin.
+  const ps = 'Get-CimInstance Win32_Process | ForEach-Object { $c = ($_.CommandLine -replace \'[\\r\\n\\t]+\',\' \'); if ($c.Length -gt 240) { $c = $c.Substring(0,240) }; "$($_.ProcessId)`t$($_.ParentProcessId)`t$($_.Name)`t$c" }';
   execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps],
     { windowsHide: true, timeout: 10000 }, (hata, cikti) => {
       if (hata) return done(null);
       const ebeveyn = new Map();
       for (const satir of String(cikti).split(/\r?\n/)) {
-        const p = satir.trim().split('/');
+        const p = satir.replace(/\r$/, '').split('\t');
         if (p.length < 3) continue;
         const [kimlik, par, ad] = p;
+        if (!/^\d+$/.test(kimlik.trim()) || !/^\d+$/.test(par.trim())) continue;
         const k = Number(par);
         if (!ebeveyn.has(k)) ebeveyn.set(k, []);
-        ebeveyn.get(k).push({ id: Number(kimlik), ad: ad.replace(/\.exe$/i, '').toLowerCase() });
+        ebeveyn.get(k).push({ id: Number(kimlik), ad: ad.trim().replace(/\.exe$/i, '').toLowerCase(), komut: p.slice(3).join('\t') });
       }
       done(ebeveyn);
     });
@@ -676,6 +762,9 @@ function agactaCalismaVar(ebeveyn, kok) {
     for (const c of (ebeveyn.get(x) || [])) {
       if (gorulen.has(c.id)) continue;
       gorulen.add(c.id);
+      const cocuklari = ebeveyn.get(c.id) || [];
+      if (BOSTA_YAPRAK_KABUK.has(c.ad) && cocuklari.length === 0) continue; // boşta yaprak kabuk
+      if (c.ad === 'node' && c.komut && AKTIF_NODE_DESEN.test(c.komut)) return true; // Şef / worker / test koşucu
       if (!MCP_COCUK.has(c.ad)) return true;   // bash, worker, git…: oturum calisiyor
       yigin.push(c.id);
     }
@@ -726,7 +815,12 @@ const bostaKontrol = setInterval(() => {
     let jsonlMtime = 0;
     try { jsonlMtime = fs.statSync(dosya).mtimeMs || 0; } catch {}
     const sessiz = bostaSessizlikMs({ sonGirdi: bilgi.sonGirdi, baslangic: bilgi.baslangic, jsonlMtime, simdi });
-    if (sessiz < sinir) continue;
+    // Şef oturumu RAM baskısında 5 dakikaya indirilmez: kendi eşiği (bostaSefDk, varsayılan 60 dk).
+    const sefDk = Number(ayar.bostaSefDk ?? 60);
+    const etkinSinir = bilgi.orkestrator
+      ? (Number.isFinite(sefDk) && sefDk > 0 ? sefDk * 60000 : Infinity)
+      : sinir;
+    if (sessiz < etkinSinir) continue;
     const kimlik = String(bilgi.devam || path.basename(dosya, '.jsonl')).toLowerCase();
     if (korunan.has(kimlik)) continue;   // korunan oturum asla kapatilmaz
     let durum = 'bilinmiyor';
@@ -739,6 +833,18 @@ const bostaKontrol = setInterval(() => {
       } catch {}
     }
     if (durum !== 'bitti' && !zorlaAday) continue;  // calisiyor/bilinmiyor: yalniz uzun sessizlikte kapat
+    // Şef oturumu yalnız gerçekten bitmişse uyutulur; zorla eşiği Şef'e uygulanmaz.
+    if (bilgi.orkestrator) {
+      if (durum !== 'bitti') continue;
+      zorlaAday = false;
+    }
+    // Çalışan EVREN işi ya da alt ajan varken asla uyutulmaz (RAM baskısında Şef öldürülmesin).
+    if (bilgi.devam) {
+      try {
+        const say = gecmis.oturumSayilari(bilgi.dizin, bilgi.devam, { atalar: bilgi.atalar });
+        if (say && ((say.evrenIsleri && say.evrenIsleri.calisan > 0) || (say.altAjanlar && say.altAjanlar.calisan > 0))) continue;
+      } catch {}
+    }
     adaylar.push({ id, sessiz });
     if (zorlaAday) zorlaKume.add(id); // zorla eşiğini geçen oturumda süreç ağacı bahane değil
   }
@@ -750,12 +856,9 @@ const bostaKontrol = setInterval(() => {
       const k = kabuklar.get(id);
       if (!k || !kabuklar.has(id)) continue;
       if (!zorlaKume.has(id) && agactaCalismaVar(ebeveyn, k.pid)) continue;
-      kabukKapat(id);
       // Boşta uyutulan oturum listede kalır: telefondan gelen mesaj onu --resume ile uyandırır.
-      const b = oturumBilgi.get(id);
-      if (b && b.devam) { b.uyuyor = true; b.sonGirdi = Date.now(); }
-      if (pencere && !pencere.isDestroyed()) pencere.webContents.send('pty:cikis', id, { kod: 0, bosta: true });
-      if (remoteSunucu) remoteSunucu.oturumListesiGuncelle();
+      // tek pty:cikis { bosta: true } kabukKapat içinde gider; onExit'in ikinci olayı bastırılır.
+      kabukKapat(id, { bosta: true });
     }
   });
 }, 60000);
@@ -975,13 +1078,14 @@ function remoteSunucuBaslat() {
   remoteSunucuBaslat();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) pencereOlustur(); });
 });
-app.on('window-all-closed', () => { tumunuKapat(); app.quit(); });
-// Uygulama baska bir yoldan kapanirsa da (menuden cikis, oturum sonu) tum surec agaclari kapansin.
-app.on('before-quit', () => { tumunuKapat(); });
+app.on('window-all-closed', () => { temizKapat(); app.quit(); });
+// Uygulama baska bir yoldan kapanirsa da (menuden cikis, oturum sonu) tum surec agaclari ve
+// telefon sunucusu kapansin; temizKapat idempotent'tir, iki olay ust uste gelse is iki kez donmez.
+app.on('before-quit', () => { temizKapat(); });
 
 
 // ---- Proje özeti: commit ısı haritası, dil dağılımı, son commit (yalnız yerel git; ağ yok) ----
-const { execFile, execFileSync } = require('node:child_process');
+const { execFile } = require('node:child_process');
 const projeOnbellek = new Map(); // yol -> { zaman, veri }
 const git = (dizin, args) => new Promise((coz) => {
   execFile('git', ['-C', dizin, ...args], { timeout: 4000, maxBuffer: 8 * 1024 * 1024, windowsHide: true }, (h, out) => coz(h ? null : String(out)));
@@ -1340,7 +1444,13 @@ ipcMain.handle('oturum-cikti', async (_e, param) => {
   const dosya = ciktiDosyasi(param);
   if (!dosya || !fs.existsSync(dosya)) return { ciktilar: [] };
   let iz = ciktiIzleyiciler.get(dosya);
-  if (!iz) { iz = new sohbet.CiktiIzleyici(); ciktiIzleyiciler.set(dosya, iz); }
+  if (!iz) iz = new sohbet.CiktiIzleyici();
+  // LRU sınırı: çok sayıda geçmiş oturum açmak ana süreç yığınını sınırsız büyütmesin.
+  ciktiIzleyiciler.delete(dosya);
+  ciktiIzleyiciler.set(dosya, iz);
+  while (ciktiIzleyiciler.size > 24 && ciktiIzleyiciler.keys().next().value !== dosya) {
+    ciktiIzleyiciler.delete(ciktiIzleyiciler.keys().next().value);
+  }
   const liste = iz.oku(dosya) || [];
   let resimSayisi = 0;
   // Küçük resim yalnız ilk birkaç görsel için ve aşırı büyük dosyalarda atlanır:
