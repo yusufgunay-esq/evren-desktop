@@ -368,14 +368,16 @@ async function oturumBaslat({ modelId, dizin, ekDizinler, projeAd, cols, rows, d
   if (TEST_KOMUT) bu = pty.spawn(TEST_KOMUT, [], secenek);
   else {
     const arg = ['--dangerously-skip-permissions', '--effort', eforDeger, ...(devam ? ['--resume', String(devam)] : []), ...(forkSession ? ['--fork-session'] : []), ...ekler.flatMap((d) => ['--add-dir', d])];
+    const kimlik = motor.kimlikIstemi(model.id, eforDeger, ork);
     if (ork) {
-      arg.push('--append-system-prompt', orkestratorBrifi(yazma));
+      arg.push('--append-system-prompt', kimlik + '\n\n' + orkestratorBrifi(yazma));
       if (!yazma) arg.push('--disallowedTools', 'Edit', 'Write', 'NotebookEdit');
       // Şef yalın MCP ile doğar: sef profili varsa yalnız onu yükle, yoksa ayar profilini (varsayılan yalın) uygula.
       const sefProfil = path.join(os.homedir(), '.evren', 'mcp-profilleri', 'sef.json');
       if (fs.existsSync(sefProfil)) arg.push('--strict-mcp-config', '--mcp-config', sefProfil);
       else mcpProfiliUygula(arg, ayarOku().mcpProfil ?? 'yalin');
     } else {
+      arg.push('--append-system-prompt', kimlik);
       // Her sekme varsayılan olarak yalın MCP ile doğar; ayar anahtarı: mcpProfil ('tam' = bugünkü tüm set).
       mcpProfiliUygula(arg, ayarOku().mcpProfil ?? 'yalin');
     }

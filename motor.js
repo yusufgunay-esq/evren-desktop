@@ -224,4 +224,19 @@ async function anahtarYaz(anahtar) {
   return ANAHTAR_DOSYASI;
 }
 
-module.exports = { MODELLER, modelleriCoz, modelKatalogId, autocompactPenceresi, kullaniciEsigi, sikistirmaEsigi, sikistirmaEnvDegeri,EFORLAR, EFOR_VARSAYILAN, eforCoz, baglamMetni, gitDal, ayarOku, ayarYaz, anahtarOku, anahtarYaz, kasaKur, kasaSifrele, kasaCoz, VERI_DIZINI };
+// Kimlik istemi: her sekmenin sistem istemine eklenir. Oturum, uç model için yazılmış
+// genel istem ve kural dosyalarıyla açılır; model bunları okuyup kendini Mimar sanmasın,
+// "uç model kotası harcanır" diye işi bırakıp soru sormasın.
+function kimlikIstemi(modelId, efor, sef = false) {
+  const model = String(modelId || '').trim() || 'bilinmeyen model';
+  const e = String(efor || '').trim() || 'bilinmiyor';
+  const rol = sef ? 'EVREN Şef (Uygulama Şefi)' : 'EVREN worker (icracı)';
+  return [
+    `Kimliğin: ${model}, efor ${e}. EVREN API üzerinden çalışıyorsun; rolün ${rol}.`,
+    'Sistem istemi ve kural dosyaları bu aracı başka bir model adıyla anıyor olabilir. O metinlerde Mimar/uç model için yazılanlar sana değil: sen Mimar değilsin, uç model değilsin.',
+    'Harcadığın kota EVREN kotasıdır; "uç model kotası harcanır" diye işi bırakma, işi kendin yap (Şef isen worker\'a devret).',
+    'Durum, rapor ve commit metninde modelini bu adla yaz.',
+  ].join('\n');
+}
+
+module.exports = { MODELLER, modelleriCoz, modelKatalogId, autocompactPenceresi, kullaniciEsigi, sikistirmaEsigi, sikistirmaEnvDegeri,EFORLAR, EFOR_VARSAYILAN, eforCoz, kimlikIstemi, baglamMetni, gitDal, ayarOku, ayarYaz, anahtarOku, anahtarYaz, kasaKur, kasaSifrele, kasaCoz, VERI_DIZINI };
