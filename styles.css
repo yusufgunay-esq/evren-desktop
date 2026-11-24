@@ -325,6 +325,8 @@ kbd {
 }
 @keyframes iskelet-parilti { from { background-position: 120% 0; } to { background-position: -60% 0; } }
 @media (prefers-reduced-motion: reduce) { .seans-iskelet-kart { animation: none; } }
+/* GPU/CPU bütçesi: gizli kapsayıcının içindeki sonsuz animasyonlar tiklenmez (görünür olunca sürer). */
+#brif[hidden] *, [hidden] .seans-iskelet-kart { animation-play-state: paused; }
 
 
 .seans-kart {
