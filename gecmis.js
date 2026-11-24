@@ -25,6 +25,20 @@ function metinCikar(icerik) {
 // Başlık ve model bulununca sonuç önbelleğe alınır, dosya bir daha okunmaz.
 const baslikOnbellek = new Map(); // id -> { bilgi, damga, ms, boyut }
 
+// ---------- Sınırlı (LRU) disk önbellekleri ----------
+// 15 sn'lik tarama aynı dosyaları tekrar tekrar açar; dosya damgası (mtimeMs, boyut) değişmedikçe
+// disk okuması ve JSON.parse yapılmaz. Her harita üst sınırı aşınca en eski anahtarı düşürür.
+const CWD_ONBELLEK = new Map();        // dosya -> { ms, boyut, cwd, varMi, varKontrolMs }
+const EVREN_KAYIT_ONBELLEK = new Map(); // dosya -> { ms, boyut, kayit }
+const EVREN_IS_ONBELLEK = new Map();    // "klasor|kayıtDosyası" -> { kayitMs, is }
+const ALT_AJAN_ONBELLEK = new Map();    // seansDizin -> { yok, dirMs, parentMs, canliVar, okumaMs, ajanlar }
+
+function sinirliEkle(harita, anahtar, deger, sinir = 1000) {
+  harita.delete(anahtar);
+  harita.set(anahtar, deger); // son kullanılan sona
+  if (harita.size > sinir) harita.delete(harita.keys().next().value);
+}
+
 function ozelBaslikOku(seansDizin) {
   try {
     const d = path.join(seansDizin, 'custom-title.json');
@@ -56,7 +70,11 @@ function ozelBaslikYaz(seansDizin, ad) {
   return temiz;
 }
 
-function baslikOnbellekTemizle(id) { baslikOnbellek.delete(id); }
+// Yeniden adlandırma anında yansısın: hem bellek hem kalıcı önbellekten düşer (mtime kayması beklenmez).
+function baslikOnbellekTemizle(id) {
+  baslikOnbellek.delete(id);
+  if (kaliciOnbellek) delete kaliciOnbellek[id];
+}
 
 // --resume çatallanmasında özel ad (custom-title.json) ata klasöründe kalır; uç klasöre kopyalanır.
 // Uçta kendi adı varsa dokunulmaz; kaynakta ad yoksa bir şey yazılmaz. Kopyalanan adı döner.
@@ -73,7 +91,7 @@ function ozelBaslikTasi(kaynakSeansDizini, hedefSeansDizini) {
 // Üst veri değişmediyse başlık yeniden okunmaz; uygulama açılışında 100 oturumun 6 MB'lık
 // kafalarını taramak yerine diskten gelir. Kimlik anahtarı: dosya mtime + boyut + ad damgası.
 // Test/demo (EVREN_PROJE_DIZINI) altında varsayılan olarak kapalıdır; gerçek ~/.claude taranmaz.
-const KALICI_SURUM = 3; // 3: anlamlı başlık + kokUuid (ata kopyası ayrımı); eski önbellek okunmaz, yeniden dolar.
+const KALICI_SURUM = 4; // 4: ozelAd da kalıcı önbellekte (özel ad ikinci kez okunmaz); 3: anlamlı başlık + kokUuid; eski önbellek okunmaz.
 let kaliciOnbellek = null; // { id: { ms, boyut, damga, baslik, kaynak } }
 let kaliciZaman = null;
 
@@ -177,17 +195,19 @@ function oturumBilgisi(dosya, id, seansDizin, olcu) {
   if (c && c.damga === damga && c.ms === ms && c.boyut === boyut) return c.bilgi;
   const disk = kaliciOnbellekOku()[id];
   if (disk && disk.damga === damga && disk.ms === ms && disk.boyut === boyut && disk.baslik && disk.kaynak) {
-    const b = { baslik: disk.baslik, kaynak: disk.kaynak, kokUuid: disk.kokUuid || '' };
+    const b = { baslik: disk.baslik, kaynak: disk.kaynak, kokUuid: disk.kokUuid || '', ozelAd: disk.ozelAd || '' };
     baslikOnbellek.set(id, { bilgi: b, damga, ms, boyut });
     return b;
   }
   const ozel = seansDizin ? ozelBaslikOku(seansDizin) : '';
   // Anlamlı başlık: "devam", "tamam" gibi tek sözcükler kart adı olmaz; ilk gerçek istek taranır.
   const b = baslikOku(dosya, false, true);
+  // ozelAd önbellekte taşınır: çağıranlar (çatal adı devri) ikinci kez custom-title.json okumaz.
+  b.ozelAd = ozel;
   if (ozel) b.baslik = ozel;
   if (b.baslik && b.kaynak) {
     baslikOnbellek.set(id, { bilgi: b, damga, ms, boyut });
-    kaliciOnbellekYaz(id, { ms, boyut, damga, baslik: b.baslik, kaynak: b.kaynak, kokUuid: b.kokUuid || '' });
+    kaliciOnbellekYaz(id, { ms, boyut, damga, baslik: b.baslik, kaynak: b.kaynak, kokUuid: b.kokUuid || '', ozelAd: ozel });
   }
   return b;
 }
@@ -313,9 +333,23 @@ function metaDosyalariOku(dizin, simdi) {
 
 // Alt ajanlar: <oturum>/subagents/agent-*.meta.json (doğrudan ajanlar) ve
 // <oturum>/subagents/workflows/wf_*/agent-*.meta.json (iş akışı ajanları; faz bilgisiyle).
-function altAjanlariOku(seansDizin) {
+// parentMs: üst oturum .jsonl mtime'ı; değiştiyse alt ajanların canlılığı yeniden okunur.
+function altAjanlariOku(seansDizin, parentMs = 0) {
   const simdi = Date.now();
   const subDizin = path.join(seansDizin, 'subagents');
+  let subSt = null;
+  try { subSt = fs.statSync(subDizin); } catch {}
+  const c = ALT_AJAN_ONBELLEK.get(seansDizin);
+  if (!subSt || !subSt.isDirectory()) {
+    // Klasör yok: negatif sonuç (üst oturum değişmedikçe) önbellekte kalır, readdir hatası tekrarlanmaz.
+    if (c && c.yok && c.parentMs === parentMs) return [];
+    sinirliEkle(ALT_AJAN_ONBELLEK, seansDizin, { yok: true, parentMs, ajanlar: [] }, 1200);
+    return [];
+  }
+  // Klasör var, üst oturum ve klasör damgası aynı, canlı ajan yok ve 30 sn geçmediyse: yeniden okuma.
+  if (c && !c.yok && c.dirMs === subSt.mtimeMs && c.parentMs === parentMs && !c.canliVar && (simdi - c.okumaMs < 30000)) {
+    return c.ajanlar;
+  }
   const ajanlar = metaDosyalariOku(subDizin, simdi);
 
   let klasorler;
@@ -328,7 +362,10 @@ function altAjanlariOku(seansDizin) {
       ajanlar.push({ ...a, isAkisi: k.name, isAkisiAdi: ad });
     }
   }
-  return ajanlar.sort((a, b) => a.ms - b.ms);
+  ajanlar.sort((a, b) => a.ms - b.ms);
+  const canliVar = ajanlar.some((a) => a.canli);
+  sinirliEkle(ALT_AJAN_ONBELLEK, seansDizin, { yok: false, dirMs: subSt.mtimeMs, parentMs, canliVar, okumaMs: simdi, ajanlar }, 1200);
+  return ajanlar;
 }
 
 // ---------- EVREN işleri (~/.evren/oturumlar/<uuid>.json) ----------
@@ -344,20 +381,39 @@ function evrenKayitDizini(secenekler) {
   return verilen || process.env.EVREN_KAYIT_DIZINI || path.join(os.homedir(), '.evren', 'oturumlar');
 }
 
+// (mtimeMs, boyut) değişmeyen kayıt yeniden ayrıştırılmaz; yarım yazılmış kayıt null olarak önbelleğe girer.
 function evrenKayitlariOku(kayitDizini) {
   let adlar;
   try { adlar = fs.readdirSync(kayitDizini); } catch { return []; } // klasör yoksa sessizce boş
+  const canliDosyalar = new Set();
   const liste = [];
   for (const a of adlar) {
     if (!a.endsWith('.json')) continue;
     const dosya = path.join(kayitDizini, a);
+    canliDosyalar.add(dosya);
+    let st;
+    try { st = fs.statSync(dosya); } catch { continue; }
+    const c = EVREN_KAYIT_ONBELLEK.get(dosya);
+    if (c && c.ms === st.mtimeMs && c.boyut === st.size) {
+      if (c.kayit) liste.push(c.kayit);
+      continue;
+    }
+    let kayit = null;
     try {
       const j = JSON.parse(fs.readFileSync(dosya, 'utf8'));
-      if (!j || typeof j !== 'object') continue;
-      const id = String(j.id || a.slice(0, -5));
-      if (!OTURUM_KIMLIK.test(id)) continue;
-      liste.push({ ...j, id, kayitDosyasi: dosya });
+      if (j && typeof j === 'object') {
+        const id = String(j.id || a.slice(0, -5));
+        if (OTURUM_KIMLIK.test(id)) kayit = { ...j, id, kayitDosyasi: dosya, _kayitMs: st.mtimeMs };
+      }
     } catch {} // bozuk/yarım yazılmış kayıt listeyi düşürmez
+    sinirliEkle(EVREN_KAYIT_ONBELLEK, dosya, { ms: st.mtimeMs, boyut: st.size, kayit }, 2000);
+    if (kayit) liste.push(kayit);
+  }
+  // Silinmiş kayıtların önbellek girdileri yalnız bu dizin için ve önbellek şişince temizlenir.
+  if (EVREN_KAYIT_ONBELLEK.size > 1500) {
+    for (const k of EVREN_KAYIT_ONBELLEK.keys()) {
+      if (path.dirname(k) === kayitDizini && !canliDosyalar.has(k)) EVREN_KAYIT_ONBELLEK.delete(k);
+    }
   }
   return liste;
 }
@@ -380,14 +436,23 @@ function evrenDurumu(kayit, jsonl, kayitMs, simdi) {
   return turDevamEdiyor(jsonlYolu, jsonl.size) === false ? 'kesildi' : 'calisiyor';
 }
 
+// Bitmiş iş (bitis != null) sonucu kayıt damgası değişmedikçe yeniden çözülmez: günler önce biten işler
+// her 15 sn'lik taramada disk okumaz. Devam eden iş her taramada taze durum ister (önbelleğe girmez).
 function evrenIsiOku(kayit, klasor, simdi) {
-  let jsonl = null, kayitMs = 0;
-  try { const s = fs.statSync(path.join(klasor, kayit.id + '.jsonl')); jsonl = { yol: path.join(klasor, kayit.id + '.jsonl'), mtimeMs: s.mtimeMs, size: s.size }; } catch {}
-  try { kayitMs = fs.statSync(kayit.kayitDosyasi).mtimeMs; } catch {}
+  const kayitMs = kayit._kayitMs || (() => { try { return fs.statSync(kayit.kayitDosyasi).mtimeMs; } catch { return 0; } })();
+  const anahtar = `${klasor || ''}|${kayit.kayitDosyasi}`;
+  if (kayit.bitis != null) {
+    const c = EVREN_IS_ONBELLEK.get(anahtar);
+    if (c && c.kayitMs === kayitMs) return c.is;
+  }
+  let jsonl = null;
+  if (klasor) {
+    try { const yol = path.join(klasor, kayit.id + '.jsonl'); const s = fs.statSync(yol); jsonl = { yol, mtimeMs: s.mtimeMs, size: s.size }; } catch {}
+  }
   const durum = evrenDurumu(kayit, jsonl, kayitMs, simdi);
   const baslikKayit = typeof kayit.baslik === 'string' ? kayit.baslik.trim() : '';
   const baslik = baslikKayit || (jsonl ? baslikOku(jsonl.yol, false, true).baslik : '') || 'EVREN işi';
-  return {
+  const is = {
     id: kayit.id,
     baslik,
     model: typeof kayit.model === 'string' ? kayit.model : '',
@@ -397,6 +462,8 @@ function evrenIsiOku(kayit, klasor, simdi) {
     canli: durum === 'calisiyor',
     ...(kayit.ust ? { ust: String(kayit.ust) } : {}),
   };
+  if (kayit.bitis != null) sinirliEkle(EVREN_IS_ONBELLEK, anahtar, { kayitMs, is }, 2000);
+  return is;
 }
 
 // `claude --resume` aynı sohbeti YENİ kimlikli bir dosyaya kopyalar: ilk kullanıcı mesajının uuid'si
@@ -462,15 +529,14 @@ function oturumGecmisi(dizin, secenekler) {
       const seansDizin = path.join(klasor, x.id);
       const taze = simdi - x.ms < CANLI_ESIK_MS;
       const turCanli = taze && turDevamEdiyor(x.dosya, x.boyut) !== false;
-      const altAjanlar = altAjanlariOku(seansDizin);
+      const altAjanlar = altAjanlariOku(seansDizin, x.ms);
       const calisanAjan = altAjanlar.filter((a) => a.canli).length;
       return {
         id: x.id,
-        ...oturumBilgisi(x.dosya, x.id, seansDizin, { ms: x.ms, boyut: x.boyut }),
+        ...oturumBilgisi(x.dosya, x.id, seansDizin, { ms: x.ms, boyut: x.boyut }), // ozelAd dahil; ikinci okuma yok
         ms: x.ms,
         boyut: x.boyut,
         dogumMs: x.dogumMs,
-        ozelAd: seansDizin ? ozelBaslikOku(seansDizin) : '', // çatallanmada ada devrolur
         turCanli,
         ajanCalisiyor: calisanAjan > 0,
         calisanAjan,
@@ -584,6 +650,23 @@ function cwdOku(dosya) {
   return cwd;
 }
 
+// Dosya damgası (mtimeMs, boyut) değişmedikçe cwd yeniden okunmaz; geçerlilik (dizin hâlâ var mı)
+// en çok 60 sn'de bir yeniden denetlenir. Geçersiz cwd '' döner (temp/arşiv/silinmiş).
+function cwdOkuOnbellekli(dosya, olcu, simdi = Date.now()) {
+  const c = CWD_ONBELLEK.get(dosya);
+  if (c && olcu && c.ms === olcu.ms && c.boyut === olcu.boyut) {
+    if (simdi - c.varKontrolMs > 60000) {
+      c.varMi = !!(c.cwd && fs.existsSync(c.cwd));
+      c.varKontrolMs = simdi;
+    }
+    return c.varMi ? c.cwd : '';
+  }
+  const cwd = cwdOku(dosya);
+  const varMi = !!(cwd && !tempMi(cwd) && !arsivMi(cwd) && fs.existsSync(cwd));
+  sinirliEkle(CWD_ONBELLEK, dosya, { ms: olcu ? olcu.ms : 0, boyut: olcu ? olcu.boyut : 0, cwd, varMi, varKontrolMs: simdi }, 1200);
+  return varMi ? cwd : '';
+}
+
 function tumOturumlariTara(secenekler) {
   const kokDizin = claudeKokDizini();
   let klasorler;
@@ -612,16 +695,16 @@ function tumOturumlariTara(secenekler) {
       if (!s || s.size <= 0) continue;
       if (simdi - s.mtimeMs > ON_DORT_GUN_MS) continue;
 
-      const cwd = cwdOku(dosya);
+      const cwd = cwdOkuOnbellekli(dosya, { ms: s.mtimeMs, boyut: s.size }, simdi);
       // Klasörü bilinmeyen ya da silinmiş oturum sürdürülemez; listede yanıltıcı satır olmasın.
-      if (!cwd || tempMi(cwd) || arsivMi(cwd) || !fs.existsSync(cwd)) continue;
+      if (!cwd) continue;
 
       const projeYol = cwd;
       const projeAd = path.basename(cwd) || 'Proje';
       const seansDizin = path.join(kYol, id);
       const taze = simdi - s.mtimeMs < CANLI_ESIK_MS;
       const turCanli = taze && turDevamEdiyor(dosya, s.size) !== false;
-      const altAjanlar = altAjanlariOku(seansDizin);
+      const altAjanlar = altAjanlariOku(seansDizin, s.mtimeMs);
       const calisanAjan = altAjanlar.filter((x) => x.canli).length;
       const bilgi = oturumBilgisi(dosya, id, seansDizin, { ms: s.mtimeMs, boyut: s.size });
 
@@ -632,8 +715,8 @@ function tumOturumlariTara(secenekler) {
         id,
         ...bilgi,
         ms: s.mtimeMs,
+        boyut: s.size, // çatal tekilleştirmesi: küçük kopya büyük atayı gizleyemez
         dogumMs: s.birthtimeMs || s.ctimeMs || s.mtimeMs,
-        ozelAd: ozelBaslikOku(seansDizin), // çatallanmada ada devrolur
         projeAd,
         projeYol,
         turCanli,
@@ -780,4 +863,15 @@ function icerikAraListe(turler, sorgu) {
   return sonuc;
 }
 
-module.exports = { oturumGecmisi, tumOturumlariTara, cwdOku, tempMi, oturumSayilari, altAjanlariOku, turDevamEdiyor, sonDurumOku, baslikOku, ozelBaslikOku, ozelBaslikYaz, ozelBaslikTasi, baslikOnbellekTemizle, evrenKayitlariOku, ataKopyalariniAyikla, icerikAra, icerikAraListe, aramaMetni, katla, adEslesir, birFark, okunurMetin, OTURUM_KIMLIK, CANLI_ESIK_MS };
+// Tüm bellek önbelleklerini boşaltır (test yalıtımı ve ortam değişimi).
+function onbellekTemizle() {
+  CWD_ONBELLEK.clear();
+  EVREN_KAYIT_ONBELLEK.clear();
+  EVREN_IS_ONBELLEK.clear();
+  ALT_AJAN_ONBELLEK.clear();
+  baslikOnbellek.clear();
+  durumOnbellek.clear();
+  kaliciOnbellek = null;
+}
+
+module.exports = { oturumGecmisi, tumOturumlariTara, cwdOku, tempMi, oturumSayilari, altAjanlariOku, turDevamEdiyor, sonDurumOku, baslikOku, ozelBaslikOku, ozelBaslikYaz, ozelBaslikTasi, baslikOnbellekTemizle, onbellekTemizle, evrenKayitlariOku, ataKopyalariniAyikla, icerikAra, icerikAraListe, aramaMetni, katla, adEslesir, birFark, okunurMetin, OTURUM_KIMLIK, CANLI_ESIK_MS };
