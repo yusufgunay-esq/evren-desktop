@@ -37,7 +37,8 @@ const TerminalSinif = window.Terminal || (window.xterm && window.xterm.Terminal)
 const FitSinif = window.FitAddon ? (window.FitAddon.FitAddon || window.FitAddon) : null;
 const WebglSinif = window.WebglAddon ? (window.WebglAddon.WebglAddon || window.WebglAddon) : null;
 const AraSinif = window.SearchAddon ? (window.SearchAddon.SearchAddon || window.SearchAddon) : null;
-let webglAktifSayi = 0; // doğrulama: kaç terminal WebGL ile çiziliyor
+let webglAktifSayi = 0; // doğrulama: kaç terminal WebGL ile çiziliyor (en çok 1: yalnız etkin görünür sekme)
+const VARSAYILAN_SCROLLBACK = 5000; // GPU bellek bütçesi: 20000 satır × N sekme commit'i şişiriyordu
 const S = {
   modeller: [], projeler: [], model: '', proje: '',
   sonKlasorler: [], serbestDizin: '', sonEfor: 'medium', eforlar: [],
@@ -647,6 +648,7 @@ function gorunumUygula() {
   if (goster) sohbetYukle(true);
   else if (canli) { sigdir(); setTimeout(() => o.term.focus(), 0); }
   setTimeout(() => sigdir(), 80);
+  webglSenkronla(); // terminal ↔ sohbet/dosyalar geçişinde bağlam yalnız terminal görünümünde kalır
 }
 // Okuma görünümünden çık: karşılama ya da etkin sekme geri gelir.
 function okumaKapat() {
@@ -827,7 +829,7 @@ function ozetYaz() {
   $('anahtarForm').hidden = S.anahtarVar || !S.yuklendi;
   if (!S.anahtarVar && !S.anahtarHata) $('uyariMetin').innerHTML = `EVREN API anahtarı yok. Anahtarı <a href="#" data-dis="https://evren.ssyz.org.tr">evren.ssyz.org.tr</a> üzerinden (e-Devlet ile giriş) alıp aşağıya yapıştırın. Anahtar ${S.platform === 'win32' ? 'bu Windows hesabına' : 'bu kullanıcı hesabına'} bağlı olarak ${kasaAdi(S.platform)} ile şifrelenir.`;
   else if (S.yuklendi && !p) { $('uyari').hidden = false; $('uyariMetin').textContent = 'Proje seçilmedi. Başlatınca klasör sorulur.'; }
-  cipYaz(); // sekme çizimi durum çubuğunu da tazeler (durumYaz)
+  durumYaz(true); // 15 sn'lik tazeleme: sekme şeridini yeniden kurmaz, fazladan oturum-baglam IPC'si açmaz
 }
 
 function tokenFormatla(n) {
@@ -1024,6 +1026,67 @@ const TEMA_ORK = {
   brightBlack: '#544a63', brightMagenta: '#e0c2ff',
 };
 const GENEL_TUS = new Set(['KeyP', 'KeyB', 'KeyT', 'KeyW', 'KeyF', 'KeyH']); // Ctrl+Shift+<tuş>: uygulamaya ait
+// ---------- tek-aktif WebGL bağlamı (GPU bütçesi) ----------
+// Chromium eşzamanlı WebGL bağlam sayısını ~8-16 ile sınırlar; her sekmenin kalıcı bağlam
+// tutması 8+ sekmede sınırları tüketip GPU sürecini ~660 MB'a şişiriyordu. Bağlamı yalnız
+// GÖRÜNÜR etkin terminal sekmesi taşır; geri kalan her sekme bağlamı anında bırakır.
+function webglBagla(o) {
+  if (!o || !o.term || !WebglSinif || o.webgl || o._webglYasak) return;
+  if (!o.el || o.el.hidden) return;
+  try {
+    const w = new WebglSinif();
+    w.onContextLoss(() => {
+      try { w.dispose(); } catch {}
+      if (o.webgl === w) {
+        o.webgl = null;
+        webglAktifSayi = Math.max(0, webglAktifSayi - 1);
+        if (o.el) o.el.dataset.webgl = '0';
+      }
+    });
+    o.term.loadAddon(w);
+    o.webgl = w;
+    webglAktifSayi++;
+    o.el.dataset.webgl = '1';
+  } catch {
+    o.webgl = null;
+    o._webglYasak = true; // bu oturumda WebGL bir daha denemez: canvas çizimine düşer
+    if (o.el) o.el.dataset.webgl = '0';
+  }
+}
+function webglBirak(o) {
+  if (!o || !o.webgl) return;
+  const w = o.webgl;
+  o.webgl = null;
+  webglAktifSayi = Math.max(0, webglAktifSayi - 1);
+  if (o.el) o.el.dataset.webgl = '0';
+  try { w.dispose(); } catch {}
+}
+function webglSenkronla() {
+  const aktif = aktifOturum();
+  const terminalGorunur = !seciliOturumGecmisi && aktif && aktif.term && aktifGorunum() === 'terminal';
+  for (const x of S.oturumlar) {
+    if (!terminalGorunur || x.id !== aktif.id) webglBirak(x);
+  }
+  if (terminalGorunur) {
+    webglBagla(aktif);
+    // Bağlam yeni açıldıysa glifler boş titremesin: tüm satırları hemen yeniden boya.
+    if (aktif.webgl) { try { aktif.term.refresh(0, aktif.term.rows - 1); } catch {} }
+  }
+}
+// Sekme kapanırken/ölürken kalan her zamanlayıcı, bekleyen çıktı ve WebGL bağlamı bırakılır.
+function oturumKaynakTemizle(o) {
+  if (!o) return;
+  clearInterval(o.sayac); o.sayac = null;
+  clearInterval(o._adIzleTimer); o._adIzleTimer = null;
+  clearInterval(o._sefIzleTimer); o._sefIzleTimer = null;
+  clearTimeout(o._modelTaraTimer); o._modelTaraTimer = null;
+  clearTimeout(o.hizaZaman); o.hizaZaman = null;
+  if (o.pid) bekleyenVeri.delete(o.pid);
+  webglBirak(o);
+  try { o.term && o.term.dispose(); } catch {}
+  o.term = null;
+  if (o.el) { o.el.remove(); o.el = null; }
+}
 async function terminalOlustur(o) {
   o.sonBoyut = null; // terminal yeniden kuruldu: boyut defteri sıfırlanır, ilk sigdir gerçek boyutu bildirir
   try { await document.fonts.ready; await document.fonts.load(`${S.fs}px "IBM Plex Mono"`); } catch {}
@@ -1035,7 +1098,7 @@ async function terminalOlustur(o) {
     fontFamily: '"IBM Plex Mono", "Cascadia Mono", Consolas, monospace',
     fontSize: S.fs, lineHeight: 1.22, letterSpacing: 0,
     cursorBlink: true, cursorStyle: 'bar', cursorWidth: 2,
-    allowProposedApi: true, scrollback: 20000, smoothScrollDuration: 0, theme: o.orkestrator ? TEMA_ORK : TEMA,
+    allowProposedApi: true, scrollback: VARSAYILAN_SCROLLBACK, smoothScrollDuration: 0, theme: o.orkestrator ? TEMA_ORK : TEMA,
   });
   t.open(el);
   const f = FitSinif ? new FitSinif() : null;
@@ -1048,20 +1111,9 @@ async function terminalOlustur(o) {
       ara.onDidChangeResults((r) => { if (o.id === S.aktif) termAraSayYaz(r); });
     } catch { ara = null; }
   }
-  // WebGL karolama: desteklenmezse sessizce canvas çizimine düşer (uygulama çalışmaya devam eder).
-  let webgl = null;
-  if (WebglSinif) {
-    try {
-      webgl = new WebglSinif();
-      webgl.onContextLoss(() => { try { webgl.dispose(); } catch {} webgl = null; });
-      t.loadAddon(webgl);
-      webglAktifSayi++;
-      el.dataset.webgl = '1';
-    } catch {
-      webgl = null;
-      el.dataset.webgl = '0';
-    }
-  }
+  // WebGL karolama artık burada DEĞİL: bağlam yalnız görünür etkin sekmede webglSenkronla()
+  // ile açılır (webglBagla/webglBirak). Gizli sekme GPU bağlamı tutmaz; desteklenmezse
+  // sessizce canvas çizimine düşülür (uygulama çalışmaya devam eder).
   t.onData((veri) => {
     if (o.uyuyor) { uyandir(o, veri); return; }   // boşta uyutulmuş sekme: yazınca aynı sekmede sürer
     if (o.pid) window.evren.yaz(o.pid, veri);
@@ -1154,7 +1206,7 @@ async function terminalOlustur(o) {
     // Tekerlekle panel kendiliğinden açılmaz; yalnız konuşma düğmesi / Ctrl+Shift+H açar.
   }, { passive: true });
   setTimeout(olcTampon, 1200);
-  Object.assign(o, { el, term: t, fit: f, webgl, ara, olcTampon });
+  Object.assign(o, { el, term: t, fit: f, webgl: null, ara, olcTampon });
 }
 // ---- terminale görsel / dosya ekleme, ipucu, arama, tuş şeridi ----
 let ipucuZaman = 0;
@@ -1417,8 +1469,9 @@ function sekmeAdi(o) {
   return o.ad || o.proje;
 }
 // ---------- sekmeler ----------
-function sekmeleriCiz() {
-  $('sekmeler').innerHTML =
+let sonSekmeHtml = '';
+function sekmeleriCiz(baglamAtla = false) {
+  const html =
     `<button class="tab ana${S.aktif == null && !seciliOturumGecmisi ? ' aktif' : ''}" data-id="ana" role="tab" title="Yeni oturum ekranı (Ctrl+Shift+T)">${ikon('term')}<span>ana</span></button>` +
     S.oturumlar.map((o, i) => `
       <button class="tab${o.id === S.aktif && !seciliOturumGecmisi ? ' aktif' : ''}${o.canli ? '' : ' bitti'}${o.yeni ? ' yeni' : ''}${o.orkestrator ? ' ork' : ''}" data-id="${o.id}" role="tab" title="${esc(sekmeAdi(o))} · ${esc(o.proje)} · ${esc(o.model)}${o.efor ? ' · efor ' + esc(o.efor) : ''}${o.dal ? ' · ' + esc(o.dal) : ''}${o.orkestrator ? ' · şef · kod yazma ' + (o.kodYazma ? 'açık' : 'kapalı') : ''} · çift tık: adlandır">
@@ -1428,12 +1481,16 @@ function sekmeleriCiz() {
         <span class="tab-x" data-kapat="${o.id}" title="Sekmeyi kapat (Ctrl+Shift+W)">×</span>
       </button>`).join('') +
     (seciliOturumGecmisi ? `<button class="tab okuma aktif" data-id="okuma" role="tab" title="${esc(seciliOturumGecmisi.baslik || '')} · salt okunur kayıt">${ikon('chat')}<span class="tab-ad">${esc(seciliOturumGecmisi.baslik || 'kayıt')}</span><span class="tab-x" data-okuma-kapat="1" title="Okumayı kapat">×</span></button>` : '');
-  const a = $('sekmeler').querySelector('.tab.aktif');
-  if (a) a.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  durumYaz();
+  if (html !== sonSekmeHtml) { // aynı HTML için sekme şeridini baştan kurma (layout + olay kaybettirici nuke)
+    sonSekmeHtml = html;
+    $('sekmeler').innerHTML = html;
+    const a = $('sekmeler').querySelector('.tab.aktif');
+    if (a) a.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+  durumYaz(baglamAtla);
 }
 const cipYaz = sekmeleriCiz; // eski adla çağıranlar için
-function durumYaz() {
+function durumYaz(baglamAtla = false) {
   const o = aktifOturum();
   S.calisiyor = !!(o && o.canli);
   $('baslaBtn').hidden = false;
@@ -1448,7 +1505,7 @@ function durumYaz() {
   else { $('crProje').textContent = p ? p.ad : '—'; $('crDal').textContent = p && p.dal ? p.dal : '—'; }
   $('sOturum').textContent = `${S.oturumlar.filter((x) => x.canli).length}/${S.oturumlar.length} sekme`;
   sureYaz();
-  baglamYaz();
+  if (!baglamAtla) baglamYaz(); // baglamYaz → sekmeleriCiz(true) döngüsü burada kapanır
 }
 // Alt çubukta bağlam: oturum varsa kayıttan gerçek kullanım (token / pencere · %),
 // yoksa yalnız seçili modelin penceresi. Yanıt sırası karışırsa eski yanıt yazılmaz.
@@ -1475,7 +1532,7 @@ async function baglamYaz() {
   if (kayitTaze && kayitModel !== o.model) {
     o.model = kayitModel;
     if (o.pid && window.evren && window.evren.modelGuncelle) window.evren.modelGuncelle(o.pid, kayitModel);
-    sekmeleriCiz();
+    sekmeleriCiz(true); // sekmeleri güncelle ama durum çubuğu üzerinden baglamYaz'ı yeniden tetikleme
   }
   const modelId = o.model || kayitModel || '—';
   const katalog = S.modeller.find((x) => x.id === modelId) || S.modeller.find((x) => modelId.endsWith('/' + x.id)) || {};
@@ -1519,6 +1576,7 @@ function sekmeSec(id) {
   gecmisCiz();
   if (o && o.term) { sigdir(); setTimeout(() => hizaKontrol(o), 400); }
   gorunumUygula();
+  webglSenkronla(); // WebGL yalnız kalan görünür etkin sekmede; diğerleri bağlamı bırakır
 }
 function sekmeGez(yon) {
   const dizi = [null, ...S.oturumlar.map((o) => o.id)];
@@ -1531,9 +1589,7 @@ async function sekmeKapat(id) {
   const o = S.oturumlar[i];
   if (o.devam) kapatilanlar.push({ devam: o.devam, dizin: o.yol, modelId: o.model });
   if (o.canli && o.pid) await window.evren.kapatOturum(o.pid);
-  clearInterval(o.sayac);
-  try { o.term && o.term.dispose(); } catch {}
-  if (o.el) o.el.remove();
+  oturumKaynakTemizle(o); // sayac/ad/sef/model tarayıcı zamanlayıcıları + bekleyen veri + WebGL bağlamı
   S.oturumlar.splice(i, 1);
   if (S.aktif === id) {
     const komsu = S.oturumlar[i] || S.oturumlar[i - 1];
@@ -1592,9 +1648,7 @@ async function basla(devamId, secenekler) {
     const o = { id: ++sonYerel, pid: 0, model: m.id, efor: sec.efor || S.sonEfor, _yeni: !devam, proje: sec.projeAd || (p ? p.ad : (yol ? (yol.split(/[\\/]/).filter(Boolean).pop() || yol) : 'EVREN çalışma alanı')), dal: p ? p.dal : '', yol: yol || S.serbestDizin, ekler: ekDizinler, canli: true, kod: null, basladi: 0, yeni: false, devam, orkestrator, kodYazma };
     if (oluSekme >= 0 && S.oturumlar[oluSekme]) {
       const eski = S.oturumlar[oluSekme];
-      clearInterval(eski.sayac);
-      try { eski.term && eski.term.dispose(); } catch {}
-      if (eski.el) eski.el.remove();
+      oturumKaynakTemizle(eski); // ölü sekmenin zamanlayıcıları ve WebGL bağlamı sızmasın
       S.oturumlar.splice(oluSekme, 1);
       if (S.aktif === eski.id) S.aktif = null;
       S.oturumlar.splice(oluSekme, 0, o);
@@ -1639,9 +1693,11 @@ async function basla(devamId, secenekler) {
     // Bağlam/tur sayacı 5 sn'de bir tazelenir: kayıt dosyasının yalnız yeni baytları okunur.
     o.sayac = setInterval(() => {
       if (o.id !== S.aktif) return;
-      sureYaz(); oturumModeliTara(o); hizaKontrol(o);
+      // Model tampon taraması buraya değil çıktı olayına bağlı: veriDinle'de kısaltmalı,
+      // sekme seçilirken bir kez koşuluyor (80 satır çeviri + 2 regex/sn boşuna değildi).
+      sureYaz(); hizaKontrol(o);
       o.baglamTik = (o.baglamTik || 0) + 1;
-      if (o.baglamTik % 5 === 0) baglamYaz();
+      if (!document.hidden && o.baglamTik % 5 === 0) baglamYaz();
     }, 1000);
     sekmeleriCiz();
     sigdir();
@@ -1714,12 +1770,13 @@ function sefKimligiIzle(o) {
   };
   kaydet(o.devam);
   let n = 0;
-  const t = setInterval(async () => {
-    if (!o.canli || o._forkAdopte || n++ > 40) { clearInterval(t); return; }
+  // Zamanlayıcı oturumda tutulur (o._sefIzleTimer): sekme kapanınca oturumKaynakTemizle temizler.
+  o._sefIzleTimer = setInterval(async () => {
+    if (!o.canli || o._forkAdopte || n++ > 40) { clearInterval(o._sefIzleTimer); o._sefIzleTimer = null; return; }
     const b = await window.evren.oturumKimlik(o.pid).catch(() => null);
-    if (b && b.devam && b.devam !== o.devam) { kaydet(b.devam); clearInterval(t); }
+    if (b && b.devam && b.devam !== o.devam) { kaydet(b.devam); clearInterval(o._sefIzleTimer); o._sefIzleTimer = null; }
   }, 1500);
-  if (t.unref) t.unref();
+  if (o._sefIzleTimer.unref) o._sefIzleTimer.unref();
 }
 function sureYaz() {
   const o = aktifOturum();
@@ -2417,7 +2474,14 @@ const Kare = (() => {
   function uyandir() { if (!raf && !document.hidden && aboneler.size) raf = requestAnimationFrame(dongu); }
   document.addEventListener('visibilitychange', () => { if (document.hidden) { cancelAnimationFrame(raf); raf = 0; } else uyandir(); });
   return {
-    abone(f) { aboneler.add(f); uyandir(); return () => { aboneler.delete(f); }; },
+    abone(f) {
+      aboneler.add(f); uyandir();
+      return () => {
+        aboneler.delete(f);
+        // Son abone da gittiyse döngüyü hemen durdur: abonesiz 60 FPS rAF tiklemez (GPU/CPU bütçesi).
+        if (!aboneler.size && raf) { cancelAnimationFrame(raf); raf = 0; }
+      };
+    },
     durdur() { cancelAnimationFrame(raf); raf = 0; },
     get calisiyor() { return !!raf; },
     aboneSayisi: () => aboneler.size,
@@ -2483,7 +2547,8 @@ const Gecikme = (() => {
   }
   return { olc: k.olc, ciz };
 })();
-Kare.abone((now) => Takimyildiz.ciz(now));
+// Kalıcı abone YOK: takımyıldız artık Grafik.basla()/dur() yaşam döngüsüne bağlı —
+// brif gizliyken (oturumda çalışırken) tek kare bile çizilmez.
 // ---------- canlı grafik: Model → EVREN → Proje akışı + takımyıldız ----------
 const Grafik = (() => {
   const kutu = $('brif');
@@ -2491,6 +2556,9 @@ const Grafik = (() => {
   kutu.prepend(cv);
   const c = cv.getContext('2d', { alpha: false });
   let w = 0, h = 0, dpr = 1, bag = null, son = 0, kart = null, fare = null, isabet = [];
+  let sonImlec = ''; // imleç stili yazma önbelleği: her karede style.atama = gereksiz stil geçersiz kılma
+  // Etiket genişlikleri her karede yeniden ölçülmez: (taraf, liste uzunluğu, tuval genişliği) sabitse önbellek.
+  const etiketWBellek = { sag: null, sol: null };
   const t0 = performance.now();
   const yildiz = Array.from({ length: 38 }, () => ({
     x: Math.random(), y: Math.random(), vx: (Math.random() - 0.5) * 0.008, vy: (Math.random() - 0.5) * 0.008, r: Math.random() * 1.1 + 0.5,
@@ -2515,8 +2583,20 @@ const Grafik = (() => {
     if (!kart || !liste.length) return [];
     const bosluk = sag ? w - (kart.x + kart.w) : kart.x;
     // Etiketin tamamı sığmalı: en uzun etiket + düğüm + kenar payı; sığmazsa çağıran etiketsiz çizer.
-    c.font = `500 10px ${MONO}`;
-    const etiketW = etiketli ? Math.min(150, Math.max(...liste.map((o) => c.measureText(o.ust.length > 22 ? o.ust.slice(0, 21) + '…' : o.ust).width))) : 0;
+    // measureText pahalıdır: (liste uzunluğu, w) değişmediyse önbellekten kullan, her karede ölçme.
+    let etiketW = 0;
+    if (etiketli) {
+      const taraf = sag ? 'sag' : 'sol';
+      const anahtar = `${liste.length}|${Math.round(w)}`;
+      const kayit = etiketWBellek[taraf];
+      if (kayit && kayit.anahtar === anahtar) {
+        etiketW = kayit.deger;
+      } else {
+        c.font = `500 10px ${MONO}`;
+        etiketW = Math.min(150, Math.max(...liste.map((o) => c.measureText(o.ust.length > 22 ? o.ust.slice(0, 21) + '…' : o.ust).width)));
+        etiketWBellek[taraf] = { anahtar, deger: etiketW };
+      }
+    }
     const ara = Math.min(130, bosluk - etiketW - (etiketli ? 36 : 24));
     if (ara < 40) return [];
     const x = sag ? kart.x + kart.w + ara : kart.x - ara;
@@ -2640,7 +2720,8 @@ const Grafik = (() => {
     } else if (!etiketli) { /* başlık yok */ } else if (sol.length) { c.textAlign = 'right'; c.fillText('MODEL', sol[0].x - 12, Math.min(...sol.map((d) => d.y)) - 26); }
     if (!yatay && etiketli && sag.length) { c.textAlign = 'left'; c.fillText('PROJE', sag[0].x + 12, Math.min(...sag.map((d) => d.y)) - 26); }
     Gecikme.ciz(t);
-    cv.style.cursor = fare && isabet.some((d) => Math.hypot(fare[0] - d.x, fare[1] - d.y) < 16) && S.aktif == null ? 'pointer' : '';
+    const yeniImlec = fare && isabet.some((d) => Math.hypot(fare[0] - d.x, fare[1] - d.y) < 16) && S.aktif == null ? 'pointer' : '';
+    if (yeniImlec !== sonImlec) { cv.style.cursor = yeniImlec; sonImlec = yeniImlec; }
   }
   cv.addEventListener('mousemove', (e) => { const b = cv.getBoundingClientRect(); fare = [e.clientX - b.left, e.clientY - b.top]; });
   cv.addEventListener('mouseleave', () => { fare = null; });
@@ -2655,9 +2736,10 @@ const Grafik = (() => {
   function basla() {
     if (bag || document.hidden || kutu.hidden || S.aktif != null) return;
     olc();
-    if (AZ_HAREKET) { ciz(performance.now(), true); return; }
+    if (AZ_HAREKET) { ciz(performance.now(), true); Takimyildiz.ciz(performance.now()); return; }
     son = 0;
-    bag = Kare.abone((now) => ciz(now));
+    // Takımyildiz aynı abonede: brif gizlendiğinde dur() aboneliği kaldırır ve Kare rAF'ı kapatır.
+    bag = Kare.abone((now) => { ciz(now); Takimyildiz.ciz(now); });
   }
   function dur() {
     if (!bag) return;
