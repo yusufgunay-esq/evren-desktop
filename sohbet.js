@@ -127,6 +127,11 @@ function zamanMs(j) {
 function girisleriCoz(j, aracAdlari) {
   const girisler = [];
   if (!j || typeof j !== 'object' || j.isMeta === true || j.isSidechain === true) return girisler;
+  // Yalnız transkriptte görünen (istemciye taşınmayan) kayıtlar sohbete girmez (Claude Code bayrağı).
+  if (j.isVisibleInTranscriptOnly === true) return girisler;
+  // Sıkıştırma özeti ayrı işaretlenir: arayüz katlar/biçimler, normal kullanıcı mesajıyla karışmaz.
+  const ozetMi = j.isCompactSummary === true || j.is_compact_summary === true;
+  const ekOzet = ozetMi ? { ozet: true } : null;
   const ms = zamanMs(j);
   const mesaj = j.message;
   if (!mesaj) return girisler;
@@ -136,7 +141,7 @@ function girisleriCoz(j, aracAdlari) {
     if (typeof icerik === 'string') {
       const metin = icerik.trim();
       if (metin && !metin.startsWith('Caveat:') && !metin.startsWith('[Request interrupted')) {
-        girisler.push({ rol: 'kullanici', metin, ms });
+        girisler.push({ rol: 'kullanici', metin, ms, ...(ekOzet || {}) });
       }
       return girisler;
     }
@@ -145,7 +150,7 @@ function girisleriCoz(j, aracAdlari) {
       if (!blok) continue;
       if (blok.type === 'text') {
         const metin = String(blok.text || '').trim();
-        if (metin) girisler.push({ rol: 'kullanici', metin, ms });
+        if (metin) girisler.push({ rol: 'kullanici', metin, ms, ...(ekOzet || {}) });
       } else if (blok.type === 'tool_result') {
         // Özet, aracın ADI ve GİRDİSİdir (dosya yolu, komut); sonucun ilk satırı
         // başlık olarak anlamsız kalıyordu (ör. dosya içeriğinin 1. satırı).
@@ -168,7 +173,7 @@ function girisleriCoz(j, aracAdlari) {
       if (!blok) continue;
       if (blok.type === 'text') {
         const metin = String(blok.text || '').trim();
-        if (metin) girisler.push({ rol: 'asistan', metin, ms });
+        if (metin) girisler.push({ rol: 'asistan', metin, ms, ...(ekOzet || {}) });
       } else if (blok.type === 'tool_use') {
         const ad = String(blok.name || 'Araç');
         // Soru aracı: tek satırlık JSON dökümü yerine gerçek soru ve seçenekler
@@ -392,7 +397,7 @@ function sonKullanim(dosya) {
 }
 
 class BaglamIzleyici {
-  constructor() { this.dosya = null; this.konum = 0; this.yanit = 0; this.kalan = ''; this.son = null; }
+  constructor() { this.dosya = null; this.konum = 0; this.mtimeMs = 0; this.yanit = 0; this.kalan = ''; this.son = null; }
 
   // Yeni baytlarda asistan yanıtı imzasını sayar (JSON ayrıştırmadan, 1:1 latin1 bayt eşlemesi).
   // Sentetik turlar da usage bloğu taşır; imzaları çıkarılarak yalnız gerçek turlar sayılır.
@@ -411,8 +416,12 @@ class BaglamIzleyici {
     if (!dosya) return this.son;
     let st;
     try { st = fs.statSync(dosya); } catch { return this.son; }
+    // Dosya değişmediyse (aynı yol, aynı boyut, aynı mtime) disk hiç açılmaz: sonKullanim'ın 256 KB okuması da atlanır.
+    if (dosya === this.dosya && st.size === this.konum && st.mtimeMs === this.mtimeMs && this.son) {
+      return this.son;
+    }
     if (dosya !== this.dosya || st.size < this.konum) {
-      this.dosya = dosya; this.konum = 0; this.yanit = 0; this.kalan = '';
+      this.dosya = dosya; this.konum = 0; this.mtimeMs = 0; this.yanit = 0; this.kalan = '';
     }
     if (st.size > this.konum) {
       let fd;
@@ -428,6 +437,7 @@ class BaglamIzleyici {
         }
       } finally { try { fs.closeSync(fd); } catch {} }
     }
+    this.mtimeMs = st.mtimeMs;
     const k = sonKullanim(dosya);
     this.son = {
       token: k ? k.token : null,

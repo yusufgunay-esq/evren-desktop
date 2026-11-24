@@ -83,8 +83,10 @@ function yazilanDosyalar(dosya) {
   const iz = new sohbet.CiktiIzleyici();
   try { iz.oku(dosya); } catch {}
   const dosyalar = iz.yazilanYollar();
-  if (onbellek.size > 400) onbellek.clear();
+  // LRU: en eski girdi düşer; 401'de tüm önbelleği silmek sıcak oturumları da soğuturdu.
+  onbellek.delete(dosya);
   onbellek.set(dosya, { mtimeMs: st.mtimeMs, size: st.size, dosyalar });
+  if (onbellek.size > 400) onbellek.delete(onbellek.keys().next().value);
   return dosyalar;
 }
 
