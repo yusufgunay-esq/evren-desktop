@@ -276,6 +276,11 @@
     const m = String(metin == null ? '' : metin).replace(/\s+/g, ' ').trim();
     return m ? m + '\r' : '';
   }
+  // Birleşik yazım için: metin tek satır, sonuna \r EKLENMEZ (Enter ayrı gönderilir; TUI aynı
+  // paketteki CR'yi gönderim saymıyor). gonderilecek eski testler için aynen korunur.
+  function gonderilecekMetin(metin) {
+    return String(metin == null ? '' : metin).replace(/\s+/g, ' ').trim();
+  }
   // PTY'ye boyut bildirimi yalnız gerçek değişimde gitsin: aynı boyutu bildirmek SIGWINCH üretir,
   // Claude Code TUI banner + transkripti gereksiz yere baştan çizer. Eksik/geçersiz değer "farklı" sayılır.
   function boyutAyni(onceki, yeni) {
@@ -330,7 +335,7 @@
     return darwin ? String(etiket).replace(/\bCtrl\b/g, 'Cmd') : etiket;
   }
 
-  const api = { claudeSuz, evrenMi, aramaMetni, katla, birFark, adEslesir, okunmamisMi, hizliGecis, acilanEkle, komsuSira, KISAYOLLAR, kisayolBul, etiketDarwin, HIZLI_SINIR, VARSAYILAN, TARIH_KUMELERI, tarihKumesi, tarihGrupla, projeGrupla, arsivAyir, etkinProje, anahtar, oku, yaz, karsiti, sonraki, GORUNUMLER, dipteMi, altIsBul, boyutAyni, dosyaTuru, dosyaSuz, dosyaSay, goreliYol, dosyaGrupla, yapistirAdi, yolMetni, panoKarar, gonderilecek, TERMINAL_TUSLARI };
+  const api = { claudeSuz, evrenMi, aramaMetni, katla, birFark, adEslesir, okunmamisMi, hizliGecis, acilanEkle, komsuSira, KISAYOLLAR, kisayolBul, etiketDarwin, HIZLI_SINIR, VARSAYILAN, TARIH_KUMELERI, tarihKumesi, tarihGrupla, projeGrupla, arsivAyir, etkinProje, anahtar, oku, yaz, karsiti, sonraki, GORUNUMLER, dipteMi, altIsBul, boyutAyni, dosyaTuru, dosyaSuz, dosyaSay, goreliYol, dosyaGrupla, yapistirAdi, yolMetni, panoKarar, gonderilecek, gonderilecekMetin, TERMINAL_TUSLARI };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else kok.Gorunum = api;
 })(typeof window !== 'undefined' ? window : globalThis);

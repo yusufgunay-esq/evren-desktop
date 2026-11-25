@@ -317,7 +317,9 @@ function uykuDugmeCiz() {
 function gecmisCiz() {
   const el = $('gecmisList');
   if (!el) return;
-  if (!S.projeler || !S.projeler.length) {
+  // Proje listesi boş olsa da oturumlar (projesiz/aktif) görünmeli: boş mesaj yalnız
+  // ne proje ne geçmiş varsa gösterilir.
+  if ((!S.projeler || !S.projeler.length) && (!S.gecmis || !S.gecmis.length)) {
     if ($('gecmisSay')) $('gecmisSay').textContent = '—';
     el.innerHTML = '<div class="bos-satir">Henüz kayıtlı proje yok.</div>';
     return;
@@ -649,6 +651,7 @@ function gorunumUygula() {
   else if (canli) { sigdir(); setTimeout(() => o.term.focus(), 0); }
   setTimeout(() => sigdir(), 80);
   webglSenkronla(); // terminal ↔ sohbet/dosyalar geçişinde bağlam yalnız terminal görünümünde kalır
+  sohbetAboneSenkronla(); // sohbet görünümü açıldıysa push aboneliği kur, terminale geçildiyse bırak
 }
 // Okuma görünümünden çık: karşılama ya da etkin sekme geri gelir.
 function okumaKapat() {
@@ -661,6 +664,7 @@ function okumaKapat() {
   sekmeleriCiz();
   gecmisCiz();
   sohbetIgneDurumGuncelle();
+  sohbetAboneSenkronla(); // okuma modu kapandı: push aboneliği etkin sekmeye döner
 }
 // "Devam et": oturumu bugünkü gibi terminalde sürdürür (hedef terminal görünümünde açılır).
 function okumaDevamEt() {
@@ -1080,7 +1084,6 @@ function oturumKaynakTemizle(o) {
   clearInterval(o._adIzleTimer); o._adIzleTimer = null;
   clearInterval(o._sefIzleTimer); o._sefIzleTimer = null;
   clearTimeout(o._modelTaraTimer); o._modelTaraTimer = null;
-  clearTimeout(o.hizaZaman); o.hizaZaman = null;
   if (o.pid) bekleyenVeri.delete(o.pid);
   webglBirak(o);
   try { o.term && o.term.dispose(); } catch {}
@@ -1119,7 +1122,6 @@ async function terminalOlustur(o) {
     if (o.pid) window.evren.yaz(o.pid, veri);
     // Uzun süre boş bekleyen oturumda ilk mesaj sonradan yazılabilir: ad aramasını yeniden başlat.
     if (!o.ad && !o.orkestrator) sekmeAdIzle(o);
-    o.hizaDeneme = 0; // kullanıcı çalışıyor: otomatik hizalama sayacı sıfırlanır, yeni durum beklenir
   });
   t.attachCustomKeyEventHandler((e) => {
     if (e.type !== 'keydown') return true;
@@ -1347,38 +1349,9 @@ function sigdir() {
     }
   });
 }
-// "/" menüsü açılıp kapanınca satır içi arayüz ekranın ortasında kalabiliyor: girdi bloğunun altında
-// boş satırlar kalır. Çıktı durulunca ve imleç ekranın ortasında/üstündeyken pty'ye Ctrl+L gönderilir;
-// kullanıcının elle yaptığı düzeltmenin aynısıdır, araç görünümü silip alt alta yeniden çizer.
-// Yazılan metin korunur (ölçüldü). İmleç dipteyse alttaki boşluklar girdi alanıdır, dokunulmaz.
-// Aynı hizasızlık için en çok bir kez denenir (her Ctrl+L TUI'de tüm transkripti yeniden basar);
-// hiza düzelince ya da kullanıcı yazınca sayaç sıfırlanır.
-const HIZA_BOS_ESIK = 3;
-const HIZA_EN_COK = 1;
-function hizaKontrol(o) {
-  if (!o || !o.term || !o.pid || o.id !== S.aktif) return;
-  const b = o.term.buffer.active, rows = o.term.rows;
-  // Alt tampon (vim/less) ve kullanıcının geçmişe kaydırdığı görünüm olduğu gibi bırakılır.
-  // baseY = 0 ise içerik bir ekranı doldurmamıştır; Ctrl+L onu aşağı taşıyamaz, başlangıç ekranı bozulmaz.
-  if (b.type !== 'normal' || b.baseY <= 0 || b.viewportY !== b.baseY) { o.hizaDeneme = 0; return; }
-  // İmleç dipteyse alttaki boş satırlar normal girdi alanıdır (Claude Code TUI); onarım yapılmaz.
-  if (b.cursorY >= rows - 1) { o.hizaDeneme = 0; return; }
-  let son = -1;
-  for (let y = rows - 1; y >= 0; y--) {
-    const l = b.getLine(b.baseY + y);
-    if (l && l.translateToString(true).trim()) { son = y; break; }
-  }
-  const bos = son >= 0 ? rows - 1 - son : 0;
-  if (bos < HIZA_BOS_ESIK) { o.hizaDeneme = 0; return; }
-  const deneme = o.hizaDeneme || 0;
-  if (deneme >= HIZA_EN_COK) return;
-  o.hizaDeneme = deneme + 1;
-  o.hizaOnarim = (o.hizaOnarim || 0) + 1; // tanılama: kaç kez otomatik onarım yapıldı
-  window.evren.yaz(o.pid, '\x0c');
-  // Onarım çıktı üretmese de sonucu bir kez daha denetle.
-  clearTimeout(o.hizaZaman);
-  o.hizaZaman = setTimeout(() => hizaKontrol(o), 1100);
-}
+// NOT: Otomatik Ctrl+L ile hizalama tamamen KALDIRILDI. Her pty parçasından 450 ms sonra \x0c
+// göndermek TUI menülerini dağıtıyor, tüm transkripti yeniden bastırıyor, sonGirdi'yi sıfırlayıp
+// sahte "devam" tetikliyordu. Kullanıcı gerektiğinde Ctrl+L'i kendisi basar.
 function fsDegis(d) {
   S.fs = Math.min(18, Math.max(11, S.fs + d));
   sakla.yaz('fs', S.fs);
@@ -1574,7 +1547,7 @@ function sekmeSec(id) {
   if (o) oturumModeliTara(o);
   sekmeleriCiz();
   gecmisCiz();
-  if (o && o.term) { sigdir(); setTimeout(() => hizaKontrol(o), 400); }
+  if (o && o.term) { sigdir(); }
   gorunumUygula();
   webglSenkronla(); // WebGL yalnız kalan görünür etkin sekmede; diğerleri bağlamı bırakır
 }
@@ -1695,7 +1668,7 @@ async function basla(devamId, secenekler) {
       if (o.id !== S.aktif) return;
       // Model tampon taraması buraya değil çıktı olayına bağlı: veriDinle'de kısaltmalı,
       // sekme seçilirken bir kez koşuluyor (80 satır çeviri + 2 regex/sn boşuna değildi).
-      sureYaz(); hizaKontrol(o);
+      sureYaz();
       o.baglamTik = (o.baglamTik || 0) + 1;
       if (!document.hidden && o.baglamTik % 5 === 0) baglamYaz();
     }, 1000);
@@ -1798,7 +1771,21 @@ async function cevapDurdur() {
   olay('OTURUM', 'yanıt durduruldu · oturum açık', 'uyari');
   if (o.term) o.term.focus();
 }
-// Uyuyan sekmede ilk yazı: aynı oturumu --resume ile aynı sekmede açar, yazıyı yeni pty hazır olunca bir kez iletir.
+// Yeni açılan pty ilk çıktısını verene kadar bekle (--resume Windows'ta 2.5-6 sn): kör 900 ms
+// bekleme tuş vuruşlarını TUI hazır olmadan gönderiyordu. İlk bayttan sonra 400 ms durulma,
+// en az 1200 ms, en çok 5000 ms.
+function ilkCiktiBekle(o, { enCokMs = 5000, enAzMs = 1200, durulmaMs = 400 } = {}) {
+  return new Promise((coz) => {
+    const bas = Date.now();
+    const t = setInterval(() => {
+      const gecen = Date.now() - bas;
+      const son = (o && o._ilkCiktiMs) || 0;
+      if (gecen >= enCokMs || (son > bas && gecen >= enAzMs && Date.now() - son >= durulmaMs)) { clearInterval(t); coz(); }
+    }, 150);
+    if (t.unref) t.unref();
+  });
+}
+// Uyuyan sekmede ilk yazı: aynı oturumu --resume ile aynı sekmede açar, girdiyi pty hazır olunca bir kez iletir.
 async function uyandir(o, veri) {
   if (o._uyaniyor) { o._bekleyenGirdi = (o._bekleyenGirdi || '') + veri; return; }
   o._uyaniyor = true; o._bekleyenGirdi = veri || '';
@@ -1807,8 +1794,9 @@ async function uyandir(o, veri) {
     await basla(devam, { dizin: o.yol, modelId: o.model, orkestrator: o.orkestrator, kodYazma: o.kodYazma });
     const yeni = S.oturumlar.find((x) => x.canli && x.devam === devam);
     if (yeni && yeni.pid && o._bekleyenGirdi) {
-      await bekle(900);   // TUI girdiyi alabilsin
-      window.evren.yaz(yeni.pid, o._bekleyenGirdi);
+      const girdi = o._bekleyenGirdi;
+      await ilkCiktiBekle(yeni);
+      if (o._bekleyenGirdi) window.evren.yaz(yeni.pid, o._bekleyenGirdi || girdi);
     }
   } finally { o._uyaniyor = false; o._bekleyenGirdi = ''; }
 }
@@ -1852,6 +1840,9 @@ function odakToggle(zorla) {
 let sohbetYukleniyor = false;
 let ciktiYukleniyor = false;
 let sohbetSonAnahtar = ''; // en son çizilen sohbet: 'g:<gecmis id>' | 'o:<pid>'
+let sohbetIstek = 0;       // sıra numarası: yavaş yanıt yenisinin üstüne yazmasın
+let sohbetGirisSayisi = 0; // artımlı eklemede data-idx sırası
+let sohbetAboneAnahtar = ''; // etkin push aboneliği: 'g:<id>' | 'o:<pid>'
 async function sohbetYukle(zorla = false) {
   const panel = $('sohbetPanel');
   if (!panel || panel.hidden) return;
@@ -1859,6 +1850,7 @@ async function sohbetYukle(zorla = false) {
   if (seciliOturumGecmisi) {
     if (sohbetYukleniyor && !zorla) return;
     sohbetYukleniyor = true;
+    const istek = ++sohbetIstek; // yavaş oturum A, sonradan seçilen oturum B'nin üstüne yazamaz
     const anahtar = 'g:' + seciliOturumGecmisi.id;
     try {
       let res = await window.evren.sohbetOturumKaydi({
@@ -1869,6 +1861,7 @@ async function sohbetYukle(zorla = false) {
       if (seciliOturumGecmisi && seciliOturumGecmisi.yedekYol && !(res && res.girisler && res.girisler.length)) {
         res = await window.evren.sohbetOturumKaydi({ dizin: seciliOturumGecmisi.yedekYol, id: seciliOturumGecmisi.id });
       }
+      if (istek !== sohbetIstek) return; // daha yeni bir istek var: bu yanıt bayat
       // Dosya değişmedi ve aynı sohbet zaten çiziliyorsa okuma/çizim atlanır.
       if (res && res.degisti === false && anahtar === sohbetSonAnahtar) return;
       if (anahtar !== sohbetSonAnahtar && $('sohbetListe')) delete $('sohbetListe').dataset.kaydirildi; // yeni sohbet dipten açılır
@@ -1893,9 +1886,11 @@ async function sohbetYukle(zorla = false) {
   }
   if (sohbetYukleniyor && !zorla) return;
   sohbetYukleniyor = true;
+  const istek = ++sohbetIstek;
   const anahtar = 'o:' + o.pid;
   try {
     const res = await window.evren.sohbetGecmisi(o.pid);
+    if (istek !== sohbetIstek) return; // daha yeni bir istek var: bu yanıt bayat
     // Dosya değişmedi ve aynı sohbet zaten çiziliyorsa okuma/çizim atlanır.
     if (res && res.degisti === false && anahtar === sohbetSonAnahtar) return;
     if (anahtar !== sohbetSonAnahtar && $('sohbetListe')) delete $('sohbetListe').dataset.kaydirildi;
@@ -1910,44 +1905,23 @@ async function sohbetYukle(zorla = false) {
     sohbetYukleniyor = false;
   }
 }
-function sohbetCiz(girisler) {
-  // Süzgeç satırı kalktı (Claude/Antigravity'de yok): araçlar zaten tek özet satırına iniyor.
-  const filtre = 'hepsi';
-  if (S.panelMod === 'dosyalar') { ciktiCiz(); return; }
-  sohbetBasligiGuncelle();
-  const filtrelenmis = (girisler || []).filter((g) => {
-    if (filtre === 'mesajlar') return g.rol === 'kullanici' || g.rol === 'asistan';
-    if (filtre === 'arac') return g.rol === 'arac';
-    return true;
-  });
-  if ($('sohbetSayac')) $('sohbetSayac').textContent = filtrelenmis.length;
-  const liste = $('sohbetListe');
-  if (!liste) return;
-  delete liste.dataset.cizim;
-  if (!filtrelenmis.length) {
-    liste.innerHTML = `<div class="sohbet-bos">${filtre === 'hepsi' ? 'Henüz konuşma kaydı yok' : 'Bu filtrede kayıt bulunamadı'}</div>`;
-    return;
-  }
+// Sohbet girişlerinden HTML üretir. Sıra numarası (baslangicIdx) artımlı eklemede kaymaz.
+// Okuma düzeni: tek sütun. Kullanıcı sağda hafif yüzeyde, ajan solda düz metin, araçlar arka arkaya
+// tek satırlık mono "iz" olarak toplanır (tıklayınca açılır). Sıkıştırma özetleri katlanır.
+function sohbetKartlariOlustur(girisler, baslangicIdx = 0) {
   const zamanMetni = (ms) => {
     if (!ms) return '';
     const d = new Date(ms);
     return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   };
-  const rolEtiketleri = {
-    kullanici: 'Kullanıcı',
-    asistan: 'Asistan',
-    arac: 'Araç',
-  };
-  const enAlttaMi = Gorunum.dipteMi(liste.scrollTop, liste.scrollHeight, liste.clientHeight);
-  // Okuma düzeni: tek sütun. Kullanıcı sağda hafif yüzeyde, ajan solda düz metin, araçlar arka arkaya
-  // tek satırlık mono "iz" olarak toplanır (tıklayınca açılır). Zaman ve kopyala yalnız üzerine gelince.
+  const rolEtiketleri = { kullanici: 'Kullanıcı', asistan: 'Asistan', arac: 'Araç' };
   const md = (s) => esc(s)
     .replace(/```([\s\S]*?)```/g, (_, k) => `<pre class="so-kod">${k.replace(/^\w*\n/, '')}</pre>`)
     .replace(/`([^`\n]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>')
     .replace(/^#{1,4} (.+)$/gm, '<b class="so-bas">$1</b>');
   // Arka arkaya gelen araç adımları tek, sakin bir özet satırına iner ("3 dosya okundu · 2 komut ›");
-  // tıklayınca adımlar açılır. Yalnız Araçlar süzgecinde hep açık durur.
+  // tıklayınca adımlar açılır.
   const FIIL = { Read: ['okundu', 'dosya'], Edit: ['düzenlendi', 'dosya'], MultiEdit: ['düzenlendi', 'dosya'], Write: ['yazıldı', 'dosya'], NotebookEdit: ['düzenlendi', 'dosya'], Bash: ['çalıştı', 'komut'], PowerShell: ['çalıştı', 'komut'], Grep: ['yapıldı', 'arama'], Glob: ['yapıldı', 'arama'], WebFetch: ['okundu', 'sayfa'], WebSearch: ['yapıldı', 'web araması'], Agent: ['çalıştı', 'alt ajan'], Task: ['çalıştı', 'alt ajan'] };
   const izOzet = (adlar) => {
     const say = new Map();
@@ -1958,10 +1932,11 @@ function sohbetCiz(girisler) {
   let iz = null; // { adlar: [], satirlar: [] }
   const izKapat = () => {
     if (!iz) return;
-    parcalar.push(`<div class="so-iz${filtre === 'arac' ? ' acik' : ''}"><button class="so-iz-ust" type="button"><span>${esc(izOzet(iz.adlar))}</span><i aria-hidden="true">›</i></button><div class="so-iz-govde">${iz.satirlar.join('')}</div></div>`);
+    parcalar.push(`<div class="so-iz"><button class="so-iz-ust" type="button"><span>${esc(izOzet(iz.adlar))}</span><i aria-hidden="true">›</i></button><div class="so-iz-govde">${iz.satirlar.join('')}</div></div>`);
     iz = null;
   };
-  filtrelenmis.forEach((g, idx) => {
+  (girisler || []).forEach((g, idx) => {
+    const gidx = baslangicIdx + idx;
     const rol = g.rol || 'asistan';
     const zaman = zamanMetni(g.ms);
     if (rol === 'arac') {
@@ -1972,7 +1947,7 @@ function sohbetCiz(girisler) {
       const metin = String(g.metin || '');
       const ilk = esc(metin.split('\n').find((x) => x.trim()) || '');
       iz.satirlar.push(`
-        <div class="sohbet-kart arac" data-idx="${idx}">
+        <div class="sohbet-kart arac" data-idx="${gidx}">
           <div class="so-iz-satir"><span class="so-iz-ad">${esc(hamAd)}</span><span class="so-iz-ozet">${ilk}</span>${zaman ? `<time class="sohbet-zaman">${zaman}</time>` : ''}</div>
           <div class="sohbet-icerik">${esc(metin)}</div>
           <button class="sohbet-kopyala" type="button" title="Metni kopyala">kopyala</button>
@@ -1980,18 +1955,87 @@ function sohbetCiz(girisler) {
       return;
     }
     izKapat();
+    // Sıkıştırma özeti: tek dev kullanıcı balonu yerine katlanır "Bağlam özeti" bloğu.
+    if (g.ozet === true) {
+      parcalar.push(`
+        <div class="so-iz so-baglam-ozeti" data-idx="${gidx}">
+          <button class="so-iz-ust" type="button"><span>Bağlam özeti</span><i aria-hidden="true">›</i></button>
+          <div class="so-iz-govde"><div class="sohbet-kart ${rol}"><div class="sohbet-icerik">${md(g.metin || '')}</div></div></div>
+        </div>`);
+      return;
+    }
     parcalar.push(`
-      <div class="sohbet-kart ${rol}" data-idx="${idx}" aria-label="${rolEtiketleri[rol] || rol}">
+      <div class="sohbet-kart ${rol}" data-idx="${gidx}" aria-label="${rolEtiketleri[rol] || rol}">
         <div class="sohbet-icerik">${md(g.metin || '')}</div>
         <div class="so-alt">${zaman ? `<time class="sohbet-zaman">${zaman}</time>` : ''}<button class="sohbet-kopyala" type="button" title="Metni kopyala">kopyala</button></div>
       </div>`);
   });
   izKapat();
-  liste.innerHTML = parcalar.join('');
+  return parcalar.join('');
+}
+
+function sohbetCiz(girisler) {
+  if (S.panelMod === 'dosyalar') { ciktiCiz(); return; }
+  sohbetBasligiGuncelle();
+  const liste = $('sohbetListe');
+  if (!liste) return;
+  const tumu = girisler || [];
+  sohbetGirisSayisi = tumu.length; // artımlı ekleme buradan devam eder
+  if ($('sohbetSayac')) $('sohbetSayac').textContent = tumu.length;
+  delete liste.dataset.cizim;
+  if (!tumu.length) {
+    liste.innerHTML = '<div class="sohbet-bos">Henüz konuşma kaydı yok</div>';
+    return;
+  }
+  const enAlttaMi = Gorunum.dipteMi(liste.scrollTop, liste.scrollHeight, liste.clientHeight);
+  liste.innerHTML = sohbetKartlariOlustur(tumu, 0);
   if (enAlttaMi || !liste.dataset.kaydirildi) {
     liste.scrollTop = liste.scrollHeight;
     liste.dataset.kaydirildi = '1';
   }
+}
+
+// Push deltası: mevcut DOM'a ekleme yapar; açık akordeonlar ve metin seçimi bozulmaz.
+function sohbetArtirimliEkle(yeniGirisler) {
+  if (!Array.isArray(yeniGirisler) || !yeniGirisler.length) return;
+  const liste = $('sohbetListe');
+  if (!liste) return;
+  const bos = liste.querySelector('.sohbet-bos');
+  if (bos) bos.remove();
+  const enAlttaMi = Gorunum.dipteMi(liste.scrollTop, liste.scrollHeight, liste.clientHeight);
+  const html = sohbetKartlariOlustur(yeniGirisler, sohbetGirisSayisi);
+  sohbetGirisSayisi += yeniGirisler.length;
+  liste.insertAdjacentHTML('beforeend', html);
+  if ($('sohbetSayac')) $('sohbetSayac').textContent = sohbetGirisSayisi;
+  if (enAlttaMi || !liste.dataset.kaydirildi) {
+    liste.scrollTop = liste.scrollHeight;
+    liste.dataset.kaydirildi = '1';
+  }
+}
+
+// Push aboneliği: yalnız Sohbet paneli görünürken ve sekme öndeyken tek abonelik.
+// Panel kapanınca/gizlenince bırakılır; main.js fs.watch tutamacını anında kapatır.
+function sohbetAboneSenkronla() {
+  const panel = $('sohbetPanel');
+  const acik = !!(panel && !panel.hidden && S.panelMod === 'sohbet' && !document.hidden);
+  if (!acik) {
+    if (sohbetAboneAnahtar) { sohbetAboneAnahtar = ''; try { window.evren.sohbetBirak && window.evren.sohbetBirak(); } catch {} }
+    return;
+  }
+  let param = null;
+  if (seciliOturumGecmisi) {
+    param = { anahtar: 'g:' + seciliOturumGecmisi.id, dizin: seciliOturumGecmisi.projeYol, id: seciliOturumGecmisi.id };
+  } else {
+    const o = aktifOturum();
+    if (o && o.pid) param = { anahtar: 'o:' + o.pid, pid: o.pid };
+  }
+  if (!param) {
+    if (sohbetAboneAnahtar) { sohbetAboneAnahtar = ''; try { window.evren.sohbetBirak && window.evren.sohbetBirak(); } catch {} }
+    return;
+  }
+  if (param.anahtar === sohbetAboneAnahtar) return;
+  sohbetAboneAnahtar = param.anahtar;
+  try { window.evren.sohbetAbone && window.evren.sohbetAbone(param); } catch {}
 }
 // ---------- Dosyalar: oturumun yazdığı / ürettiği dosyalar ----------
 // Write/Edit ile yazılan dosyalar ve Bash'ın ürettiği dosyalar (ekran görüntüsü vb.): görseller ızgarada, gerisi proje köküne
@@ -2211,8 +2255,8 @@ function paletOgeleri() {
     { ad: 'Yeni oturum başlat', ic: 'play', alt: S.aktif == null ? 'Enter' : '', yap: basla, pasif: !S.anahtarVar || !S.yuklendi },
     ...(ao && ao.canli ? [
       { ad: 'Bu oturumu sonlandır', ic: 'stop', yap: durdur },
-      { ad: 'Ara durum raporu iste (/rapor)', ic: 'term', yap: () => { window.evren.yaz(ao.pid, '/rapor\r'); } },
-      { ad: 'Yeni sohbet özeti iste (/summarize)', ic: 'chat', yap: () => { window.evren.yaz(ao.pid, '/summarize\r'); } },
+      { ad: 'Ara durum raporu iste (/rapor)', ic: 'term', yap: () => { if (window.evren.komutYaz) window.evren.komutYaz(ao.pid, '/rapor'); else window.evren.yaz(ao.pid, '/rapor\r'); } },
+      { ad: 'Yeni sohbet özeti iste (/summarize)', ic: 'chat', yap: () => { if (window.evren.komutYaz) window.evren.komutYaz(ao.pid, '/summarize'); else window.evren.yaz(ao.pid, '/summarize\r'); } },
     ] : []),
     ...(ao ? [{ ad: 'Sekmeyi kapat', ic: 'clear', alt: 'Ctrl ⇧ W', yap: () => sekmeKapat(ao.id) }] : []),
     { ad: 'Hızlı geçiş (oturum ara)', ic: 'search', alt: 'Ctrl K', yap: () => paletAc('gecis') },
@@ -3120,14 +3164,47 @@ if (window.evren.hedefDinle) window.evren.hedefDinle((id, sayi) => {
 if (window.evren.forkDinle) window.evren.forkDinle((pid, kimlik) => {
   const o = S.oturumlar.find((x) => x.pid === pid && x.canli);
   if (!o || !kimlik || o.devam === kimlik) return;
+  const eski = o.devam; // görünüm/pin/sessiz durumu eski kimlikte kayıtlı: yeni kimliğe taşınmalı
   o.devam = kimlik;
   o._forkAdopte = true; // şef kimliği izleyicisi boşuna dönmesin
+  if (eski && eski !== kimlik) {
+    const eskiAnahtar = 'd:' + eski, yeniAnahtar = 'd:' + kimlik;
+    if (S.gorunumler && Object.prototype.hasOwnProperty.call(S.gorunumler, eskiAnahtar)) {
+      S.gorunumler[yeniAnahtar] = S.gorunumler[eskiAnahtar];
+      delete S.gorunumler[eskiAnahtar];
+      sakla.yaz('gorunumler', S.gorunumler);
+    }
+    if (typeof ignelenenler !== 'undefined' && ignelenenler.has(eski)) {
+      ignelenenler.delete(eski);
+      ignelenenler.add(kimlik);
+      if (typeof tercihKaydet === 'function') tercihKaydet();
+    }
+    // Sohbet push aboneliği eski kimliğe bağlıysa yenisine geç.
+    if (S.panelMod === 'sohbet' && sohbetAboneAnahtar === 'o:' + pid) { sohbetAboneAnahtar = ''; sohbetAboneSenkronla(); }
+  }
   if (o.orkestrator && !S.sefOturumlar.has(kimlik)) {
     S.sefOturumlar.add(kimlik);
     sakla.yaz('sefOturumlar', [...S.sefOturumlar].slice(-300));
   }
   gecmisCiz(); sekmeleriCiz();
 });
+// Telefon (OpCon) uyuyan masaüstü sekmesini uyandırdı: hayalet kopya yerine aynı sekmeyi bağla.
+if (window.evren.uyandiDinle) {
+  window.evren.uyandiDinle(({ eskiId, yeni }) => {
+    if (!yeni || !yeni.id) return;
+    const o = S.oturumlar.find((x) => x.pid === eskiId || (x.devam && x.devam === yeni.devam && !x.canli));
+    if (!o) return;
+    o.pid = yeni.id;
+    o.canli = true;
+    o.uyuyor = false;
+    o.kod = null;
+    o.basladi = Date.now();
+    o.bitti = 0;
+    if (o.term) o.term.writeln('\r\n\x1b[38;2;108;119;131m  [uzaktan uyandırıldı]\x1b[0m');
+    sekmeleriCiz();
+    gecmisCiz();
+  });
+}
 
 if ($('uykuBtn')) $('uykuBtn').addEventListener('click', async () => {
   S.uyku = await window.evren.uykuEngelle(!S.uyku).catch(() => !S.uyku);
@@ -3438,8 +3515,7 @@ window.evren.veriDinle((pid, veri) => {
   const o = S.oturumlar.find((x) => x.pid === pid);
   if (!o) { const l = bekleyenVeri.get(pid) || []; l.push(veri); bekleyenVeri.set(pid, l); return; }
   o.term.write(veri);
-  clearTimeout(o.hizaZaman);
-  o.hizaZaman = setTimeout(() => hizaKontrol(o), 450);
+  o._ilkCiktiMs = Date.now(); // uyandırma: pty istemini bastı mı (kör 900 ms bekleme yerine)
   if (o.id === S.aktif) akimCizgiTetikle();
   if (typeof Takimyildiz !== 'undefined') Takimyildiz.parla(o.devam || o.id);
   if (o.id !== S.aktif && !o.yeni) { o.yeni = true; sekmeleriCiz(); } // arka planda çıktı: sekmede işaret
@@ -3549,16 +3625,17 @@ window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', (e) => e.preventDefault());
 if ($('sohbetDevamBtn')) $('sohbetDevamBtn').addEventListener('click', okumaDevamEt);
 if ($('sohbetYenileBtn')) $('sohbetYenileBtn').addEventListener('click', () => sohbetYukle(true));
-// Sohbet yazı çubuğu: mesaj canlı oturumun PTY'sine yazılır + Enter (Claude Code mesajı kuyruğa alır).
+// Sohbet yazı çubuğu: birleşik yazım (metin, 250 ms sonra ayrı Enter). Aynı paketteki CR'yi
+// Claude Code TUI gönderim saymıyordu; mesaj kutuda kalıyordu.
 if ($('sohbetGonder')) $('sohbetGonder').addEventListener('submit', (e) => {
   e.preventDefault();
   const o = aktifOturum();
   const giris = $('sohbetGonderGiris');
-  const metin = Gorunum.gonderilecek(giris.value);
+  const metin = Gorunum.gonderilecekMetin(giris.value);
   if (!o || !o.canli || !o.pid || !metin) return;
-  window.evren.yaz(o.pid, metin);
+  if (window.evren.komutYaz) window.evren.komutYaz(o.pid, metin);
+  else window.evren.yaz(o.pid, metin + '\r');
   giris.value = '';
-  setTimeout(() => { if (S.sohbetAcik) sohbetYukle(true); }, 700); // bekleyiciyi beklemeden kendi mesajımız görünsün
 });
 // Yapıştırma: panodaki görsel/dosya tırnaklı yol olur, metin olduğu gibi imlece eklenir.
 if ($('sohbetGonderGiris')) $('sohbetGonderGiris').addEventListener('paste', async (e) => {
@@ -3594,16 +3671,6 @@ if ($('sohbetPanel')) {
   $('sohbetPanel').addEventListener('click', (e) => {
     const ds = e.target.closest('[data-dsuz]');
     if (ds) { S.dosyaSuz = ds.dataset.dsuz; ciktiCiz(); return; }
-    const f = e.target.closest('.sohbet-filtre[data-filtre]');
-    if (f) {
-      for (const b of $('sohbetPanel').querySelectorAll('.sohbet-filtre[data-filtre]')) b.classList.remove('aktif');
-      f.classList.add('aktif');
-      S.sohbetFiltre = f.dataset.filtre;
-      const o = aktifOturum();
-      const kayit = seciliOturumGecmisi ? seciliOturumGecmisi.girisler : (o && o.sohbetGirisler);
-      if (kayit) sohbetCiz(kayit);
-      return;
-    }
     const kucuk = e.target.closest('.dosya-kucuk');
     if (kucuk) { gorselKatmanAc(Number(kucuk.dataset.i) || 0); return; }
     const satir = e.target.closest('.dosya-satir');
@@ -3629,12 +3696,28 @@ if ($('sohbetPanel')) {
     }
   });
 }
-// Canlı güncelleme: Sohbet paneli açıksa ve oturum seçiliyse 3 saniyede bir güncelle
+// Sohbet artık push ile geliyor (sohbet:yeni + artımlı DOM). Burada yalnız Dosyalar modunun
+// yedek yoklaması var: panel kapalıyken ya da sekme arkadayken hiç koşmaz.
 setInterval(() => {
-  if (S.sohbetAcik && (S.aktif != null || seciliOturumGecmisi)) {
-    sohbetYukle();
+  if (document.hidden) return;
+  if (S.sohbetAcik && S.panelMod === 'dosyalar' && (S.aktif != null || seciliOturumGecmisi)) {
+    ciktiYukle();
   }
-}, 1500);
+}, 5000);
+// Push dinleyicisi (bir kez): ilk paket tam çizim, sonrakiler artımlı ekleme (açık akordeon korunur).
+if (window.evren.sohbetYeniDinle) {
+  window.evren.sohbetYeniDinle(({ anahtar, girisler, ilk }) => {
+    if (!anahtar || anahtar !== sohbetAboneAnahtar || S.panelMod !== 'sohbet') return;
+    if (ilk) {
+      if (anahtar !== sohbetSonAnahtar && $('sohbetListe')) delete $('sohbetListe').dataset.kaydirildi;
+      sohbetCiz(girisler || []);
+      sohbetSonAnahtar = anahtar;
+    } else {
+      sohbetArtirimliEkle(girisler || []);
+    }
+  });
+}
+document.addEventListener('visibilitychange', () => sohbetAboneSenkronla());
 $('fsMetin').textContent = S.fs;
 yukle().then(() => {
   if (new URLSearchParams(location.search).get('palet')) paletAc();
