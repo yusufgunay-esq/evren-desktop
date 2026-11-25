@@ -360,6 +360,53 @@ function oturumDurumu(dosya) {
   return 'bilinmiyor';
 }
 
+// Tur bitse de ajan arka planda bir işi bekliyor olabilir (run_in_background, Monitor, Workflow,
+// ScheduleWakeup). Başlatma, araç sonucunda görev kimliğiyle yazılır; bitiş <task-notification>
+// içinde <status> ile gelir. Kayıt bunu söylüyorsa oturum "boşta" sayılmaz.
+// Yalnız araç sonucunun başı: dosya/kayıt okuyan bir aracın çıktısında geçen aynı cümle sayılmaz.
+const ARKA_BASLAT = /^(?:Command running in background with ID: |Command did not complete within its \d+s timeout and was moved to the background \(ID: |Monitor started \(task |Workflow launched in background\. Task ID: )([a-z0-9]{5,})/;
+const ARKA_BITIS = /<task-id>([a-z0-9]{5,})<\/task-id>[\s\S]{0,800}?<status>(?:completed|failed|killed|stopped|cancelled|expired)<\/status>/g;
+
+/**
+ * Bitmemiş arka plan işi ya da vakti gelmemiş ScheduleWakeup var mı?
+ * tavanMs: bu süreden eski açık iş sayılmaz (bildirimi hiç gelmeyen işe karşı emniyet).
+ * Dönüş: { isler: [kimlik...], uyanma: ms|0 } ya da bekleyen yoksa null.
+ */
+function arkaPlanBekleyen(dosya, { simdi = Date.now(), tavanMs = 12 * 3600000 } = {}) {
+  const acik = new Map();
+  let uyanma = 0;
+  for (const j of sonKayitlar(dosya, Infinity)) {
+    if (!j || typeof j !== 'object' || j.isSidechain === true) continue;
+    const zaman = Date.parse(j.timestamp) || 0;
+    const ham = JSON.stringify(j);
+    if (j.type === 'user' && j.message && Array.isArray(j.message.content)) {
+      for (const b of j.message.content) {
+        if (!b || b.type !== 'tool_result') continue;
+        const c = b.content;
+        const metin = typeof c === 'string' ? c
+          : Array.isArray(c) ? ((c.find((x) => x && x.type === 'text') || {}).text || '') : '';
+        const m = ARKA_BASLAT.exec(metin);
+        if (m) acik.set(m[1], zaman);
+      }
+    }
+    if (ham.includes('<task-id>')) {
+      for (const m of ham.replace(/\\n/g, '\n').matchAll(ARKA_BITIS)) acik.delete(m[1]);
+    }
+    if (j.type === 'assistant' && j.message && Array.isArray(j.message.content)) {
+      for (const b of j.message.content) {
+        if (!b || b.type !== 'tool_use' || b.name !== 'ScheduleWakeup') continue;
+        const g = b.input || {};
+        const sn = Number(g.delaySeconds);
+        uyanma = g.stop || !Number.isFinite(sn) ? 0 : zaman + Math.min(Math.max(sn, 60), 3600) * 1000;
+      }
+    }
+  }
+  const isler = [...acik].filter(([, t]) => !t || simdi - t < tavanMs).map(([k]) => k);
+  // Uyanma vakti + 3 dk pay: CLI uyanıp yazmaya başlayınca jsonl zaten tazelenir.
+  const uyanmaBekliyor = uyanma && simdi < uyanma + 3 * 60000 ? uyanma : 0;
+  return isler.length || uyanmaBekliyor ? { isler, uyanma: uyanmaBekliyor } : null;
+}
+
 // ---- Bağlam kullanımı ve sohbet sayacı ----
 // Son asistan yanıtının usage alanı gerçek bağlamı verir: input + cache_creation + cache_read + output.
 // Dosyanın yalnız sonu taranır; sayaç artımlıdır, büyük kayıtlar (60 MB+) baştan okunmaz.
@@ -609,6 +656,7 @@ module.exports = {
   sonGirislerOnbellekli,
   sonKayitlar,
   oturumDurumu,
+  arkaPlanBekleyen,
   ArtimliOkuyucu,
   BaglamIzleyici,
   CiktiIzleyici,

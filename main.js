@@ -926,6 +926,12 @@ const bostaKontrol = setInterval(() => {
     if (sessiz < etkinSinir) continue;
     const kimlik = String(bilgi.devam || path.basename(dosya, '.jsonl')).toLowerCase();
     if (korunan.has(kimlik)) continue;   // korunan oturum asla kapatilmaz
+    // Ajan arka plan işini (run_in_background, Monitor, Workflow, ScheduleWakeup) bekliyorsa tur
+    // bitmiş görünse de oturum boşta değildir: iş bitmeden uyutulmaz, zorla eşiği de uygulanmaz.
+    // Tavan (bostaArkaPlanSaat, varsayılan 12 sa) bildirimi hiç gelmeyen işe karşı emniyettir.
+    const arkaSaat = Number(ayar.bostaArkaPlanSaat ?? 12);
+    const arkaTavan = Number.isFinite(arkaSaat) && arkaSaat > 0 ? arkaSaat * 3600000 : 12 * 3600000;
+    try { if (sohbet.arkaPlanBekleyen(dosya, { simdi, tavanMs: arkaTavan })) continue; } catch {}
     let durum = 'bilinmiyor';
     try { durum = sohbet.oturumDurumu(dosya); } catch {}
     let zorlaAday = false;
