@@ -53,6 +53,7 @@ const S = {
   sefOturumlar: new Set(sakla.oku('sefOturumlar', [])), // Şef olarak açılmış oturum kimlikleri (kalıcı)
   ayar: { claudeOturumlari: false }, // ana süreçteki ayardan gelir (durum)
   platform: 'win32', // ana süreçten gelir (durum); kasa metinleri buna göre yazılır
+  windowsBuild: 22621, // Windows ConPTY yapı numarası: xterm.js windowsPty hizalaması için
 };
 // Claude Code oturumları görünsün mü: tek okuma noktası (kişisel katman yalnız bu satırı değiştirebilir).
 const claudeGoster = () => S.ayar.claudeOturumlari === true;
@@ -647,10 +648,9 @@ function gorunumUygula() {
   if ((izleme || canli) && brif && !brif.hidden) brifGizle();
   sohbetBasligiGuncelle();
   gorunumSayiGuncelle();
+  webglSenkronla(); // önce WebGL bağlamını kur (hücre piksel ölçüsü otursun), sonra sigdir ölçsün
   if (goster) sohbetYukle(true);
-  else if (canli) { sigdir(); setTimeout(() => o.term.focus(), 0); }
-  setTimeout(() => sigdir(), 80);
-  webglSenkronla(); // terminal ↔ sohbet/dosyalar geçişinde bağlam yalnız terminal görünümünde kalır
+  else if (canli) { sigdir(true); setTimeout(() => o.term && o.term.focus(), 0); }
   sohbetAboneSenkronla(); // sohbet görünümü açıldıysa push aboneliği kur, terminale geçildiyse bırak
 }
 // Okuma görünümünden çık: karşılama ya da etkin sekme geri gelir.
@@ -929,6 +929,7 @@ async function yukle() {
     S.anahtarVar = !!d.anahtarVar;
     S.surum = d.surum || '';
     S.platform = d.platform || 'win32';
+    S.windowsBuild = Number(d.windowsBuild) || 22621;
     S.modeller = d.modeller || [];
     S.projeler = d.projeler || [];
     S.sonKlasorler = d.sonKlasorler || [];
@@ -1097,12 +1098,17 @@ async function terminalOlustur(o) {
   el.className = 'terminal' + (o.orkestrator ? ' terminal-ork' : '');
   el.hidden = true;
   $('terminaller').appendChild(el);
-  const t = new TerminalSinif({
+  const termSecenek = {
     fontFamily: '"IBM Plex Mono", "Cascadia Mono", Consolas, monospace',
     fontSize: S.fs, lineHeight: 1.22, letterSpacing: 0,
     cursorBlink: true, cursorStyle: 'bar', cursorWidth: 2,
     allowProposedApi: true, scrollback: VARSAYILAN_SCROLLBACK, smoothScrollDuration: 0, theme: o.orkestrator ? TEMA_ORK : TEMA,
-  });
+  };
+  // Windows ConPTY satır sarmalama / reflow uyumu: windowsPty olmadan xterm 6.0 imleç satırlarını kaydırır.
+  if (S.platform === 'win32') {
+    termSecenek.windowsPty = { backend: 'conpty', buildNumber: S.windowsBuild || 22621 };
+  }
+  const t = new TerminalSinif(termSecenek);
   t.open(el);
   const f = FitSinif ? new FitSinif() : null;
   if (f) t.loadAddon(f);
@@ -1334,20 +1340,33 @@ function gecisSonrasi(f) {
   gecisZaman = setTimeout(bitir, 320);
 }
 let sigdirZaman = 0;
-function sigdir() {
+let sigdirDebounce = 0;
+function sigdir(hemen = false) {
   const o = aktifOturum();
-  if (!o || !o.term) return;
-  cancelAnimationFrame(sigdirZaman);
-  sigdirZaman = requestAnimationFrame(() => {
-    if (o.fit) { try { o.fit.fit(); } catch {} }
-    const cols = o.term.cols, rows = o.term.rows;
-    // Aynı boyutu yeniden göndermek pty'de SIGWINCH üretir; Claude Code TUI tüm transkripti yeniden basar.
-    const boyut = { cols, rows };
-    if (o.pid && cols && rows && !Gorunum.boyutAyni(o.sonBoyut, boyut)) {
-      window.evren.boyut(o.pid, boyut);
-      o.sonBoyut = boyut;
-    }
-  });
+  if (!o || !o.term || !o.el || o.el.hidden) return;
+  if (seciliOturumGecmisi || aktifGorunum() !== 'terminal') return;
+  const calistir = () => {
+    cancelAnimationFrame(sigdirZaman);
+    sigdirZaman = requestAnimationFrame(() => {
+      const aktif = aktifOturum();
+      if (!aktif || aktif !== o || !o.term || !o.el || o.el.hidden) return;
+      if (seciliOturumGecmisi || aktifGorunum() !== 'terminal') return;
+      // Kapalı / geçiş hâlindeki 0×0 kutuda ölçüm ConPTY'ye bozuk sütun yollar.
+      if (o.el.clientWidth < 80 || o.el.clientHeight < 40) return;
+      if (o.fit) { try { o.fit.fit(); } catch {} }
+      const cols = o.term.cols, rows = o.term.rows;
+      // Aynı boyutu yeniden göndermek pty'de SIGWINCH üretir; Claude Code TUI tüm transkripti yeniden basar.
+      const boyut = { cols, rows };
+      if (o.pid && cols > 20 && rows > 5 && !Gorunum.boyutAyni(o.sonBoyut, boyut)) {
+        window.evren.boyut(o.pid, boyut);
+        o.sonBoyut = boyut;
+      }
+      if (o.webgl) { try { o.term.refresh(0, o.term.rows - 1); } catch {} }
+    });
+  };
+  clearTimeout(sigdirDebounce);
+  if (hemen) calistir();
+  else sigdirDebounce = setTimeout(calistir, 70); // pencere sürüklerken ara SIGWINCH yağmurunu kes
 }
 // NOT: Otomatik Ctrl+L ile hizalama tamamen KALDIRILDI. Her pty parçasından 450 ms sonra \x0c
 // göndermek TUI menülerini dağıtıyor, tüm transkripti yeniden bastırıyor, sonGirdi'yi sıfırlayıp
@@ -1547,9 +1566,7 @@ function sekmeSec(id) {
   if (o) oturumModeliTara(o);
   sekmeleriCiz();
   gecmisCiz();
-  if (o && o.term) { sigdir(); }
-  gorunumUygula();
-  webglSenkronla(); // WebGL yalnız kalan görünür etkin sekmede; diğerleri bağlamı bırakır
+  gorunumUygula(); // içinde önce webglSenkronla(), sonra sigdir(true) çalışır
 }
 function sekmeGez(yon) {
   const dizi = [null, ...S.oturumlar.map((o) => o.id)];
@@ -3522,7 +3539,7 @@ window.evren.veriDinle((pid, veri) => {
   oturumModeliTaraGecikmeli(o);
 });
 window.evren.cikisDinle((pid, bilgi) => oturumBitti(pid, bilgi));
-new ResizeObserver(() => sigdir()).observe($('terminaller'));
+new ResizeObserver(() => { if (!gecisSuruyor) sigdir(); }).observe($('terminaller'));
 if (sakla.oku('sideKapali', false)) $('app').classList.add('side-kapali');
 sekmeleriCiz();
 // Mobil Kumanda Modalı

@@ -204,6 +204,7 @@ async function yerelDurum() {
   const modeller = modelOnbellek || p.MODELLER;
   return {
     anahtarVar, modeller, surum: SURUM, platform: process.platform,
+    windowsBuild: process.platform === 'win32' ? (parseInt(os.release().split('.')[2], 10) || 22621) : 0,
     sonModel: typeof ham.sonModel === 'string' ? ham.sonModel : modeller[0] && modeller[0].id,
     sonEfor: motor.eforCoz(ham.sonEfor),
     eforlar: motor.EFORLAR,
