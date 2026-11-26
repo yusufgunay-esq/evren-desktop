@@ -4,7 +4,7 @@
   "description": "EVREN Desktop Uzaktan Operasyon Konsolu",
   "start_url": "./",
   "display": "standalone",
-  "background_color": "#07090b",
+  "background_color": "#05070a",
   "theme_color": "#07090b",
   "orientation": "portrait",
   "icons": [
@@ -16,7 +16,8 @@
     {
       "src": "ikon-512.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any maskable"
     },
     {
       "src": "ikon.svg",

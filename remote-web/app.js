@@ -11,6 +11,10 @@
   let oturumlar = [];
   let kullaniciKaydirdi = false;
 
+  // Açılış ekranı: ilk bağlantıda kalkar, bağlantı gecikirse en geç 4 sn sonra yol verir
+  const acilisBitir = () => document.body.classList.add('acilis-bitti');
+  setTimeout(acilisBitir, 4000);
+
   const KALP_MS = 20000;      // sunucuya ping
   const SESSIZ_MS = 45000;    // bu kadar süre pong/veri gelmezse bağlantı ölü sayılır
   const ACILMA_MS = 12000;    // TCP el sıkışması bu sürede bitmezse denemeyi kapat
@@ -110,6 +114,7 @@
       deneme = 0;
       kalpBaslat();
       titresim(30);
+      acilisBitir();
     };
 
     ws.onmessage = (e) => {
