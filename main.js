@@ -830,7 +830,7 @@ function torunHaritasi(done) {
         const komutlar = new Map();
         for (const satir of String(cikti2).split(/\r?\n/)) {
           const m = satir.match(/^\s*(\d+)\s+(\S.*)$/);
-          if (m) komutlar.set(Number(m[1]), m[2].slice(0, 240));
+          if (m) komutlar.set(Number(m[1]), m[2].slice(0, 512));
         }
         for (const liste of ebeveyn.values()) {
           for (const c of liste) if (komutlar.has(c.id)) c.komut = komutlar.get(c.id);
@@ -840,8 +840,8 @@ function torunHaritasi(done) {
     });
     return;
   }
-  // CommandLine ilk 240 karaktere kırpılır: hangi node/python betiği koşuyor, ayırt edilebilsin.
-  const ps = 'Get-CimInstance Win32_Process | ForEach-Object { $c = ($_.CommandLine -replace \'[\\r\\n\\t]+\',\' \'); if ($c.Length -gt 240) { $c = $c.Substring(0,240) }; "$($_.ProcessId)`t$($_.ParentProcessId)`t$($_.Name)`t$c" }';
+  // CommandLine ilk 512 karaktere kırpılır: hangi node/python betiği ve hangi proje dizini koşuyor, ayırt edilebilsin.
+  const ps = 'Get-CimInstance Win32_Process | ForEach-Object { $c = ($_.CommandLine -replace \'[\\r\\n\\t]+\',\' \'); if ($c.Length -gt 512) { $c = $c.Substring(0,512) }; "$($_.ProcessId)`t$($_.ParentProcessId)`t$($_.Name)`t$c" }';
   execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps],
     { windowsHide: true, timeout: 10000 }, (hata, cikti) => {
       if (hata) return done(null);
@@ -871,6 +871,32 @@ function agactaCalismaVar(ebeveyn, kok) {
       if (c.ad === 'node' && c.komut && AKTIF_NODE_DESEN.test(c.komut)) return true; // Şef / worker / test koşucu
       if (!MCP_COCUK.has(c.ad)) return true;   // bash, worker, git…: oturum calisiyor
       yigin.push(c.id);
+    }
+  }
+  return false;
+}
+
+// Kopuk koşucu (ör. Görev Zamanlayıcı'daki `sef.mjs dalga --dizin "<proje>"`) oturumun süreç ağacı
+// dışında yaşar; yine de o projede aktif iş yürütür. Üst klasörü yanlış eşlememek için yol sınırı
+// (tırnak/boşluk/son ya da .claude/worktrees/) aranır.
+function projedeAktifKosucuVar(ebeveyn, projeDizin) {
+  if (!ebeveyn || !projeDizin || typeof projeDizin !== 'string') return false;
+  const temiz = projeDizin.trim().replace(/[\/\\]+$/, '');
+  if (!temiz) return false;
+  const norm = temiz.replace(/\\/g, '/').toLowerCase();
+  for (const liste of ebeveyn.values()) {
+    for (const c of liste) {
+      if (!c || c.ad !== 'node' || !c.komut || !AKTIF_NODE_DESEN.test(c.komut)) continue;
+      const cmd = c.komut.replace(/\\/g, '/').toLowerCase();
+      let pos = cmd.indexOf(norm);
+      while (pos >= 0) {
+        const onceki = pos > 0 ? cmd[pos - 1] : '';
+        const sonraki = cmd.slice(pos + norm.length);
+        const basUygun = !onceki || /[\s"'=]/.test(onceki);
+        const sonUygun = !sonraki || /^["'\s]|^\/(?:\.claude\/worktrees\/|["'\s]|$)/.test(sonraki);
+        if (basUygun && sonUygun) return true;
+        pos = cmd.indexOf(norm, pos + 1);
+      }
     }
   }
   return false;
@@ -933,6 +959,8 @@ const bostaKontrol = setInterval(() => {
     const arkaSaat = Number(ayar.bostaArkaPlanSaat ?? 12);
     const arkaTavan = Number.isFinite(arkaSaat) && arkaSaat > 0 ? arkaSaat * 3600000 : 12 * 3600000;
     try { if (sohbet.arkaPlanBekleyen(dosya, { simdi, tavanMs: arkaTavan })) continue; } catch {}
+    // Bu proje (ya da git worktree'leri) üzerinde çalışan EVREN worker'ı varsa (kopuk dalga dahil) uyutulmaz.
+    try { if (gecmis.projeCanliEvrenVar(bilgi.dizin, { simdi })) continue; } catch {}
     let durum = 'bilinmiyor';
     try { durum = sohbet.oturumDurumu(dosya); } catch {}
     let zorlaAday = false;
@@ -965,6 +993,8 @@ const bostaKontrol = setInterval(() => {
     for (const { id } of adaylar) {
       const k = kabuklar.get(id);
       if (!k || !kabuklar.has(id)) continue;
+      const b = oturumBilgi.get(id);
+      if (b && projedeAktifKosucuVar(ebeveyn, b.dizin)) continue; // kopuk dalga/worker koşucusu bu projede canlı
       if (!zorlaKume.has(id) && agactaCalismaVar(ebeveyn, k.pid)) continue;
       // Boşta uyutulan oturum listede kalır: telefondan gelen mesaj onu --resume ile uyandırır.
       // tek pty:cikis { bosta: true } kabukKapat içinde gider; onExit'in ikinci olayı bastırılır.

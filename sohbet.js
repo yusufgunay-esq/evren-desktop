@@ -304,11 +304,11 @@ class ArtimliOkuyucu {
 }
 
 // Dosyanın sonundaki ham JSON kayıtlarını (eskiden yeniye) döndürür.
-function sonKayitlar(dosya, adet = 160) {
+function sonKayitlar(dosya, adet = 160, maxBayt = 512 * 1024) {
   let boyut, fd;
   try { boyut = fs.statSync(dosya).size; fd = fs.openSync(dosya, 'r'); } catch { return []; }
   try {
-    const n = Math.min(boyut, 512 * 1024);
+    const n = Math.min(boyut, maxBayt);
     const t = Buffer.alloc(n);
     fs.readSync(fd, t, 0, n, boyut - n);
     const satirlar = t.toString('utf8').split('\n');
@@ -361,32 +361,47 @@ function oturumDurumu(dosya) {
 }
 
 // Tur bitse de ajan arka planda bir işi bekliyor olabilir (run_in_background, Monitor, Workflow,
-// ScheduleWakeup). Başlatma, araç sonucunda görev kimliğiyle yazılır; bitiş <task-notification>
-// içinde <status> ile gelir. Kayıt bunu söylüyorsa oturum "boşta" sayılmaz.
-// Yalnız araç sonucunun başı: dosya/kayıt okuyan bir aracın çıktısında geçen aynı cümle sayılmaz.
-const ARKA_BASLAT = /^(?:Command running in background with ID: |Command did not complete within its \d+s timeout and was moved to the background \(ID: |Monitor started \(task |Workflow launched in background\. Task ID: )([a-z0-9]{5,})/;
-const ARKA_BITIS = /<task-id>([a-z0-9]{5,})<\/task-id>[\s\S]{0,800}?<status>(?:completed|failed|killed|stopped|cancelled|expired)<\/status>/g;
+// arka plan alt ajan, ScheduleWakeup, CronCreate). Başlatma, araç sonucunda (ve toolUseResult
+// üst verisinde) görev kimliğiyle yazılır; bitiş <task-notification> içinde <status> ile gelir.
+// Yalnız gerçek başlatma çizgisi/üst verisi sayılır: grep çıktısındaki alıntılar sayılmaz.
+const ARKA_BASLAT = /^(?:Command running in background with ID: |Monitor started \(task |Workflow launched in background\. Task ID: |Async agent launched[^\n]*?\bagentId:\s*)([a-z0-9_-]{5,})/i;
+const ARKA_ZAMAN_ASIMI = /(?:^|\n)Command did not complete within its \d+s timeout and was moved to the background \(ID: ([a-z0-9_-]{5,})\)/;
+const ARKA_BITIS = /<task-id>([a-z0-9_-]{5,})<\/task-id>[\s\S]{0,800}?<status>(?:completed|failed|killed|stopped|cancelled|expired)<\/status>/gi;
+const ARKA_KIMLIK = /^[a-z0-9_-]{5,}$/i;
 
 /**
- * Bitmemiş arka plan işi ya da vakti gelmemiş ScheduleWakeup var mı?
+ * Bitmemiş arka plan işi, aktif Cron ya da vakti gelmemiş ScheduleWakeup var mı?
  * tavanMs: bu süreden eski açık iş sayılmaz (bildirimi hiç gelmeyen işe karşı emniyet).
  * Dönüş: { isler: [kimlik...], uyanma: ms|0 } ya da bekleyen yoksa null.
  */
 function arkaPlanBekleyen(dosya, { simdi = Date.now(), tavanMs = 12 * 3600000 } = {}) {
   const acik = new Map();
   let uyanma = 0;
-  for (const j of sonKayitlar(dosya, Infinity)) {
+  let cronZaman = 0;
+  for (const j of sonKayitlar(dosya, Infinity, 2 * 1024 * 1024)) {
     if (!j || typeof j !== 'object' || j.isSidechain === true) continue;
     const zaman = Date.parse(j.timestamp) || 0;
     const ham = JSON.stringify(j);
-    if (j.type === 'user' && j.message && Array.isArray(j.message.content)) {
-      for (const b of j.message.content) {
-        if (!b || b.type !== 'tool_result') continue;
-        const c = b.content;
-        const metin = typeof c === 'string' ? c
-          : Array.isArray(c) ? ((c.find((x) => x && x.type === 'text') || {}).text || '') : '';
-        const m = ARKA_BASLAT.exec(metin);
-        if (m) acik.set(m[1], zaman);
+    if (j.type === 'user') {
+      const tr = j.toolUseResult;
+      if (tr && typeof tr === 'object') {
+        if (typeof tr.backgroundTaskId === 'string' && ARKA_KIMLIK.test(tr.backgroundTaskId)) {
+          acik.set(tr.backgroundTaskId, zaman);
+        }
+        if (tr.status === 'async_launched' || tr.isAsync === true) {
+          const aid = tr.taskId || tr.agentId || tr.backgroundTaskId;
+          if (typeof aid === 'string' && ARKA_KIMLIK.test(aid)) acik.set(aid, zaman);
+        }
+      }
+      if (j.message && Array.isArray(j.message.content)) {
+        for (const b of j.message.content) {
+          if (!b || b.type !== 'tool_result') continue;
+          const c = b.content;
+          const metin = typeof c === 'string' ? c
+            : Array.isArray(c) ? ((c.find((x) => x && x.type === 'text') || {}).text || '') : '';
+          const m = ARKA_BASLAT.exec(metin) || ARKA_ZAMAN_ASIMI.exec(metin);
+          if (m) acik.set(m[1], zaman);
+        }
       }
     }
     if (ham.includes('<task-id>')) {
@@ -394,14 +409,21 @@ function arkaPlanBekleyen(dosya, { simdi = Date.now(), tavanMs = 12 * 3600000 } 
     }
     if (j.type === 'assistant' && j.message && Array.isArray(j.message.content)) {
       for (const b of j.message.content) {
-        if (!b || b.type !== 'tool_use' || b.name !== 'ScheduleWakeup') continue;
-        const g = b.input || {};
-        const sn = Number(g.delaySeconds);
-        uyanma = g.stop || !Number.isFinite(sn) ? 0 : zaman + Math.min(Math.max(sn, 60), 3600) * 1000;
+        if (!b || b.type !== 'tool_use') continue;
+        if (b.name === 'ScheduleWakeup') {
+          const g = b.input || {};
+          const sn = Number(g.delaySeconds);
+          uyanma = g.stop || !Number.isFinite(sn) ? 0 : zaman + Math.min(Math.max(sn, 60), 3600) * 1000;
+        } else if (b.name === 'CronCreate') {
+          cronZaman = zaman || simdi;
+        } else if (b.name === 'CronDelete') {
+          cronZaman = 0;
+        }
       }
     }
   }
   const isler = [...acik].filter(([, t]) => !t || simdi - t < tavanMs).map(([k]) => k);
+  if (cronZaman && simdi - cronZaman < tavanMs) isler.push('cron');
   // Uyanma vakti + 3 dk pay: CLI uyanıp yazmaya başlayınca jsonl zaten tazelenir.
   const uyanmaBekliyor = uyanma && simdi < uyanma + 3 * 60000 ? uyanma : 0;
   return isler.length || uyanmaBekliyor ? { isler, uyanma: uyanmaBekliyor } : null;

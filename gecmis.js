@@ -32,6 +32,7 @@ const CWD_ONBELLEK = new Map();        // dosya -> { ms, boyut, cwd, varMi, varK
 const EVREN_KAYIT_ONBELLEK = new Map(); // dosya -> { ms, boyut, kayit }
 const EVREN_IS_ONBELLEK = new Map();    // "klasor|kayıtDosyası" -> { kayitMs, is }
 const ALT_AJAN_ONBELLEK = new Map();    // seansDizin -> { yok, dirMs, parentMs, canliVar, okumaMs, ajanlar }
+const WORKTREE_ANA_ONBELLEK = new Map(); // worktreeDizin -> anaRepoDizin | ''
 
 function sinirliEkle(harita, anahtar, deger, sinir = 1000) {
   harita.delete(anahtar);
@@ -418,16 +419,72 @@ function evrenKayitlariOku(kayitDizini) {
   return liste;
 }
 
-// Kayıt bu projeye ait mi: Claude oturum dosyası bu projenin klasöründe varsa ya da kaydın dizini bu projeyle eşleşiyorsa.
-function evrenKaydiBuProjede(kayit, klasor, klasorAdi) {
-  try { fs.statSync(path.join(klasor, kayit.id + '.jsonl')); return true; } catch {}
-  return typeof kayit.dizin === 'string' &&
-    kayit.dizin.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase() === klasorAdi.toLowerCase();
+const HAYALET_SESSIZ_MS = 180 * 60000; // 3 sa susan transkript: Windows PID yeniden kullanımına karşı hayalet sınırı
+
+function pidCanli(pid) {
+  const n = Number(pid);
+  if (!Number.isInteger(n) || n <= 0) return false;
+  try { process.kill(n, 0); return true; } catch (e) { return !!(e && e.code === 'EPERM'); }
 }
 
-// Durum: bitis varsa bitti/hata; bitis yoksa jsonl'in son yazması taze ve tur sürüyorsa çalışıyor, aksi halde kesildi.
+function yolNorm(p) {
+  if (typeof p !== 'string' || !p.trim()) return '';
+  let s = path.resolve(p).replace(/[\/\\]+$/, '');
+  if (process.platform === 'win32') s = s.toLowerCase();
+  return s;
+}
+
+// Git worktree dizininin (.claude/worktrees/X ya da kardeş worktree) ana depo yolunu çözer.
+function worktreeAnaRepo(dizin) {
+  if (typeof dizin !== 'string' || !dizin.trim()) return '';
+  const norm = yolNorm(dizin);
+  if (WORKTREE_ANA_ONBELLEK.has(norm)) return WORKTREE_ANA_ONBELLEK.get(norm);
+  let ana = '';
+  try {
+    const gitYol = path.join(dizin, '.git');
+    const st = fs.statSync(gitYol);
+    if (st.isFile() && st.size > 0 && st.size < 4096) {
+      const m = fs.readFileSync(gitYol, 'utf8').match(/^gitdir:\s*(.+)$/mi);
+      if (m) {
+        const gd = path.resolve(dizin, m[1].trim());
+        const k = gd.replace(/[\/\\]\.git[\/\\]worktrees[\/\\][^\/\\]+$/i, '');
+        if (k && k !== gd) ana = yolNorm(k);
+      }
+    }
+  } catch {}
+  if (!ana) {
+    const k = norm.replace(/[\/\\]\.claude[\/\\]worktrees[\/\\][^\/\\]+$/i, '');
+    if (k && k !== norm) ana = k;
+  }
+  sinirliEkle(WORKTREE_ANA_ONBELLEK, norm, ana, 500);
+  return ana;
+}
+
+function projeYolEslesir(kayitDizin, projeDizin) {
+  const k = yolNorm(kayitDizin);
+  const p = yolNorm(projeDizin);
+  if (!k || !p) return false;
+  if (k === p) return true;
+  const ana = worktreeAnaRepo(kayitDizin);
+  return !!ana && ana === p;
+}
+
+// Kayıt bu projeye ait mi: Claude oturum dosyası bu projenin klasöründe varsa, kaydın dizini ya da
+// worktree ana deposu bu projeyle eşleşiyorsa.
+function evrenKaydiBuProjede(kayit, klasor, klasorAdi) {
+  try { fs.statSync(path.join(klasor, kayit.id + '.jsonl')); return true; } catch {}
+  if (typeof kayit.dizin !== 'string') return false;
+  const hedef = klasorAdi.toLowerCase();
+  if (kayit.dizin.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase() === hedef) return true;
+  const ana = worktreeAnaRepo(kayit.dizin);
+  return !!ana && ana.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase() === hedef;
+}
+
+// Durum: bitis varsa bitti/hata; bitis yoksa canlı PID (3 sa hayalet sınırıyla) ya da jsonl taze + tur sürüyorsa çalışıyor.
 function evrenDurumu(kayit, jsonl, kayitMs, simdi) {
   if (kayit.bitis != null) return Number(kayit.cikis) !== 0 && kayit.cikis != null ? 'hata' : 'bitti';
+  const hayalet = !!jsonl && (simdi - jsonl.mtimeMs > HAYALET_SESSIZ_MS);
+  if (!hayalet && kayit.pid && pidCanli(kayit.pid)) return 'calisiyor';
   const ms = jsonl ? jsonl.mtimeMs : kayitMs;
   const taze = simdi - ms < CANLI_ESIK_MS;
   if (!taze) return 'kesildi';
@@ -448,6 +505,13 @@ function evrenIsiOku(kayit, klasor, simdi) {
   let jsonl = null;
   if (klasor) {
     try { const yol = path.join(klasor, kayit.id + '.jsonl'); const s = fs.statSync(yol); jsonl = { yol, mtimeMs: s.mtimeMs, size: s.size }; } catch {}
+  }
+  if (!jsonl && typeof kayit.dizin === 'string' && kayit.dizin) {
+    try {
+      const yol = path.join(claudeKokDizini(), kayit.dizin.replace(/[^a-zA-Z0-9]/g, '-'), kayit.id + '.jsonl');
+      const s = fs.statSync(yol);
+      jsonl = { yol, mtimeMs: s.mtimeMs, size: s.size };
+    } catch {}
   }
   const durum = evrenDurumu(kayit, jsonl, kayitMs, simdi);
   const baslikKayit = typeof kayit.baslik === 'string' ? kayit.baslik.trim() : '';
@@ -612,6 +676,21 @@ function oturumSayilari(dizin, kimlik, secenekler) {
     altAjanlar: { calisan: ajanDizisi.filter((a) => a.canli).length, toplam: ajanDizisi.length },
     evrenIsleri: { calisan: isler.filter((i) => i.canli).length, toplam: isler.length },
   };
+}
+
+// Bu proje (ya da altındaki/kardeş git worktree'leri) üzerinde şu an çalışan EVREN işi var mı?
+// Görev Zamanlayıcı / kopuk dalga koşucusu (ust: null) tarafından açılan worker'ları da yakalar.
+function projeCanliEvrenVar(projeDizin, secenekler) {
+  if (!projeDizin || typeof projeDizin !== 'string') return false;
+  const simdi = (secenekler && Number(secenekler.simdi)) || Date.now();
+  const kayitlar = evrenKayitlariOku(evrenKayitDizini(secenekler));
+  for (const k of kayitlar) {
+    if (!k || k.bitis != null) continue;
+    if (!projeYolEslesir(k.dizin, projeDizin)) continue;
+    const is = evrenIsiOku(k, '', simdi);
+    if (is && is.canli) return true;
+  }
+  return false;
 }
 
 
@@ -869,9 +948,10 @@ function onbellekTemizle() {
   EVREN_KAYIT_ONBELLEK.clear();
   EVREN_IS_ONBELLEK.clear();
   ALT_AJAN_ONBELLEK.clear();
+  WORKTREE_ANA_ONBELLEK.clear();
   baslikOnbellek.clear();
   durumOnbellek.clear();
   kaliciOnbellek = null;
 }
 
-module.exports = { oturumGecmisi, tumOturumlariTara, cwdOku, tempMi, oturumSayilari, altAjanlariOku, turDevamEdiyor, sonDurumOku, baslikOku, ozelBaslikOku, ozelBaslikYaz, ozelBaslikTasi, baslikOnbellekTemizle, onbellekTemizle, evrenKayitlariOku, ataKopyalariniAyikla, icerikAra, icerikAraListe, aramaMetni, katla, adEslesir, birFark, okunurMetin, OTURUM_KIMLIK, CANLI_ESIK_MS };
+module.exports = { oturumGecmisi, tumOturumlariTara, cwdOku, tempMi, oturumSayilari, projeCanliEvrenVar, worktreeAnaRepo, altAjanlariOku, turDevamEdiyor, sonDurumOku, baslikOku, ozelBaslikOku, ozelBaslikYaz, ozelBaslikTasi, baslikOnbellekTemizle, onbellekTemizle, evrenKayitlariOku, ataKopyalariniAyikla, icerikAra, icerikAraListe, aramaMetni, katla, adEslesir, birFark, okunurMetin, OTURUM_KIMLIK, CANLI_ESIK_MS };
